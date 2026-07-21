@@ -59,14 +59,13 @@ pipeline.
 ## Six-panel evolution figure
 
 `make_evolution_montage.py` reads both the model snapshots and `elinfo`, then
-writes a two-row, six-panel PNG figure. By default it uses snapshots 000,
-050, 100, 150, 200, and 243. With the run cadence of 0.01 Gyr, the final panel
-is therefore 2.43 Gyr. Snapshot 243 is the present-day match because its
-`elinfo` heliocentric distance, 139.615 kpc, is closest to the adopted
-139.6 kpc. The short axis labels are `RA` and `Dec`; tick values
-are in degrees. The time-zero row is selected from the full `elinfo` table by
-heliocentric distance, so it does not depend on the chosen panel list or model
-duration.
+writes a two-row, six-panel PNG figure. By default it selects a 0.5 Gyr
+lookback-time grid ending at the distance-matched present frame. If the model
+starts slightly less than 2.5 Gyr before that frame, the first panel uses the
+initial snapshot and the remaining five panels retain exact 0.5 Gyr spacing.
+For Fornax2073 this gives snapshots 000, 043, 093, 143, 193, and 243, with
+lookback times 2.43, 2.00, 1.50, 1.00, 0.50, and 0.00 Gyr. The short axis
+labels are `RA` and `Dec`; tick values are in degrees.
 
 ```text
 python3 make_evolution_montage.py /travail/xhuang/Fornax2073 \

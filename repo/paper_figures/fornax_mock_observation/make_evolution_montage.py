@@ -15,7 +15,8 @@ from matplotlib.lines import Line2D
 import make_snapshot_mock as mock
 
 
-DEFAULT_SNAPSHOTS = (0, 50, 100, 150, 200, 243)
+PANEL_COUNT = 6
+DEFAULT_LOOKBACK_STEP_GYR = 0.5
 
 
 def load_elinfo(path: Path | None) -> dict[int, dict[str, str]]:
@@ -64,6 +65,58 @@ def present_reference_from_distance(
         "distance_kpc": distance_kpc,
         "time_gyr": age_gyr,
     }
+
+
+def select_default_snapshots(
+    elinfo: dict[int, dict[str, str]],
+    present_time_gyr: float,
+    step_gyr: float,
+    panel_count: int = PANEL_COUNT,
+) -> list[int]:
+    """Select a recent regular lookback grid, using the initial frame for a remainder."""
+    if step_gyr <= 0.0:
+        raise ValueError("--lookback-step-gyr must be positive")
+
+    timed_rows = []
+    for snapshot_number, row in elinfo.items():
+        age_gyr = finite_float(row, "age")
+        if age_gyr is not None and age_gyr <= present_time_gyr + 1.0e-8:
+            timed_rows.append((snapshot_number, age_gyr))
+    if len(timed_rows) < panel_count:
+        raise ValueError(f"elinfo contains fewer than {panel_count} usable snapshots")
+
+    earliest_time_gyr = min(age for _, age in timed_rows)
+    available_lookback_gyr = present_time_gyr - earliest_time_gyr
+    full_span_gyr = step_gyr * (panel_count - 1)
+
+    if available_lookback_gyr >= full_span_gyr - 1.0e-8:
+        target_lookbacks = [
+            step_gyr * index for index in range(panel_count - 1, -1, -1)
+        ]
+    else:
+        regular = [
+            step_gyr * index
+            for index in range(int(np.floor(available_lookback_gyr / step_gyr)) + 1)
+        ]
+        if not np.isclose(regular[-1], available_lookback_gyr, atol=1.0e-8):
+            regular.append(available_lookback_gyr)
+        target_lookbacks = sorted(regular, reverse=True)
+        if len(target_lookbacks) != panel_count:
+            raise ValueError(
+                f"A {step_gyr:.3g} Gyr grid spans only {len(target_lookbacks)} panels; "
+                "pass --snapshots explicitly for this shorter run."
+            )
+
+    selected = []
+    for lookback_gyr in target_lookbacks:
+        target_time_gyr = present_time_gyr - lookback_gyr
+        snapshot_number, _ = min(
+            timed_rows, key=lambda item: abs(item[1] - target_time_gyr)
+        )
+        selected.append(snapshot_number)
+    if len(set(selected)) != panel_count:
+        raise ValueError("The lookback grid mapped to duplicate snapshots")
+    return selected
 
 
 def locate_snapshot(model_dir: Path, number: int) -> Path:
@@ -334,13 +387,24 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir", type=Path)
     parser.add_argument("--elinfo", type=Path)
-    parser.add_argument("--snapshots", nargs="+", type=int, default=DEFAULT_SNAPSHOTS)
+    parser.add_argument(
+        "--snapshots",
+        nargs="+",
+        type=int,
+        help="Explicit snapshot numbers; defaults to an elinfo-derived lookback grid",
+    )
     parser.add_argument("--outdir", type=Path, default=Path("output"))
     parser.add_argument("--distance-kpc", type=float, default=mock.ADOPTED_DISTANCE_KPC)
     parser.add_argument(
         "--present-time-gyr",
         type=float,
         help="Optional override for lookback-time zero; defaults to the elinfo distance match",
+    )
+    parser.add_argument(
+        "--lookback-step-gyr",
+        type=float,
+        default=DEFAULT_LOOKBACK_STEP_GYR,
+        help="Spacing of the automatically selected lookback-time grid",
     )
     parser.add_argument("--field-half-deg", type=float, default=mock.FIELD_HALF_WIDTH_DEG)
     parser.add_argument("--npix", type=int, default=520)
@@ -357,8 +421,6 @@ def main() -> None:
     model_dir = args.model_dir.resolve()
     output_dir = args.outdir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    if len(args.snapshots) != 6:
-        raise ValueError("The paper layout currently requires exactly six snapshots.")
 
     elinfo_path = args.elinfo
     if elinfo_path is None:
@@ -366,18 +428,33 @@ def main() -> None:
         elinfo_path = candidates[0] if candidates else None
     elinfo = load_elinfo(elinfo_path.resolve() if elinfo_path else None)
 
-    panels = []
-    for number in args.snapshots:
-        snapshot_path = locate_snapshot(model_dir, number)
-        print(f"Processing {snapshot_path.name}", flush=True)
-        panels.append(process_snapshot(snapshot_path, number, elinfo.get(number), args))
-
     present_reference = None
     if args.present_time_gyr is None:
         present_reference = present_reference_from_distance(elinfo, args.distance_kpc)
         present_time_gyr = float(present_reference["time_gyr"])
     else:
         present_time_gyr = float(args.present_time_gyr)
+
+    snapshot_numbers = (
+        list(args.snapshots)
+        if args.snapshots is not None
+        else select_default_snapshots(
+            elinfo,
+            present_time_gyr,
+            args.lookback_step_gyr,
+        )
+    )
+    if len(snapshot_numbers) != PANEL_COUNT:
+        raise ValueError(
+            f"The paper layout currently requires exactly {PANEL_COUNT} snapshots."
+        )
+
+    panels = []
+    for number in snapshot_numbers:
+        snapshot_path = locate_snapshot(model_dir, number)
+        print(f"Processing {snapshot_path.name}", flush=True)
+        panels.append(process_snapshot(snapshot_path, number, elinfo.get(number), args))
+
     for panel in panels:
         panel["lookback_time_gyr"] = present_time_gyr - float(panel["time_gyr"])
 
@@ -395,7 +472,7 @@ def main() -> None:
     fig.subplots_adjust(left=0.073, right=0.995, bottom=0.090, top=0.995, wspace=0.035, hspace=0.035)
 
     stem = f"{model_dir.name.lower()}_evolution_" + "_".join(
-        f"{number:03d}" for number in args.snapshots
+        f"{number:03d}" for number in snapshot_numbers
     )
     png_path = output_dir / f"{stem}.png"
     metadata_path = output_dir / f"{stem}_metadata.json"
@@ -405,8 +482,9 @@ def main() -> None:
     metadata = {
         "model_dir": str(model_dir),
         "elinfo": str(elinfo_path.resolve()) if elinfo_path else None,
-        "snapshots": list(args.snapshots),
+        "snapshots": snapshot_numbers,
         "snapshot_cadence_gyr": mock.SNAPSHOT_CADENCE_GYR,
+        "lookback_step_gyr": args.lookback_step_gyr,
         "present_time_gyr": present_time_gyr,
         "lookback_time_reference": {
             "method": "closest elinfo heliocentric distance"
