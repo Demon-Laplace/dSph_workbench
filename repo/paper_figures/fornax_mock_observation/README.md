@@ -25,8 +25,9 @@ A&A Letter figure panel.
 - annotates the selected dwarf stellar mass and the H I mass measured in a
   projected square 10 percent larger than the plotted field of view;
 - restores the original normalized proper-motion direction arrow;
-- displays the heliocentric distance as `D_sun` in each paper panel;
-- writes a compact paper panel, a diagnostic panel, metadata, and vector PDF.
+- displays the heliocentric distance as `D` and the lookback time in the
+  lower-left corner of each paper panel;
+- writes a compact PNG paper panel, a diagnostic PNG, and metadata.
 
 No random sky background or artificial detector noise is added. This keeps
 the morphology deterministic and prevents aesthetic noise from being mistaken
@@ -42,7 +43,10 @@ python3 make_snapshot_mock.py <path-to-snapshot.hdf5> \
 
 The active Python environment must provide NumPy, SciPy, h5py, Matplotlib,
 and Astropy. PNG and metadata outputs are written directly to the selected
-output directory, while the vector version is placed in its `pdf` subdirectory.
+output directory. By default, the renderer reads `elinfo` and defines
+lookback-time zero at the row whose heliocentric distance is closest to the
+adopted distance (139.6 kpc unless overridden). Use `--elinfo` when the table
+cannot be discovered next to the model or snapshot.
 
 ## Parameters to keep fixed for the final evolution montage
 
@@ -55,12 +59,14 @@ pipeline.
 ## Six-panel evolution figure
 
 `make_evolution_montage.py` reads both the model snapshots and `elinfo`, then
-writes a two-row, six-panel PNG/PDF figure. By default it uses snapshots 000,
+writes a two-row, six-panel PNG figure. By default it uses snapshots 000,
 050, 100, 150, 200, and 243. With the run cadence of 0.01 Gyr, the final panel
 is therefore 2.43 Gyr. Snapshot 243 is the present-day match because its
 `elinfo` heliocentric distance, 139.615 kpc, is closest to the adopted
 139.6 kpc. The short axis labels are `RA` and `Dec`; tick values
-are in degrees.
+are in degrees. The time-zero row is selected from the full `elinfo` table by
+heliocentric distance, so it does not depend on the chosen panel list or model
+duration.
 
 ```text
 python3 make_evolution_montage.py /travail/xhuang/Fornax2073 \

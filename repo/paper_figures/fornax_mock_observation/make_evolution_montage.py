@@ -37,6 +37,35 @@ def finite_float(row: dict[str, str] | None, key: str) -> float | None:
     return value if np.isfinite(value) else None
 
 
+def present_reference_from_distance(
+    elinfo: dict[int, dict[str, str]], target_distance_kpc: float
+) -> dict[str, float | int]:
+    """Find the elinfo time whose heliocentric distance best matches the target."""
+    candidates: list[tuple[float, float, float, int]] = []
+    for snapshot_number, row in elinfo.items():
+        distance_kpc = finite_float(row, "distance")
+        age_gyr = finite_float(row, "age")
+        if distance_kpc is None or age_gyr is None:
+            continue
+        candidates.append(
+            (
+                abs(distance_kpc - target_distance_kpc),
+                distance_kpc,
+                age_gyr,
+                snapshot_number,
+            )
+        )
+    if not candidates:
+        raise ValueError("elinfo contains no finite heliocentric distance/age rows")
+
+    _, distance_kpc, age_gyr, snapshot_number = min(candidates, key=lambda item: item[0])
+    return {
+        "snapshot": snapshot_number,
+        "distance_kpc": distance_kpc,
+        "time_gyr": age_gyr,
+    }
+
+
 def locate_snapshot(model_dir: Path, number: int) -> Path:
     candidates = (
         model_dir / "output" / f"snapshot_{number:03d}.hdf5",
@@ -237,16 +266,6 @@ def draw_panel(
     axis.text(
         0.035,
         0.955,
-        rf"$t={float(panel['time_gyr']):.2f}\,\mathrm{{Gyr}}$",
-        transform=axis.transAxes,
-        color="#f4f1ea",
-        fontsize=7.0,
-        ha="left",
-        va="top",
-    )
-    axis.text(
-        0.035,
-        0.890,
         rf"$M_\star={mock.mass_to_tex(float(panel['stellar_mass_msun']))}\,M_\odot$",
         transform=axis.transAxes,
         color="#f0dfcf",
@@ -256,7 +275,7 @@ def draw_panel(
     )
     axis.text(
         0.035,
-        0.835,
+        0.900,
         rf"$M_{{\mathrm{{H\,I}}}}={mock.mass_to_tex(float(panel['hi_mass_msun']))}\,M_\odot$",
         transform=axis.transAxes,
         color="#94f3f3",
@@ -269,13 +288,16 @@ def draw_panel(
         panel_distance = panel["adopted_heliocentric_distance_kpc"]
     axis.text(
         0.035,
-        0.780,
-        rf"$D_\odot={float(panel_distance):.1f}\,\mathrm{{kpc}}$",
+        0.035,
+        rf"$t_{{\mathrm{{lookback}}}}={float(panel['lookback_time_gyr']):.2f}\,\mathrm{{Gyr}}$"
+        "\n"
+        rf"$D={float(panel_distance):.1f}\,\mathrm{{kpc}}$",
         transform=axis.transAxes,
         color="#d7dadd",
-        fontsize=5.05,
+        fontsize=5.25,
         ha="left",
-        va="top",
+        va="bottom",
+        linespacing=1.22,
     )
     axis.text(
         0.965,
@@ -315,6 +337,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--snapshots", nargs="+", type=int, default=DEFAULT_SNAPSHOTS)
     parser.add_argument("--outdir", type=Path, default=Path("output"))
     parser.add_argument("--distance-kpc", type=float, default=mock.ADOPTED_DISTANCE_KPC)
+    parser.add_argument(
+        "--present-time-gyr",
+        type=float,
+        help="Optional override for lookback-time zero; defaults to the elinfo distance match",
+    )
     parser.add_argument("--field-half-deg", type=float, default=mock.FIELD_HALF_WIDTH_DEG)
     parser.add_argument("--npix", type=int, default=520)
     parser.add_argument("--dpi", type=int, default=450)
@@ -345,6 +372,15 @@ def main() -> None:
         print(f"Processing {snapshot_path.name}", flush=True)
         panels.append(process_snapshot(snapshot_path, number, elinfo.get(number), args))
 
+    present_reference = None
+    if args.present_time_gyr is None:
+        present_reference = present_reference_from_distance(elinfo, args.distance_kpc)
+        present_time_gyr = float(present_reference["time_gyr"])
+    else:
+        present_time_gyr = float(args.present_time_gyr)
+    for panel in panels:
+        panel["lookback_time_gyr"] = present_time_gyr - float(panel["time_gyr"])
+
     mpl.rcParams.update(
         {
             "font.family": "serif",
@@ -358,12 +394,12 @@ def main() -> None:
         draw_panel(axis, panel, args, index)
     fig.subplots_adjust(left=0.073, right=0.995, bottom=0.090, top=0.995, wspace=0.035, hspace=0.035)
 
-    stem = "fornax2073_evolution_" + "_".join(f"{number:03d}" for number in args.snapshots)
+    stem = f"{model_dir.name.lower()}_evolution_" + "_".join(
+        f"{number:03d}" for number in args.snapshots
+    )
     png_path = output_dir / f"{stem}.png"
-    pdf_path = output_dir / f"{stem}.pdf"
     metadata_path = output_dir / f"{stem}_metadata.json"
     fig.savefig(png_path, dpi=args.dpi, facecolor="black", bbox_inches="tight", pad_inches=0.01)
-    fig.savefig(pdf_path, dpi=args.dpi, facecolor="black", bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
     metadata = {
@@ -371,6 +407,19 @@ def main() -> None:
         "elinfo": str(elinfo_path.resolve()) if elinfo_path else None,
         "snapshots": list(args.snapshots),
         "snapshot_cadence_gyr": mock.SNAPSHOT_CADENCE_GYR,
+        "present_time_gyr": present_time_gyr,
+        "lookback_time_reference": {
+            "method": "closest elinfo heliocentric distance"
+            if present_reference is not None
+            else "explicit present time",
+            "target_distance_kpc": args.distance_kpc,
+            "matched_snapshot": present_reference["snapshot"]
+            if present_reference is not None
+            else None,
+            "matched_distance_kpc": present_reference["distance_kpc"]
+            if present_reference is not None
+            else None,
+        },
         "adopted_heliocentric_distance_kpc": args.distance_kpc,
         "distance_reference": "Li et al. (2021), dm=20.72 mag (139.6 kpc)",
         "field_half_width_deg": args.field_half_deg,
@@ -378,7 +427,7 @@ def main() -> None:
         "rendered_gas": "NH-weighted cold HI, no density cut",
         "gas_selection_radius_kpc": mock.DWARF_GAS_RADIUS_KPC,
         "panels": [public_metadata(panel) for panel in panels],
-        "outputs": {"png": str(png_path), "pdf": str(pdf_path)},
+        "outputs": {"png": str(png_path)},
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print(json.dumps(metadata, indent=2), flush=True)

@@ -16,6 +16,7 @@ total gas and cold neutral gas are shown as blue emission and cyan contours.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -147,6 +148,58 @@ def snapshot_time_gyr(snapshot_path: Path, header_time_gyr: float) -> tuple[int 
         return None, float(header_time_gyr)
     snapshot_number = int(match.group(1))
     return snapshot_number, SNAPSHOT_CADENCE_GYR * snapshot_number
+
+
+def locate_elinfo(snapshot_path: Path, explicit_path: Path | None) -> Path | None:
+    """Locate the model elinfo table next to the snapshot or its output directory."""
+    if explicit_path is not None:
+        return explicit_path.resolve()
+
+    search_dirs = [snapshot_path.parent]
+    if snapshot_path.parent.name == "output":
+        search_dirs.insert(0, snapshot_path.parent.parent)
+    else:
+        search_dirs.append(snapshot_path.parent.parent)
+
+    for directory in search_dirs:
+        candidates = sorted(directory.glob("elinfo*.csv"))
+        if candidates:
+            return candidates[0].resolve()
+    return None
+
+
+def present_reference_from_elinfo(
+    elinfo_path: Path, target_distance_kpc: float
+) -> dict[str, float | int]:
+    """Return the elinfo row closest to the adopted heliocentric distance."""
+    candidates: list[tuple[float, float, float, int]] = []
+    with elinfo_path.open(encoding="utf-8") as handle:
+        rows = csv.DictReader(line for line in handle if not line.startswith("#"))
+        for row in rows:
+            try:
+                distance_kpc = float(row["distance"])
+                age_gyr = float(row["age"])
+                snapshot_number = int(float(row["numsp"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            if np.isfinite(distance_kpc) and np.isfinite(age_gyr):
+                candidates.append(
+                    (
+                        abs(distance_kpc - target_distance_kpc),
+                        distance_kpc,
+                        age_gyr,
+                        snapshot_number,
+                    )
+                )
+    if not candidates:
+        raise ValueError(f"No finite distance/age rows found in {elinfo_path}")
+
+    _, distance_kpc, age_gyr, snapshot_number = min(candidates, key=lambda item: item[0])
+    return {
+        "snapshot": snapshot_number,
+        "distance_kpc": distance_kpc,
+        "time_gyr": age_gyr,
+    }
 
 
 def mean_proper_motion(
@@ -617,14 +670,13 @@ def save_mock_panel(
     hi_display: np.ndarray,
     hi_surface_density: np.ndarray,
     half_width_deg: float,
-    time_gyr: float,
+    lookback_time_gyr: float,
     stellar_mass_msun: float,
     hi_mass_msun: float,
     distance_kpc: float,
     pmra_masyr: float,
     pmdec_masyr: float,
     output_png: Path,
-    output_pdf: Path,
     dpi: int,
 ) -> None:
     mpl.rcParams.update(
@@ -675,16 +727,6 @@ def save_mock_panel(
     axis.text(
         0.035,
         0.965,
-        rf"$t={time_gyr:.2f}\,\mathrm{{Gyr}}$",
-        transform=axis.transAxes,
-        color="#f4f1ea",
-        fontsize=7.7,
-        ha="left",
-        va="top",
-    )
-    axis.text(
-        0.035,
-        0.910,
         rf"$M_\star={mass_to_tex(stellar_mass_msun)}\,M_\odot$",
         transform=axis.transAxes,
         color="#f0dfcf",
@@ -694,7 +736,7 @@ def save_mock_panel(
     )
     axis.text(
         0.035,
-        0.865,
+        0.920,
         rf"$M_{{\mathrm{{H\,I}}}}={mass_to_tex(hi_mass_msun)}\,M_\odot$",
         transform=axis.transAxes,
         color="#94f3f3",
@@ -704,13 +746,16 @@ def save_mock_panel(
     )
     axis.text(
         0.035,
-        0.820,
-        rf"$D_\odot={distance_kpc:.2f}\,\mathrm{{kpc}}$",
+        0.035,
+        rf"$t_{{\mathrm{{lookback}}}}={lookback_time_gyr:.2f}\,\mathrm{{Gyr}}$"
+        "\n"
+        rf"$D={distance_kpc:.2f}\,\mathrm{{kpc}}$",
         transform=axis.transAxes,
         color="#d7dadd",
-        fontsize=5.9,
+        fontsize=6.2,
         ha="left",
-        va="top",
+        va="bottom",
+        linespacing=1.25,
     )
     legend = axis.legend(
         handles=[
@@ -727,7 +772,6 @@ def save_mock_panel(
     legend.set_zorder(20)
     fig.subplots_adjust(left=0.15, right=0.985, bottom=0.14, top=0.985)
     fig.savefig(output_png, dpi=dpi, facecolor="black", bbox_inches="tight", pad_inches=0.01)
-    fig.savefig(output_pdf, dpi=dpi, facecolor="black", bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
 
@@ -800,6 +844,16 @@ def parse_args() -> argparse.Namespace:
         default=ADOPTED_DISTANCE_KPC,
         help="Adopted heliocentric distance for angular and photometric scaling",
     )
+    parser.add_argument(
+        "--elinfo",
+        type=Path,
+        help="elinfo table used to identify lookback-time zero from distance",
+    )
+    parser.add_argument(
+        "--present-time-gyr",
+        type=float,
+        help="Optional override for lookback-time zero; defaults to the elinfo distance match",
+    )
     return parser.parse_args()
 
 
@@ -808,11 +862,21 @@ def main() -> None:
     snapshot_path = args.snapshot.resolve()
     output_dir = args.outdir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    pdf_dir = output_dir / "pdf"
-    pdf_dir.mkdir(parents=True, exist_ok=True)
 
     particles, box_size, header_time_gyr = read_particles(snapshot_path)
     snapshot_number, time_gyr = snapshot_time_gyr(snapshot_path, header_time_gyr)
+    elinfo_path = locate_elinfo(snapshot_path, args.elinfo)
+    present_reference = None
+    if args.present_time_gyr is None:
+        if elinfo_path is None:
+            raise FileNotFoundError(
+                "No elinfo table found; pass --elinfo or --present-time-gyr."
+            )
+        present_reference = present_reference_from_elinfo(elinfo_path, args.distance_kpc)
+        present_time_gyr = float(present_reference["time_gyr"])
+    else:
+        present_time_gyr = float(args.present_time_gyr)
+    lookback_time_gyr = present_time_gyr - time_gyr
     mw_center = shrinking_sphere_mw_center(particles)
     positions, masses, particle_types, velocities = concatenate_stars(particles, mw_center)
     dwarf_mask, dwarf_peak = find_dwarf_mask(positions)
@@ -897,7 +961,6 @@ def main() -> None:
 
     stem = snapshot_path.stem
     panel_png = output_dir / f"{stem}_mock_panel.png"
-    panel_pdf = pdf_dir / f"{stem}_mock_panel.pdf"
     diagnostic_png = output_dir / f"{stem}_surface_brightness_diagnostic.png"
     metadata_json = output_dir / f"{stem}_mock_metadata.json"
 
@@ -906,14 +969,13 @@ def main() -> None:
         hi_display,
         hi_surface_density,
         args.field_half_deg,
-        time_gyr,
+        lookback_time_gyr,
         stellar_mass_msun,
         hi_mass_msun,
         distance_kpc,
         pmra_masyr,
         pmdec_masyr,
         panel_png,
-        panel_pdf,
         args.dpi,
     )
     save_diagnostic(
@@ -931,6 +993,21 @@ def main() -> None:
         "snapshot": str(snapshot_path),
         "snapshot_number": snapshot_number,
         "snapshot_time_gyr": time_gyr,
+        "present_time_gyr": present_time_gyr,
+        "lookback_time_gyr": lookback_time_gyr,
+        "lookback_time_reference": {
+            "method": "closest elinfo heliocentric distance"
+            if present_reference is not None
+            else "explicit present time",
+            "elinfo": str(elinfo_path) if elinfo_path is not None else None,
+            "target_distance_kpc": distance_kpc,
+            "matched_snapshot": present_reference["snapshot"]
+            if present_reference is not None
+            else None,
+            "matched_distance_kpc": present_reference["distance_kpc"]
+            if present_reference is not None
+            else None,
+        },
         "header_time_gyr": header_time_gyr,
         "box_size_kpc": box_size,
         "mw_center_raw_kpc": mw_center.tolist(),
@@ -990,7 +1067,6 @@ def main() -> None:
         },
         "outputs": {
             "paper_panel_png": str(panel_png),
-            "paper_panel_pdf": str(panel_pdf),
             "diagnostic_png": str(diagnostic_png),
         },
     }

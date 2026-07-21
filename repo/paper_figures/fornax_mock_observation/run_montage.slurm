@@ -25,9 +25,6 @@ export MPLBACKEND=Agg
 export MPLCONFIGDIR="$PWD/.mplconfig"
 
 python3 -c 'import h5py, numpy, scipy, matplotlib, astropy; print("figure environment ready")'
-python3 make_snapshot_mock.py /travail/xhuang/Fornax2073/output/snapshot_243.hdf5 \
-  --distance-kpc 139.6 \
-  --outdir output/current_snapshot_243
 python3 make_evolution_montage.py /travail/xhuang/Fornax2073 \
   --elinfo /travail/xhuang/Fornax2073/elinfo_Fornax2073.csv \
   --snapshots 0 50 100 150 200 243 \
