@@ -486,7 +486,7 @@ def build_plot_context():
     mag_obs_err = obs_surface_brightness['mag_obs_err']
 
     gas_loss_rate = Analysis.calculate_gas_loss_rate(dw_elinfo['age'].to_numpy(), dw_elinfo['coldgas_half_mass'].to_numpy())
-    distance_series = dw_elinfo['distance_gal'] if 'distance_gal' in dw_elinfo.columns else dw_elinfo['distance']
+    distance_series = dw_elinfo['distance']
     sigma_mw = np.where(
         dw_elinfo.sigma >= dw_elinfo.tsigma,
         np.sqrt(dw_elinfo.sigma**2 - dw_elinfo.tsigma**2),
