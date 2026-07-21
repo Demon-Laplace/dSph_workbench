@@ -642,12 +642,15 @@ def draw_proper_motion_arrow(
     pmdec_masyr: float,
     arrow_length_deg: float = 0.72,
 ) -> None:
-    """Draw the projected motion direction; +RA points left on the reversed axis."""
+    """Draw the projected motion direction with a doubled shaft and fixed head."""
     norm = float(np.hypot(pmra_masyr, pmdec_masyr))
     if not np.isfinite(norm) or norm == 0.0:
         return
-    dx = pmra_masyr / norm * arrow_length_deg
-    dy = pmdec_masyr / norm * arrow_length_deg
+    head_length_deg = 0.13
+    shaft_length_deg = max(0.0, arrow_length_deg - head_length_deg)
+    displayed_length_deg = 2.0 * shaft_length_deg + head_length_deg
+    dx = pmra_masyr / norm * displayed_length_deg
+    dy = pmdec_masyr / norm * displayed_length_deg
     axis.arrow(
         0.0,
         0.0,
@@ -655,7 +658,7 @@ def draw_proper_motion_arrow(
         dy,
         width=0.009,
         head_width=0.105,
-        head_length=0.13,
+        head_length=head_length_deg,
         length_includes_head=True,
         facecolor="#f1f3f2",
         edgecolor="#17191b",
