@@ -44,7 +44,6 @@ MASS_TO_LIGHT_V = 2.6
 SFH_SFR_UNIT_MSUN_PER_YEAR = 1.0e-4
 SFH_APERTURE_DEG = 0.8
 SFH_BIN_WIDTH_GYR = 0.5
-SFH_SIMULATION_SCALE_FACTOR = 10.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -293,7 +292,6 @@ def recent_star_formation_history(
         formed_mass
         / (bin_width_gyr * 1.0e9)
         / SFH_SFR_UNIT_MSUN_PER_YEAR
-        * SFH_SIMULATION_SCALE_FACTOR
     )
     observed_sfr, observed_sfr_error = rebin_observed_sfh(observation, edges)
     return {
@@ -487,7 +485,7 @@ def draw_figure(
         xlabel="Lookback time (Gyr)",
         ylabel=r"SFR ($10^{-4}\,M_\odot\,{\rm yr}^{-1}$)",
     )
-    axis.set_xlim(float(row["age"]), 0.0)
+    axis.set_xlim(0.0, float(row["age"]))
     ymax = max(
         1.0,
         float(np.nanmax(sfh["observed_sfr"])),
@@ -582,7 +580,6 @@ def main() -> None:
         },
         "recent_sfh": {key: serializable_array(value) for key, value in sfh.items()},
         "sfh_sfr_unit_msun_per_year": SFH_SFR_UNIT_MSUN_PER_YEAR,
-        "sfh_simulation_scale_factor": SFH_SIMULATION_SCALE_FACTOR,
     }
     metadata_path.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"

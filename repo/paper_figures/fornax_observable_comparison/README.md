@@ -12,11 +12,10 @@ The three panels compare the simulation with the adopted observations for:
 - the recent star-formation history, using only stars already formed in the
   selected snapshot, fixed 0.5-Gyr bins and step curves as in `PlotFig.py`,
   and the same elliptical aperture of `r_ell <= 0.8 deg`. Stellar masses are
-  converted to the de Boer et al. plotting unit of `1e-4 Msun yr^-1`. The
-  snapshot-derived SFH is then multiplied by the explicit factor
-  `SFH_SIMULATION_SCALE_FACTOR = 10`, retaining the normalization used by the
-  original `PlotFig.py` to map its `1e-5` simulation scale to the observational
-  `1e-4` scale.
+  converted directly to the de Boer et al. plotting unit of
+  `1e-4 Msun yr^-1`, without an additional normalization. Integrating the
+  plotted simulation curve therefore recovers the stellar mass in the selected
+  snapshot and aperture.
 
 Run from the model directory so that the established pipeline resolves all
 relative paths consistently:

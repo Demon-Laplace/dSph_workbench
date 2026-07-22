@@ -69,6 +69,7 @@ ADAPTIVE_ML_FIT_MAX_RADIUS_KPC = 5.0
 ADAPTIVE_ML_MIN = 0.1
 ADAPTIVE_ML_MAX = 50.0
 SIM_SB_MARKER_SPACING_KPC = 0.2
+SFH_SFR_UNIT_MSUN_PER_YEAR = 1.0e-4
 
 try:
     LIBC = ctypes.CDLL("libc.so.6")
@@ -1328,7 +1329,7 @@ def _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri, bin_width=0.5):
 
     mass_sim, edges_sim = np.histogram(lookback, bins=bins, weights=sfh_mass)
     dt = np.diff(edges_sim)
-    sfr_sim = mass_sim / dt / 1e4
+    sfr_sim = mass_sim / (dt * 1.0e9) / SFH_SFR_UNIT_MSUN_PER_YEAR
     lookback_sim = edges_sim[:-1]
     lookback_obs, sfr_obs = DataProcessor.GetSFR(sfh_dw, bins=bins)
 
