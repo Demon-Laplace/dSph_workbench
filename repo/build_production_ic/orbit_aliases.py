@@ -10,6 +10,8 @@ Example:
 RPF1 = "-12.7   220.1   -94.9  -23.7   -67.2   -68.4"
 """
 
+from variable import d_today
+
 LowOrbitRPF1 = "-12.7   220.1   -94.9  -23.7   -67.2   -68.4"
 HighOrbitRPF1 = "-38.7   271.2  -197.9   -8.0  -115.4   -2.0"
 
@@ -21,5 +23,5 @@ MW44 = "median mass MW, high densityCGM"
 MW53 = "median mass MW, high densityCGM"
 
 sigma_Fornax = 11
-d_Fornax = 139.6
+d_Fornax = d_today
 median_fd = 8.3

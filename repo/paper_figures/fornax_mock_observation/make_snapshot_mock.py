@@ -25,7 +25,9 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parents[1]
 DEPS = HERE / ".deps"
+sys.path.insert(0, str(REPO_ROOT))
 if DEPS.exists():
     sys.path.insert(0, str(DEPS))
 
@@ -52,9 +54,11 @@ from matplotlib.lines import Line2D
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
 
+from variable import d_today, dw_filed_deg, fornax_core_radius
+
 
 BOX_CENTER_FRACTION = 0.5
-FORNAX_CORE_RADIUS_KPC = 5.4
+FORNAX_CORE_RADIUS_KPC = fornax_core_radius
 DWARF_RADIUS_FACTOR = 3.0
 MW_EXCLUSION_RADIUS_KPC = 5.0
 K_DENSITY = 16
@@ -62,11 +66,11 @@ MASS_TO_LIGHT = 2.6
 SOLAR_ABS_MAG_V = 4.83
 SUN_X_KPC = 8.122
 SUN_Z_KPC = 0.0208
-FIELD_HALF_WIDTH_DEG = 2.1
+FIELD_HALF_WIDTH_DEG = dw_filed_deg
 DWARF_GAS_RADIUS_KPC = 20.0
 COLD_GAS_TEMPERATURE_K = 2.0e4
 HI_MASS_FIELD_BUFFER = 1.10
-ADOPTED_DISTANCE_KPC = 139.6
+ADOPTED_DISTANCE_KPC = d_today
 SNAPSHOT_CADENCE_GYR = 0.01
 
 iers.conf.auto_download = False

@@ -27,6 +27,5 @@ export MPLCONFIGDIR="$PWD/.mplconfig"
 python3 -c 'import h5py, numpy, scipy, matplotlib, astropy; print("figure environment ready")'
 python3 make_evolution_montage.py /travail/xhuang/Fornax2073 \
   --elinfo /travail/xhuang/Fornax2073/elinfo_Fornax2073.csv \
-  --distance-kpc 139.6 \
   --lookback-step-gyr 0.5 \
   --outdir output

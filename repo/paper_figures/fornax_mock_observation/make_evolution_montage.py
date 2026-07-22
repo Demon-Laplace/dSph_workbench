@@ -499,7 +499,7 @@ def main() -> None:
             else None,
         },
         "adopted_heliocentric_distance_kpc": args.distance_kpc,
-        "distance_reference": "Li et al. (2021), dm=20.72 mag (139.6 kpc)",
+        "distance_reference": f"Li et al. (2021), dm=20.72 mag ({args.distance_kpc:g} kpc)",
         "field_half_width_deg": args.field_half_deg,
         "ra_axis_increases_to_left": True,
         "rendered_gas": "NH-weighted cold HI, no density cut",

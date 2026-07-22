@@ -12,8 +12,8 @@ A&A Letter figure panel.
   (`PartType2/3`);
 - transforms the dwarf to an ICRS tangent plane in degrees, with R.A.
   increasing to the left as in astronomical images;
-- fixes angular and photometric scaling to the adopted heliocentric distance
-  of 139.6 kpc (Li et al. 2021, distance modulus 20.72 mag), while recording
+- fixes angular and photometric scaling to the heliocentric distance defined
+  by `d_today` in `variable.py` (currently 139.4 kpc), while recording
   simulated Galactocentric and transformed heliocentric distances separately;
 - converts stellar mass to V-band light with `M/L_V = 2.6`;
 - applies a two-scale PSF smoothing and a fixed `22--34 mag arcsec^-2` display
@@ -37,7 +37,6 @@ for a simulated tidal feature.
 
 ```text
 python3 make_snapshot_mock.py <path-to-snapshot.hdf5> \
-  --distance-kpc 139.6 \
   --outdir output
 ```
 
@@ -45,7 +44,7 @@ The active Python environment must provide NumPy, SciPy, h5py, Matplotlib,
 and Astropy. PNG and metadata outputs are written directly to the selected
 output directory. By default, the renderer reads `elinfo` and defines
 lookback-time zero at the row whose heliocentric distance is closest to the
-adopted distance (139.6 kpc unless overridden). Use `--elinfo` when the table
+adopted `d_today` distance unless overridden. Use `--elinfo` when the table
 cannot be discovered next to the model or snapshot.
 
 ## Parameters to keep fixed for the final evolution montage
@@ -70,5 +69,5 @@ labels are `RA` and `Dec`; tick values are in degrees.
 ```text
 python3 make_evolution_montage.py /travail/xhuang/Fornax2073 \
   --elinfo /travail/xhuang/Fornax2073/elinfo_Fornax2073.csv \
-  --distance-kpc 139.6 --outdir output
+  --outdir output
 ```
