@@ -493,13 +493,7 @@ def draw_figure(
     )
     axis.set_ylim(0.0, 1.18 * ymax)
     axis.legend(loc="upper center", frameon=False, handlelength=1.5)
-    style_axis(
-        axis,
-        "(c)",
-        "Recent star formation",
-        panel_label_x=0.025,
-        panel_label_ha="left",
-    )
+    style_axis(axis, "(c)", "Recent star formation")
 
     fig.subplots_adjust(left=0.075, right=0.995, bottom=0.22, top=0.89, wspace=0.34)
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight", pad_inches=0.015)

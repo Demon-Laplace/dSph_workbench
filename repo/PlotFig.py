@@ -70,6 +70,7 @@ ADAPTIVE_ML_MIN = 0.1
 ADAPTIVE_ML_MAX = 50.0
 SIM_SB_MARKER_SPACING_KPC = 0.2
 SFH_SFR_UNIT_MSUN_PER_YEAR = 1.0e-4
+PLOT_VIDEO_VERSION = 4
 
 try:
     LIBC = ctypes.CDLL("libc.so.6")
@@ -145,17 +146,17 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         print("[PlotFigVideo] Skip video generation: ffmpeg not found in PATH")
         return None
 
-    output_dir = os.path.abspath(output_dir)
-    output_name = f"{modelname}_v3.mp4"
-    output_path = os.path.join(output_dir, output_name)
+    frames_dir = os.path.abspath(output_dir)
+    video_dir = os.path.dirname(os.path.normpath(frames_dir))
+    output_name = f"{modelname}_v{PLOT_VIDEO_VERSION}.mp4"
+    output_path = os.path.join(video_dir, output_name)
     with tempfile.NamedTemporaryFile(
         suffix='.mp4',
         prefix=f".{output_name}.tmp.",
-        dir=output_dir,
+        dir=video_dir,
         delete=False,
     ) as handle:
         tmp_output_path = handle.name
-    tmp_output_name = os.path.basename(tmp_output_path)
     cmd = [
         ffmpeg_path,
         "-start_number",
@@ -171,13 +172,13 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         "-pix_fmt",
         "yuv420p",
         "-y",
-        tmp_output_name,
+        tmp_output_path,
     ]
 
     try:
         subprocess.run(
             cmd,
-            cwd=output_dir,
+            cwd=frames_dir,
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
