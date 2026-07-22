@@ -11,6 +11,7 @@
 #SBATCH --account=yang
 #SBATCH --time=01:00:00
 
+. /etc/profile.d/z00_lmod.sh
 module purge
 module load python/3.9.1
 

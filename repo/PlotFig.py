@@ -448,6 +448,30 @@ def _load_surface_brightness_observation(dwarf_name, factor):
     return obs_surface_brightness
 
 
+def _normalize_elinfo_schema(dw_elinfo):
+    """Supply plotting-only defaults for elinfo files made by older GetInfo versions."""
+    legacy_fallbacks = []
+
+    if 'rhalf_circularized' not in dw_elinfo.columns:
+        if 'rhalf' not in dw_elinfo.columns:
+            raise KeyError("elinfo is missing both 'rhalf_circularized' and 'rhalf'")
+        dw_elinfo['rhalf_circularized'] = dw_elinfo['rhalf']
+        legacy_fallbacks.append("rhalf_circularized=rhalf")
+
+    for column in ('shape_center_x_kpc', 'shape_center_y_kpc'):
+        if column not in dw_elinfo.columns:
+            dw_elinfo[column] = 0.0
+            legacy_fallbacks.append(f"{column}=0")
+
+    if legacy_fallbacks:
+        print(
+            "[PlotFig] Legacy elinfo compatibility: "
+            + ", ".join(legacy_fallbacks)
+        )
+
+    return dw_elinfo
+
+
 def build_plot_context():
     model_info = DataProcessor.parse_model_name_details()
     modelname = model_info['modelname']
@@ -467,6 +491,7 @@ def build_plot_context():
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
+    dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
     elinfo_by_numsp = dw_elinfo.set_index('numsp', drop=False)
 
     if not os.path.exists(output_folder):
