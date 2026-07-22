@@ -10,7 +10,7 @@ The particle selection follows the existing Fornax analysis pipeline:
 
 The display layer is deliberately different from the diagnostic PlotFig.py
 panels: stellar particles are converted to a PSF-smoothed light map, while
-total gas and cold neutral gas are shown as blue emission and cyan contours.
+cold neutral gas is shown as blue emission and fixed-column-density contours.
 """
 
 from __future__ import annotations
@@ -72,8 +72,26 @@ COLD_GAS_TEMPERATURE_K = 2.0e4
 HI_MASS_FIELD_BUFFER = 1.10
 ADOPTED_DISTANCE_KPC = d_today
 SNAPSHOT_CADENCE_GYR = 0.01
+NHI_PER_MSUN_PC2 = 1.248e20
+HI_CONTOUR_LEVELS_NHI_CM2 = np.array([0.5e19, 2.0e19, 5.0e19, 1.0e20])
+HI_CONTOUR_LEVELS_MSUN_PC2 = HI_CONTOUR_LEVELS_NHI_CM2 / NHI_PER_MSUN_PC2
+HI_CONTOUR_COLORS = np.array(["#249fb4", "#42cbd3", "#72ebeb", "#d3ffff"])
 
 iers.conf.auto_download = False
+
+
+def visible_hi_contour_levels(
+    hi_surface_density: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return fixed H I levels that lie inside the current map range."""
+    finite = np.asarray(hi_surface_density)[np.isfinite(hi_surface_density)]
+    if finite.size == 0:
+        return np.array([], dtype=float), np.array([], dtype=int)
+    visible = (
+        (HI_CONTOUR_LEVELS_MSUN_PC2 > float(np.min(finite)))
+        & (HI_CONTOUR_LEVELS_MSUN_PC2 < float(np.max(finite)))
+    )
+    return HI_CONTOUR_LEVELS_MSUN_PC2[visible], np.flatnonzero(visible)
 
 
 def read_particles(snapshot_path: Path) -> tuple[dict[int, dict[str, np.ndarray]], float, float]:
@@ -718,15 +736,15 @@ def save_mock_panel(
         interpolation="bilinear",
         rasterized=True,
     )
-    hi_peak = float(np.nanmax(hi_surface_density))
-    if np.isfinite(hi_peak) and hi_peak > 0.0:
+    hi_levels, hi_level_indices = visible_hi_contour_levels(hi_surface_density)
+    if hi_levels.size:
         axis.contour(
             hi_surface_density.T,
-            levels=hi_peak * np.array([0.02, 0.10, 0.35, 0.70]),
+            levels=hi_levels,
             origin="lower",
             extent=extent,
-            colors=["#249fb4", "#42cbd3", "#72ebeb", "#d3ffff"],
-            linewidths=[0.42, 0.52, 0.64, 0.78],
+            colors=HI_CONTOUR_COLORS[hi_level_indices].tolist(),
+            linewidths=np.array([0.42, 0.52, 0.64, 0.78])[hi_level_indices],
             alpha=0.92,
         )
     style_axis(axis, half_width_deg)
@@ -806,15 +824,15 @@ def save_diagnostic(
         vmax=faint_limit,
         interpolation="bilinear",
     )
-    hi_peak = float(np.nanmax(hi_surface_density))
-    if np.isfinite(hi_peak) and hi_peak > 0.0:
+    hi_levels, hi_level_indices = visible_hi_contour_levels(hi_surface_density)
+    if hi_levels.size:
         axis.contour(
             hi_surface_density.T,
-            levels=hi_peak * np.array([0.02, 0.10, 0.35, 0.70]),
+            levels=hi_levels,
             origin="lower",
             extent=extent,
             colors="#b7ffff",
-            linewidths=[0.42, 0.52, 0.64, 0.78],
+            linewidths=np.array([0.42, 0.52, 0.64, 0.78])[hi_level_indices],
         )
     axis.set_xlabel("RA", color="#dedede")
     axis.set_ylabel("Dec", color="#dedede")

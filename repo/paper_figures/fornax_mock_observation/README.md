@@ -22,6 +22,9 @@ A&A Letter figure panel.
   snapshot SPH smoothing lengths to construct the projected map;
 - displays only NH-weighted cold H I (`T < 20000 K`), with no hot-gas layer
   and no additional density cut;
+- draws fixed H I contours at `(0.5, 2, 5, 10) x 10^19 cm^-2`; the outer
+  `5 x 10^18 cm^-2` level matches the sensitivity adopted for the paper
+  comparison rather than scaling each panel to its own peak;
 - annotates the selected dwarf stellar mass and the H I mass measured in a
   projected square 10 percent larger than the plotted field of view;
 - restores the original normalized proper-motion direction arrow;

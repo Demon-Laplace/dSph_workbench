@@ -289,15 +289,15 @@ def draw_panel(
         interpolation="bilinear",
         rasterized=True,
     )
-    hi_peak = float(np.nanmax(hi_surface_density))
-    if np.isfinite(hi_peak) and hi_peak > 0.0:
+    hi_levels, hi_level_indices = mock.visible_hi_contour_levels(hi_surface_density)
+    if hi_levels.size:
         axis.contour(
             hi_surface_density.T,
-            levels=hi_peak * np.array([0.02, 0.10, 0.35, 0.70]),
+            levels=hi_levels,
             origin="lower",
             extent=extent,
-            colors=["#249fb4", "#42cbd3", "#72ebeb", "#d3ffff"],
-            linewidths=[0.38, 0.48, 0.58, 0.70],
+            colors=mock.HI_CONTOUR_COLORS[hi_level_indices].tolist(),
+            linewidths=np.array([0.38, 0.48, 0.58, 0.70])[hi_level_indices],
             alpha=0.92,
         )
     mock.style_axis(axis, args.field_half_deg)
