@@ -19,4 +19,5 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
+cd "${SLURM_SUBMIT_DIR:?Submit this job from a model directory}"
 python3 ../dSph_workbench/PlotFig.py --processes "${SLURM_CPUS_PER_TASK:-24}"
