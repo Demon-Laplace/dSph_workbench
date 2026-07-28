@@ -39,19 +39,6 @@ def old_dwarf_star_local_mask(snapshot):
     return tp != 4
 
 
-def new_dwarf_star_local_mask(snapshot):
-    """Return a local mask selecting stars formed during the simulation."""
-    df = snapshot["df"]
-    total_dw_star_mask = np.asarray(snapshot["total_dw_star_mask"], dtype=bool)
-
-    if "birth" in df.columns:
-        birth = df.loc[total_dw_star_mask, "birth"].to_numpy(dtype=float)
-        return np.isfinite(birth) & (birth > 0.0)
-
-    tp = df.loc[total_dw_star_mask, "tp"].to_numpy(dtype=int)
-    return tp == 4
-
-
 def fit_velocity_gradient(x_kpc, y_kpc, vlos, mask=None):
     """Fit vlos = v0 + a*x + b*y and return model and residual arrays."""
     x_kpc = np.asarray(x_kpc, dtype=float)
@@ -133,14 +120,6 @@ def old_star_projected_kinematics(snapshot):
         "vlos_detrended": gradient["v_resid"],
         "velocity_gradient": gradient,
     }
-
-
-def new_star_projected_kinematics(snapshot):
-    """Projected positions and raw LOS velocities of newly formed stars."""
-    new_local_mask = new_dwarf_star_local_mask(snapshot)
-    projected = _star_projected_kinematics(snapshot, new_local_mask)
-    projected["new_local_mask"] = new_local_mask
-    return projected
 
 
 def detrended_dispersion_in_aperture(
@@ -234,7 +213,6 @@ def compute_snapshot_summary(snapshot, numsp):
     rotra_dw_cold_gas = snapshot["rotra_dw_cold_gas"]
     rotdec_dw_cold_gas = snapshot["rotdec_dw_cold_gas"]
     old_kinematics = old_star_projected_kinematics(snapshot)
-    new_kinematics = new_star_projected_kinematics(snapshot)
     old_star_local_mask = old_kinematics["old_local_mask"]
 
     x_all = df["x"].to_numpy()
@@ -358,18 +336,18 @@ def compute_snapshot_summary(snapshot, numsp):
     coldgas_half_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask)
 
     sigma_re_circular_result = detrended_dispersion_in_aperture(
-        new_kinematics["x_kpc"],
-        new_kinematics["y_kpc"],
-        new_kinematics["vlos"],
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
         r_half_circular,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
         circular=True,
     )
     sigma_re_elliptical_result = detrended_dispersion_in_aperture(
-        new_kinematics["x_kpc"],
-        new_kinematics["y_kpc"],
-        new_kinematics["vlos"],
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
         r_half,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
@@ -378,9 +356,9 @@ def compute_snapshot_summary(snapshot, numsp):
         circular=False,
     )
     sigma_fixed_500pc_result = detrended_dispersion_in_aperture(
-        new_kinematics["x_kpc"],
-        new_kinematics["y_kpc"],
-        new_kinematics["vlos"],
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
         r_3d_cut,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
@@ -389,7 +367,7 @@ def compute_snapshot_summary(snapshot, numsp):
     sigma_re_circular = sigma_re_circular_result["sigma"]
     sigma_re_elliptical = sigma_re_elliptical_result["sigma"]
     sigma_fixed_500pc = sigma_fixed_500pc_result["sigma"]
-    sigma_re_nstar = sigma_re_circular_result["nstar"]
+    sigma_re_noldstar = sigma_re_circular_result["nstar"]
     sigma_gradient_kms_per_kpc = sigma_re_circular_result["gradient"]["grad_amp"]
 
     stellar_region_radius = stellar_region_rhalf_multiplier * r_half
@@ -505,14 +483,14 @@ def compute_snapshot_summary(snapshot, numsp):
         "shape_center_y_kpc": shape_center_y_kpc,
         "distance": d_mean,
         "age": tsnap,
-        # ``sigma`` is the Walker-style observable: newly formed stars inside
+        # ``sigma`` is the Walker-style observable: old stars inside
         # the directly measured circular half-light aperture, after fitting
         # and removing a planar LOS velocity gradient on that same sample.
         "sigma": sigma_re_circular,
         "sigma_re_circular": sigma_re_circular,
         "sigma_re_elliptical": sigma_re_elliptical,
         "sigma_fixed_500pc": sigma_fixed_500pc,
-        "sigma_re_nstar": sigma_re_nstar,
+        "sigma_re_noldstar": sigma_re_noldstar,
         "sigma_gradient_kms_per_kpc": sigma_gradient_kms_per_kpc,
         "tsigma": theoretical_sigma,
         "tsigma_xyz": sigma_xyz,
