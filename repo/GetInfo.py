@@ -31,8 +31,11 @@ ELINFO_COLUMNS = [
     'coldgas_mass', 'coldgas_half_mass',
     'mw_mass_r', 'eps', 'pa', 'gas_density',
     'vr', 'vtheta', 'vphi', 'distance_gal', 'rhalf',
-    'rhalf_circularized', 'shape_center_x_kpc', 'shape_center_y_kpc',
-    'distance', 'age', 'sigma', 'tsigma',
+    'rhalf_circularized', 'rhalf_circular',
+    'shape_center_x_kpc', 'shape_center_y_kpc',
+    'distance', 'age', 'sigma', 'sigma_re_circular',
+    'sigma_re_elliptical', 'sigma_fixed_500pc', 'sigma_re_nstar',
+    'sigma_gradient_kms_per_kpc', 'tsigma',
     'tsigma_xyz',
     'sigma_x', 'sigma_y', 'sigma_z',
     'pmra', 'pmdec', 'cold_gas_center_ra', 'cold_gas_center_dec',
@@ -323,8 +326,11 @@ class GetInfo:
                 summary['coldgas_mass'], summary['coldgas_half_mass'], 
                 summary['mw_mass_r'], summary['eps'], summary['pa'], summary['gas_density'],
                 summary['vr'], summary['vtheta'], summary['vphi'], summary['distance_gal'], summary['rhalf'], 
-                summary['rhalf_circularized'], summary['shape_center_x_kpc'], summary['shape_center_y_kpc'],
-                summary['distance'], summary['age'], summary['sigma'], summary['tsigma'],
+                summary['rhalf_circularized'], summary['rhalf_circular'],
+                summary['shape_center_x_kpc'], summary['shape_center_y_kpc'],
+                summary['distance'], summary['age'], summary['sigma'], summary['sigma_re_circular'],
+                summary['sigma_re_elliptical'], summary['sigma_fixed_500pc'], summary['sigma_re_nstar'],
+                summary['sigma_gradient_kms_per_kpc'], summary['tsigma'],
                 summary['tsigma_xyz'],
                 summary['sigma_x'], summary['sigma_y'], summary['sigma_z'],
                 summary['pmra'], summary['pmdec'], summary['cold_gas_center_ra'], summary['cold_gas_center_dec'],
@@ -415,6 +421,17 @@ class GetInfo:
         default_range = f'0,{max_snapshot_num}'
         parser.add_argument('--range', type=str, default=default_range, 
                             help='the range of snapshots, e.g., "1,20"')
+        parser.add_argument(
+            '--output-csv',
+            type=Path,
+            default=self.output_csv_file,
+            help='output elinfo path; defaults to elinfo_<model>.csv',
+        )
+        parser.add_argument(
+            '--rebuild',
+            action='store_true',
+            help='replace the selected output CSV before processing',
+        )
         parser.add_argument('--processes', type=int, default=1, 
                             help='number of processes to use')
         parser.add_argument('--chunksize', type=int, default=1,
@@ -440,6 +457,9 @@ class GetInfo:
         self.profile_memory = args.profile_memory
         self.float_precision = args.float_precision
         self.show_progress = not args.no_progress
+        self.output_csv_file = args.output_csv.resolve()
+        if args.rebuild and self.output_csv_file.exists():
+            self.output_csv_file.unlink()
 
         start, end = map(int, args.range.split(','))
         requested_numsp = filter_available_snapshots(start, end, available_snapshots)
@@ -458,9 +478,17 @@ class GetInfo:
         output_comments = [
             f"# Orbit Data: {','.join(map(str, orbit_data))}\n",
             f"# Timescale_fd: {fd_value}\n",
+            "# rhalf: projected elliptical half-light semi-major axis of old stars\n",
+            "# rhalf_circularized: equal-area value rhalf*sqrt(1-eps)\n",
+            "# rhalf_circular: radius directly enclosing half the old-star light in a circular aperture\n",
+            "# sigma and sigma_re_circular: newly formed-star LOS dispersion after removing a planar velocity gradient within circular R<rhalf_circular\n",
+            "# sigma_re_elliptical: same tracer and detrending within the old-star half-light ellipse\n",
+            "# sigma_fixed_500pc: same tracer and detrending within circular R<0.5 kpc\n",
+            "# sigma_re_nstar: newly formed stars in the circular R<rhalf_circular aperture\n",
+            "# sigma_gradient_kms_per_kpc: fitted planar LOS velocity-gradient amplitude in that aperture\n",
         ]
 
-        # 断点续写：读取已完成的numsp。读取时会清理历史中断留下的乱序、重复或坏行。
+        # æ–­ç‚¹ç»­å†™ï¼šè¯»å–å·²å®Œæˆçš„numspã€‚è¯»å–æ—¶ä¼šæ¸…ç†åŽ†å²ä¸­æ–­ç•™ä¸‹çš„ä¹±åºã€é‡å¤æˆ–åè¡Œã€‚
         finished_numsp = set()
         try:
             cleanup_report = self.merge_rows_sorted([], comments=output_comments)
@@ -474,7 +502,7 @@ class GetInfo:
         except Exception as e:
             print(f"Warning: Failed to read existing csv: {e}")
 
-        # 只处理未完成的快照
+        # åªå¤„ç†æœªå®Œæˆçš„å¿«ç…§
         numsp_list = [n for n in numsp_list if n not in finished_numsp]
         completed_in_range = len(requested_numsp) - len(numsp_list)
         print(
@@ -548,3 +576,4 @@ class GetInfo:
 if __name__ == "__main__":
     processor = GetInfo()
     processor.main()
+
