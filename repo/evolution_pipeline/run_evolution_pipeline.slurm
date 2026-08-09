@@ -7,6 +7,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
+#SBATCH --mem=24G
 #SBATCH --time=08:00:00
 #SBATCH --output=fornax_evolution_%j.out
 #SBATCH --error=fornax_evolution_%j.err
@@ -22,6 +23,10 @@ module load python/3.9.1
 export FORNAX_REPO_ROOT="${PIPELINE_ROOT}/.."
 export MPLBACKEND=Agg
 export MPLCONFIGDIR="${PIPELINE_ROOT}/.mplconfig"
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
 mkdir -p "${MPLCONFIGDIR}"
 
 run_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["paths"]["run_dir"])' "${CONFIG_PATH}")
