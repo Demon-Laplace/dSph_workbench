@@ -17,7 +17,11 @@ class CoordinateTransform:
         zh = z - z_sun
 
         if all(v is not None for v in [vx, vy, vz]):
-            vsun = galactocentric_frame.galcen_v_sun.d_xyz.to(u.km / u.s).value
+            solar_velocity = galactocentric_frame.galcen_v_sun
+            # Astropy <=7 exposes this vector as a CartesianDifferential,
+            # while Astropy 8 exposes an equivalent CartesianRepresentation.
+            components = solar_velocity.d_xyz if hasattr(solar_velocity, "d_xyz") else solar_velocity.xyz
+            vsun = components.to(u.km / u.s).value
             vxh = vx - vsun[0]
             vyh = vy - vsun[1]
             vzh = vz - vsun[2]
