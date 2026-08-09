@@ -401,12 +401,12 @@ def local_cgm_measurement(
     )
     indices = np.flatnonzero(candidates)
     method = str(config.get("method", "knn_shell")).lower()
+    if method not in {"knn_shell", "fixed_shell"}:
+        raise ValueError("cgm.method must be 'knn_shell' or 'fixed_shell'")
     if method == "knn_shell" and indices.size:
         neighbours = int(config.get("neighbours", 128))
         order = np.argsort(radius[indices])
         indices = indices[order[: min(neighbours, indices.size)]]
-    elif method != "fixed_shell":
-        raise ValueError("cgm.method must be 'knn_shell' or 'fixed_shell'")
 
     minimum_particles = int(config.get("minimum_particles", 32))
     if indices.size < minimum_particles:

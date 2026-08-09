@@ -14,6 +14,30 @@ from coordinate_transform import CoordinateTransform
 
 
 class EvolutionPipelineTests(unittest.TestCase):
+    def test_empty_knn_cgm_shell_is_a_valid_missing_measurement(self):
+        frame = pd.DataFrame(
+            {
+                "tp": [0],
+                "x": [0.0],
+                "y": [0.0],
+                "z": [0.0],
+                "vx": [0.0],
+                "vy": [0.0],
+                "vz": [0.0],
+                "m": [1.0],
+                "temp": [100.0],
+                "nh": [1.0],
+            }
+        )
+        result = MODULE.local_cgm_measurement(
+            frame,
+            np.zeros(3),
+            np.zeros(3),
+            {"method": "knn_shell", "minimum_particles": 1},
+        )
+        self.assertEqual(result["cgm_particle_count"], 0.0)
+        self.assertTrue(np.isnan(result["ram_pressure_dyn_cm2"]))
+
     def test_heliocentric_velocity_transform_is_astropy_version_compatible(self):
         transformed = CoordinateTransform.to_heliocentric(
             np.array([10.0]),
