@@ -1,0 +1,10 @@
+# This checkout contains many local simulation outputs and analysis files.
+*
+!.gitignore
+!sync_fornax_models.sh
+!IniFile/
+!IniFile/SYNC_POLICY.md
+
+# Model files are staged only by sync_fornax_models.sh, which enforces the
+# Fornax2047+ policy numerically.
+IniFile/*.ini
