@@ -27,6 +27,8 @@ from matplotlib.path import Path as MplPath
 from scipy.ndimage import convolve1d
 from scipy.spatial import ConvexHull
 
+from variable import d_today
+
 
 CODE_VERSION = "v0.2.3"
 
@@ -46,7 +48,7 @@ MUNOZ_CENTER_RADIUS_KPC = 0.05
 MUNOZ_RHALF_MU_V = 24.77
 MUNOZ_RHALF_RADIUS_KPC = 0.791
 MUNOZ_MU_V_ERR = 0.16
-DEFAULT_DISTANCE_KPC = 139.6
+DEFAULT_DISTANCE_KPC = d_today
 DEFAULT_PROFILE_SELECTION_MAX_RADIUS_KPC = 6.0
 DEFAULT_PROFILE_PLOT_MAX_RADIUS_KPC = 5.1
 DEFAULT_MUNOZ_ANCHOR_HALF_WIDTH_KPC = 0.12
@@ -1647,7 +1649,7 @@ def main() -> None:
             "The published Yang S1 density and background are validation targets only and are not forced.",
             "The final map is calibrated from the smoothed background-subtracted density using Muñoz anchors.",
             "The 2D contour-map limit and Yang-style 1D radial-profile limit are reported separately.",
-            "Surface-brightness values are not distance-modulus shifted; the 139.6 kpc distance is used only for angular-to-kpc radii.",
+            f"Surface-brightness values are not distance-modulus shifted; the {d_today:.1f} kpc distance is used only for angular-to-kpc radii.",
         ],
     }
     write_diagnostics(diagnostics_json, diagnostics)

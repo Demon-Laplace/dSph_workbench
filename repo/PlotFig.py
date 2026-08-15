@@ -69,6 +69,8 @@ ADAPTIVE_ML_FIT_MAX_RADIUS_KPC = 5.0
 ADAPTIVE_ML_MIN = 0.1
 ADAPTIVE_ML_MAX = 50.0
 SIM_SB_MARKER_SPACING_KPC = 0.2
+SFH_SFR_UNIT_MSUN_PER_YEAR = 1.0e-4
+PLOT_VIDEO_VERSION = 4
 
 try:
     LIBC = ctypes.CDLL("libc.so.6")
@@ -144,17 +146,17 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         print("[PlotFigVideo] Skip video generation: ffmpeg not found in PATH")
         return None
 
-    output_dir = os.path.abspath(output_dir)
-    output_name = f"{modelname}_v3.mp4"
-    output_path = os.path.join(output_dir, output_name)
+    frames_dir = os.path.abspath(output_dir)
+    video_dir = os.path.dirname(os.path.normpath(frames_dir))
+    output_name = f"{modelname}_v{PLOT_VIDEO_VERSION}.mp4"
+    output_path = os.path.join(video_dir, output_name)
     with tempfile.NamedTemporaryFile(
         suffix='.mp4',
         prefix=f".{output_name}.tmp.",
-        dir=output_dir,
+        dir=video_dir,
         delete=False,
     ) as handle:
         tmp_output_path = handle.name
-    tmp_output_name = os.path.basename(tmp_output_path)
     cmd = [
         ffmpeg_path,
         "-start_number",
@@ -170,13 +172,13 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         "-pix_fmt",
         "yuv420p",
         "-y",
-        tmp_output_name,
+        tmp_output_path,
     ]
 
     try:
         subprocess.run(
             cmd,
-            cwd=output_dir,
+            cwd=frames_dir,
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
@@ -446,6 +448,30 @@ def _load_surface_brightness_observation(dwarf_name, factor):
     return obs_surface_brightness
 
 
+def _normalize_elinfo_schema(dw_elinfo):
+    """Supply plotting-only defaults for elinfo files made by older GetInfo versions."""
+    legacy_fallbacks = []
+
+    if 'rhalf_circularized' not in dw_elinfo.columns:
+        if 'rhalf' not in dw_elinfo.columns:
+            raise KeyError("elinfo is missing both 'rhalf_circularized' and 'rhalf'")
+        dw_elinfo['rhalf_circularized'] = dw_elinfo['rhalf']
+        legacy_fallbacks.append("rhalf_circularized=rhalf")
+
+    for column in ('shape_center_x_kpc', 'shape_center_y_kpc'):
+        if column not in dw_elinfo.columns:
+            dw_elinfo[column] = 0.0
+            legacy_fallbacks.append(f"{column}=0")
+
+    if legacy_fallbacks:
+        print(
+            "[PlotFig] Legacy elinfo compatibility: "
+            + ", ".join(legacy_fallbacks)
+        )
+
+    return dw_elinfo
+
+
 def build_plot_context():
     model_info = DataProcessor.parse_model_name_details()
     modelname = model_info['modelname']
@@ -465,6 +491,7 @@ def build_plot_context():
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
+    dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
     elinfo_by_numsp = dw_elinfo.set_index('numsp', drop=False)
 
     if not os.path.exists(output_folder):
@@ -486,7 +513,7 @@ def build_plot_context():
     mag_obs_err = obs_surface_brightness['mag_obs_err']
 
     gas_loss_rate = Analysis.calculate_gas_loss_rate(dw_elinfo['age'].to_numpy(), dw_elinfo['coldgas_half_mass'].to_numpy())
-    distance_series = dw_elinfo['distance_gal'] if 'distance_gal' in dw_elinfo.columns else dw_elinfo['distance']
+    distance_series = dw_elinfo['distance']
     sigma_mw = np.where(
         dw_elinfo.sigma >= dw_elinfo.tsigma,
         np.sqrt(dw_elinfo.sigma**2 - dw_elinfo.tsigma**2),
@@ -1328,7 +1355,7 @@ def _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri, bin_width=0.5):
 
     mass_sim, edges_sim = np.histogram(lookback, bins=bins, weights=sfh_mass)
     dt = np.diff(edges_sim)
-    sfr_sim = mass_sim / dt / 1e4
+    sfr_sim = mass_sim / (dt * 1.0e9) / SFH_SFR_UNIT_MSUN_PER_YEAR
     lookback_sim = edges_sim[:-1]
     lookback_obs, sfr_obs = DataProcessor.GetSFR(sfh_dw, bins=bins)
 
