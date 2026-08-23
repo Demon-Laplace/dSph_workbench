@@ -1,0 +1,96 @@
+{
+  "paths": {
+    "run_dir": "/path/to/GIZMO/run",
+    "snapshot_dir": "output",
+    "output_dir": "evolution_analysis",
+    "timeseries_csv": "fornax_evolution_timeseries.csv",
+    "figure_stem": "fornax_physical_evolution"
+  },
+  "snapshots": {
+    "glob": "snapshot_*.hdf5",
+    "number_regex": "snapshot_(\\d+)\\.hdf5$",
+    "start": 0,
+    "stop": null,
+    "step": 1
+  },
+  "processing": {
+    "checkpoint_every": 5
+  },
+  "particle_types": {
+    "gas": 0,
+    "dark_matter": 1,
+    "stars": [2, 3, 4],
+    "new_stars": 4
+  },
+  "dwarf_selection": {
+    "core_radius_kpc": 5.109,
+    "mw_exclusion_radius_kpc": 5.0,
+    "dwarf_radius_factor": 3.0,
+    "density_neighbours": 16
+  },
+  "projection": {
+    "mode": "native",
+    "inclination_deg": null,
+    "azimuth_deg": null
+  },
+  "stellar": {
+    "mass_aperture_kpc": 20.0,
+    "com_velocity_aperture_kpc": null,
+    "com_velocity_aperture_re_multiple": 8.0
+  },
+  "gas": {
+    "aperture_kpc": 20.0,
+    "temperature_split_k": 20000.0
+  },
+  "hi": {
+    "mass_definition": "contour",
+    "temperature_max_k": 20000.0,
+    "neutral_fraction_min": 0.0,
+    "calculate_contour_mass": true,
+    "field_half_width_deg": 2.1,
+    "map_pixels": 520,
+    "minimum_smoothing_pixels": 2.85,
+    "fallback_smoothing_length_kpc": 0.05,
+    "contour_threshold_nhi_cm2": 5.0e18
+  },
+  "cgm": {
+    "method": "knn_shell",
+    "particle_type": 0,
+    "exclusion_radius_kpc": 30.0,
+    "search_radius_kpc": 60.0,
+    "neighbours": 128,
+    "minimum_particles": 32,
+    "temperature_min_k": 20000.0,
+    "neutral_fraction_max": 1.0,
+    "mw_gas_radius_kpc": 500.0,
+    "hydrogen_mass_fraction": 0.76,
+    "mean_molecular_weight": 0.61
+  },
+  "enclosed_mass": {
+    "radii_kpc": [0.5, 1.0, 2.0],
+    "include_effective_radius": true
+  },
+  "smoothing": {
+    "method": "savgol",
+    "window_snapshots": 21,
+    "polyorder": 2,
+    "gaussian_sigma_snapshots": 3.0,
+    "minimum_abs_rate_msun_per_gyr": 10000.0
+  },
+  "comparison_epoch": {
+    "method": "heliocentric_distance",
+    "target_heliocentric_distance_kpc": 139.4,
+    "tolerance_kpc": 0.25,
+    "branch": "first_crossing",
+    "interaction_start_time_gyr": 0.0
+  },
+  "pericentre_detection": {
+    "enabled": true,
+    "minimum_post_points": 5,
+    "minimum_rise_kpc": 0.5
+  },
+  "plot": {
+    "formats": ["pdf", "png"],
+    "dpi": 350
+  }
+}

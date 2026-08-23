@@ -549,11 +549,23 @@ class Analysis:
 
     @staticmethod
     def half_light_radius(x, y, mass, ep, pa=0.0, center_x=0.0, center_y=0.0):
+        """Return the projected elliptical half-light semi-major axis.
+
+        Particle mass is used as the luminosity weight; this is equivalent to
+        light weighting when the selected tracer has a fixed mass-to-light
+        ratio.  Non-finite coordinates and non-positive weights are excluded.
+        """
         x = np.asarray(x, dtype=float)
         y = np.asarray(y, dtype=float)
         mass = np.asarray(mass, dtype=float)
-        if x.size == 0 or y.size == 0 or mass.size == 0:
+        if x.shape != y.shape or x.shape != mass.shape:
+            raise ValueError("x, y, and mass must have matching shapes")
+        finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(mass) & (mass > 0.0)
+        if not np.any(finite):
             return np.nan
+        x = x[finite]
+        y = y[finite]
+        mass = mass[finite]
         r = Analysis.projected_elliptical_radius(
             x,
             y,
