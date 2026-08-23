@@ -31,4 +31,8 @@ mkdir -p "${MPLCONFIGDIR}"
 
 run_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["paths"]["run_dir"])' "${CONFIG_PATH}")
 cd "${run_dir}"
-python3 "${PIPELINE_ROOT}/fornax_evolution_pipeline.py" run --config "${CONFIG_PATH}"
+pipeline_args=(run --config "${CONFIG_PATH}")
+if [[ "${OVERWRITE:-0}" == "1" ]]; then
+    pipeline_args+=(--overwrite)
+fi
+python3 "${PIPELINE_ROOT}/fornax_evolution_pipeline.py" "${pipeline_args[@]}"

@@ -33,12 +33,26 @@ The Fornax4001 configuration uses the contour definition employed by the paper.
 
 ## Physical definitions
 
+- `stellar_mass_msun` is the instantaneous mass of all dwarf stellar particle
+  types (old plus newly formed) inside the projected old-star ellipse with
+  semi-major axis `stellar.mass_aperture_re_multiple * R_e`.  The Fornax4001
+  production value is 8 `R_e`; 10 `R_e` is retained as a convergence check.
+- `stellar_mass_old_tracer_aperture_msun` is the old-star subset in that same
+  aperture.  It is an RGB-like observational tracer and must not be used as
+  the denominator of a total stellar or gas fraction.
+- `stellar.preselection_radius_kpc` is only the broad 3D candidate-selection
+  radius.  `stellar_mass_preselection_msun` is kept for audit purposes and is
+  not treated as a physical galaxy boundary.
+- `hi_fraction_total_stars` is
+  `M_HI / (M_HI + stellar_mass_msun)` using the selected H I definition.
 - `gas_mass_msun` is all gas inside the configured 3D dwarf aperture.
 - The dwarf COM velocity is the mass-weighted stellar velocity inside either a
   fixed 3D aperture or a configured multiple of the instantaneous `R_e`.
 - Local CGM properties are measured in a configurable hot-gas shell outside
-  the dwarf aperture.  `knn_shell` uses the nearest configured number of valid
-  particles; `fixed_shell` uses all particles in the shell.
+  the dwarf aperture.  Gas tagged as belonging to the dwarf in a configured
+  reference snapshot is excluded by persistent ParticleID, including after it
+  is stripped into the shell. `knn_shell` uses the nearest configured number
+  of remaining particles; `fixed_shell` uses all remaining particles.
 - Enclosed stellar and gas masses are 3D spherical quantities.  The fixed
   radii and instantaneous projected `R_e` are encoded explicitly in column
   names.
@@ -47,6 +61,12 @@ The Fornax4001 configuration uses the contour definition employed by the paper.
   its time derivative.  Raw mass, raw derivative, smoothed mass, smoothed
   derivative, and raw and smoothed timescales are all retained.
 - `stellar_dynamical_time_gyr = 0.9777922217 R_e[kpc] / sigma_los[km/s]`.
+- Raw ram pressure is retained, while the publication curve uses the separate
+  light smoothing configured under `smoothing.ram_pressure`.
+- The metadata reports the piecewise-linearly interpolated duration for which
+  `sigma_los_kms` lies inside the configurable interval under
+  `diagnostics.sigma_los_interval` (9--11 km/s in the Fornax4001 setup).
+- Both direct-particle and contour H I masses remain raw and unsmoothed.
 
 The CGM shell estimate is deliberately simple.  It is a local environmental
 proxy, not an SPH density reconstruction at the dwarf centre.  Its exclusion

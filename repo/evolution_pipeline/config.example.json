@@ -34,7 +34,9 @@
     "azimuth_deg": null
   },
   "stellar": {
-    "mass_aperture_kpc": 20.0,
+    "preselection_radius_kpc": 20.0,
+    "mass_aperture_re_multiple": 8.0,
+    "sensitivity_aperture_re_multiple": 10.0,
     "com_velocity_aperture_kpc": null,
     "com_velocity_aperture_re_multiple": 8.0
   },
@@ -64,7 +66,12 @@
     "neutral_fraction_max": 1.0,
     "mw_gas_radius_kpc": 500.0,
     "hydrogen_mass_fraction": 0.76,
-    "mean_molecular_weight": 0.61
+    "mean_molecular_weight": 0.61,
+    "dwarf_gas_exclusion": {
+      "method": "initial_particle_ids",
+      "reference_snapshot": 0,
+      "reference_radius_kpc": 20.0
+    }
   },
   "enclosed_mass": {
     "radii_kpc": [0.5, 1.0, 2.0],
@@ -75,7 +82,24 @@
     "window_snapshots": 21,
     "polyorder": 2,
     "gaussian_sigma_snapshots": 3.0,
-    "minimum_abs_rate_msun_per_gyr": 10000.0
+    "minimum_abs_rate_msun_per_gyr": 10000.0,
+    "central_gas": {
+      "method": "savgol",
+      "window_snapshots": 21,
+      "polyorder": 2,
+      "minimum_abs_rate_msun_per_gyr": 10000.0
+    },
+    "ram_pressure": {
+      "method": "savgol",
+      "window_snapshots": 9,
+      "polyorder": 2
+    }
+  },
+  "diagnostics": {
+    "sigma_los_interval": {
+      "lower_kms": 9.0,
+      "upper_kms": 11.0
+    }
   },
   "comparison_epoch": {
     "method": "heliocentric_distance",

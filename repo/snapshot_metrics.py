@@ -24,6 +24,21 @@ def _safe_mean(values):
     return np.nan if values.size == 0 else np.mean(values)
 
 
+def stellar_mass_components(masses, aperture_mask, old_star_mask):
+    """Return total, old-tracer, and newly formed mass in one aperture."""
+    masses = np.asarray(masses, dtype=float)
+    aperture_mask = np.asarray(aperture_mask, dtype=bool)
+    old_star_mask = np.asarray(old_star_mask, dtype=bool)
+    if not (masses.shape == aperture_mask.shape == old_star_mask.shape):
+        raise ValueError("stellar mass and mask arrays must have identical shapes")
+    selected = aperture_mask & np.isfinite(masses)
+    return {
+        "total": float(np.sum(masses[selected])),
+        "old_tracer": float(np.sum(masses[selected & old_star_mask])),
+        "new": float(np.sum(masses[selected & ~old_star_mask])),
+    }
+
+
 def old_dwarf_star_local_mask(snapshot):
     """Return a local mask selecting old dwarf stars from total_dw_star_mask arrays."""
     df = snapshot["df"]
@@ -312,10 +327,16 @@ def compute_snapshot_summary(snapshot, numsp):
         center_z=dw_zc,
     )
 
-    dw_star_rhalf_mask = Analysis.get_3d_radial_mask(
+    dw_old_star_rhalf_mask = Analysis.get_3d_radial_mask(
         obs_star_x - dw_xc,
         obs_star_y - dw_yc,
         obs_star_z - dw_zc,
+        r_half_3d,
+    )
+    dw_total_star_rhalf_mask = Analysis.get_3d_radial_mask(
+        star_x - dw_xc,
+        star_y - dw_yc,
+        star_z - dw_zc,
         r_half_3d,
     )
     dw_hot_gas_rhalf_mask = Analysis.get_3d_radial_mask(
@@ -331,7 +352,11 @@ def compute_snapshot_summary(snapshot, numsp):
         r_half_3d,
     )
 
-    star_half_mass = obs_star_m[dw_star_rhalf_mask].sum()
+    half_mass_components = stellar_mass_components(
+        star_m, dw_total_star_rhalf_mask, old_star_local_mask
+    )
+    star_half_mass = half_mass_components["total"]
+    star_half_mass_old_tracer = half_mass_components["old_tracer"]
     hotgas_half_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_rhalf_mask)
     coldgas_half_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask)
 
@@ -371,9 +396,18 @@ def compute_snapshot_summary(snapshot, numsp):
     sigma_gradient_kms_per_kpc = sigma_re_circular_result["gradient"]["grad_amp"]
 
     stellar_region_radius = stellar_region_rhalf_multiplier * r_half
-    dw_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
+    dw_old_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
         obs_x_kpc,
         obs_y_kpc,
+        stellar_region_radius,
+        ep=eps,
+        pa=pa,
+        center_x=shape_center_x_kpc,
+        center_y=shape_center_y_kpc,
+    )
+    dw_total_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
+        x_kpc,
+        y_kpc,
         stellar_region_radius,
         ep=eps,
         pa=pa,
@@ -400,12 +434,12 @@ def compute_snapshot_summary(snapshot, numsp):
     )
 
     v_r, v_theta, v_phi = Analysis.cartesian_to_spherical(
-        obs_star_x[dw_star_stellar_region_mask],
-        obs_star_y[dw_star_stellar_region_mask],
-        obs_star_z[dw_star_stellar_region_mask],
-        obs_star_vx[dw_star_stellar_region_mask],
-        obs_star_vy[dw_star_stellar_region_mask],
-        obs_star_vz[dw_star_stellar_region_mask],
+        obs_star_x[dw_old_star_stellar_region_mask],
+        obs_star_y[dw_old_star_stellar_region_mask],
+        obs_star_z[dw_old_star_stellar_region_mask],
+        obs_star_vx[dw_old_star_stellar_region_mask],
+        obs_star_vy[dw_old_star_stellar_region_mask],
+        obs_star_vz[dw_old_star_stellar_region_mask],
     )
 
     dw_star_500pc_mask = Analysis.get_3d_radial_mask(
@@ -437,7 +471,14 @@ def compute_snapshot_summary(snapshot, numsp):
         obs_star_vz,
     )
 
-    star_mass = obs_star_m[dw_star_stellar_region_mask].sum()
+    # Total gravitating stellar mass includes newly formed stars.  Old stars
+    # remain a separate RGB-like tracer for light and kinematic diagnostics.
+    aperture_mass_components = stellar_mass_components(
+        star_m, dw_total_star_stellar_region_mask, old_star_local_mask
+    )
+    star_mass = aperture_mass_components["total"]
+    star_mass_old_tracer = aperture_mass_components["old_tracer"]
+    star_mass_new = aperture_mass_components["new"]
     coldgas_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_stellar_region_mask)
     hotgas_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_stellar_region_mask)
     gas_density = Analysis.GetGasdensity(
@@ -463,7 +504,12 @@ def compute_snapshot_summary(snapshot, numsp):
 
     return {
         "star_mass": star_mass,
+        "star_mass_old_tracer": star_mass_old_tracer,
+        "star_mass_new": star_mass_new,
+        "star_mass_aperture_re_multiple": float(stellar_region_rhalf_multiplier),
+        "star_mass_aperture_major_kpc": float(stellar_region_radius),
         "star_half_mass": star_half_mass,
+        "star_half_mass_old_tracer": star_half_mass_old_tracer,
         "hotgas_mass": hotgas_mass,
         "hotgas_half_mass": hotgas_half_mass,
         "coldgas_mass": coldgas_mass,

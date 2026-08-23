@@ -26,7 +26,9 @@ except ImportError:
     tqdm = None
 
 ELINFO_COLUMNS = [
-    'star_mass', 'star_half_mass',
+    'star_mass', 'star_mass_old_tracer', 'star_mass_new',
+    'star_mass_aperture_re_multiple', 'star_mass_aperture_major_kpc',
+    'star_half_mass', 'star_half_mass_old_tracer',
     'hotgas_mass', 'hotgas_half_mass',
     'coldgas_mass', 'coldgas_half_mass',
     'mw_mass_r', 'eps', 'pa', 'gas_density',
@@ -321,7 +323,9 @@ class GetInfo:
                 ])
             print("[GetInfoProfile] " + " ".join(parts), flush=True)
         
-        return [summary['star_mass'], summary['star_half_mass'], 
+        return [summary['star_mass'], summary['star_mass_old_tracer'], summary['star_mass_new'],
+                summary['star_mass_aperture_re_multiple'], summary['star_mass_aperture_major_kpc'],
+                summary['star_half_mass'], summary['star_half_mass_old_tracer'],
                 summary['hotgas_mass'], summary['hotgas_half_mass'], 
                 summary['coldgas_mass'], summary['coldgas_half_mass'], 
                 summary['mw_mass_r'], summary['eps'], summary['pa'], summary['gas_density'],

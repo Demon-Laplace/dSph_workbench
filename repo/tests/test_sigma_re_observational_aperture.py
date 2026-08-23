@@ -3,10 +3,20 @@ import unittest
 import numpy as np
 
 from basefunc import Analysis
-from snapshot_metrics import detrended_dispersion_in_aperture
+from snapshot_metrics import detrended_dispersion_in_aperture, stellar_mass_components
 
 
 class SigmaReApertureTests(unittest.TestCase):
+    def test_total_stellar_mass_includes_new_stars(self):
+        result = stellar_mass_components(
+            masses=np.array([1.0, 2.0, 3.0, 4.0]),
+            aperture_mask=np.array([True, True, True, False]),
+            old_star_mask=np.array([True, True, False, False]),
+        )
+        self.assertEqual(result["total"], 6.0)
+        self.assertEqual(result["old_tracer"], 3.0)
+        self.assertEqual(result["new"], 3.0)
+
     def test_circular_aperture_and_gradient_removal(self):
         x = np.array([0.0, 0.4, -0.4, 0.0, 0.0, 1.2])
         y = np.array([0.0, 0.0, 0.0, 0.4, -0.4, 0.0])

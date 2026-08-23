@@ -14,6 +14,19 @@ from coordinate_transform import CoordinateTransform
 
 
 class EvolutionPipelineTests(unittest.TestCase):
+    def test_projected_stellar_mass_aperture_is_elliptical_and_re_scaled(self):
+        mask = MODULE.projected_elliptical_aperture_mask(
+            np.array([0.0, 1.9, 0.0, 2.1]),
+            np.array([0.0, 0.0, 0.9, 0.0]),
+            re_major_kpc=1.0,
+            re_multiple=2.0,
+            axis_ratio=0.5,
+            pa_rad=0.0,
+            center_x_kpc=0.0,
+            center_y_kpc=0.0,
+        )
+        np.testing.assert_array_equal(mask, np.array([True, True, True, False]))
+
     def test_empty_knn_cgm_shell_is_a_valid_missing_measurement(self):
         frame = pd.DataFrame(
             {
@@ -37,6 +50,46 @@ class EvolutionPipelineTests(unittest.TestCase):
         )
         self.assertEqual(result["cgm_particle_count"], 0.0)
         self.assertTrue(np.isnan(result["ram_pressure_dyn_cm2"]))
+
+    def test_cgm_shell_excludes_tagged_dwarf_gas(self):
+        frame = pd.DataFrame(
+            {
+                "tp": [0, 0],
+                "x": [35.0, 36.0],
+                "y": [0.0, 0.0],
+                "z": [0.0, 0.0],
+                "vx": [100.0, 10.0],
+                "vy": [0.0, 0.0],
+                "vz": [0.0, 0.0],
+                "m": [10.0, 1.0],
+                "temp": [1.0e6, 1.0e6],
+                "nh": [0.0, 0.0],
+            }
+        )
+        result = MODULE.local_cgm_measurement(
+            frame,
+            np.zeros(3),
+            np.zeros(3),
+            {
+                "method": "fixed_shell",
+                "exclusion_radius_kpc": 30.0,
+                "search_radius_kpc": 40.0,
+                "minimum_particles": 1,
+            },
+            excluded_dwarf_gas_mask=np.array([True, False]),
+        )
+        self.assertEqual(result["cgm_particle_count"], 1.0)
+        self.assertEqual(result["cgm_excluded_dwarf_gas_particle_count"], 1.0)
+        self.assertAlmostEqual(result["cgm_velocity_x_kms"], 10.0)
+
+    def test_sigma_interval_duration_uses_linear_crossings(self):
+        duration = MODULE.duration_in_value_interval(
+            np.array([0.0, 1.0, 2.0]),
+            np.array([0.0, 2.0, 0.0]),
+            0.5,
+            1.5,
+        )
+        self.assertAlmostEqual(duration, 1.0)
 
     def test_heliocentric_velocity_transform_is_astropy_version_compatible(self):
         transformed = CoordinateTransform.to_heliocentric(
@@ -93,6 +146,7 @@ class EvolutionPipelineTests(unittest.TestCase):
                 "gas_mass_msun": np.array([10.0, 8.0, 6.0, 4.0, 2.0]) * 1.0e6,
                 "re_major_kpc": np.full(5, 0.5),
                 "sigma_los_kms": np.full(5, 10.0),
+                "ram_pressure_dyn_cm2": np.linspace(1.0e-15, 2.0e-15, 5),
                 "distance_heliocentric_kpc": np.array([160.0, 150.0, 140.0, 139.3, 138.0]),
                 "distance_galactocentric_kpc": np.array([158.0, 148.0, 138.0, 137.0, 136.0]),
             }
@@ -111,6 +165,9 @@ class EvolutionPipelineTests(unittest.TestCase):
                 "branch": "first_crossing",
             },
             "pericentre_detection": {"enabled": True, "minimum_post_points": 2},
+            "diagnostics": {
+                "sigma_los_interval": {"lower_kms": 9.0, "upper_kms": 11.0}
+            },
         }
         derived = MODULE.add_derived_columns(frame, config)
         self.assertTrue(
@@ -122,6 +179,8 @@ class EvolutionPipelineTests(unittest.TestCase):
         self.assertEqual(MODULE.gas_fraction(3.0, 1.0), 0.25)
         self.assertEqual(int(derived["is_comparison_epoch"].sum()), 1)
         self.assertEqual(int(derived["is_pericentre"].sum()), 0)
+        self.assertTrue(derived["sigma_in_fornax_like_interval"].all())
+        self.assertTrue(np.all(np.isfinite(derived["ram_pressure_smoothed_dyn_cm2"])))
 
 
 if __name__ == "__main__":

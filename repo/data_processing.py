@@ -9,7 +9,12 @@ from variable import gizmo_config, orbit_file
 
 ELINFO_DTYPE_MAP = {
     'star_mass': np.float32,
+    'star_mass_old_tracer': np.float32,
+    'star_mass_new': np.float32,
+    'star_mass_aperture_re_multiple': np.float32,
+    'star_mass_aperture_major_kpc': np.float32,
     'star_half_mass': np.float32,
+    'star_half_mass_old_tracer': np.float32,
     'hotgas_mass': np.float32,
     'hotgas_half_mass': np.float32,
     'coldgas_mass': np.float32,

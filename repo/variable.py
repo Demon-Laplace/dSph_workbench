@@ -69,6 +69,9 @@ dw_cold_gas_lower_limit = 1.46e5
 xylabel_size = 16
 cd_threshold = 6e19
 r_3d_cut = 0.3
+# An 8-Re ellipse is the adopted total-mass aperture.  The old-star
+# kinematic tracer keeps its diagnostic-specific apertures (for example Re or
+# 0.7 kpc); this multiplier must not be used to define the RGB sample.
 stellar_region_rhalf_multiplier = 8.0
 obs_surface_brightness_factor_base = 2.8085305633697762e-11
 obs_plot_mass_to_light_ratio = 2.0

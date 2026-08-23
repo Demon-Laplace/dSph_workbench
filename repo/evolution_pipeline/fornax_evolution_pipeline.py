@@ -130,7 +130,12 @@ def derivation_config_hash(config: Mapping[str, Any]) -> str:
     """Hash table-only choices that can be changed without reopening snapshots."""
     relevant = {
         key: config.get(key)
-        for key in ("smoothing", "comparison_epoch", "pericentre_detection")
+        for key in (
+            "smoothing",
+            "diagnostics",
+            "comparison_epoch",
+            "pericentre_detection",
+        )
     }
     payload = json.dumps(relevant, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -186,6 +191,63 @@ def rotation_basis(inclination_deg: float, azimuth_deg: float) -> tuple[np.ndarr
     y_axis /= np.linalg.norm(y_axis)
     los /= np.linalg.norm(los)
     return x_axis, y_axis, los
+
+
+def projected_elliptical_aperture_mask(
+    x_kpc: np.ndarray,
+    y_kpc: np.ndarray,
+    re_major_kpc: float,
+    re_multiple: float,
+    axis_ratio: float,
+    pa_rad: float,
+    center_x_kpc: float,
+    center_y_kpc: float,
+) -> np.ndarray:
+    """Select a projected ellipse expressed as a multiple of old-star Re."""
+    if not np.isfinite(re_major_kpc) or re_major_kpc <= 0.0:
+        return np.zeros_like(np.asarray(x_kpc, dtype=float), dtype=bool)
+    return Analysis.get_elliptical_radial_mask(
+        x_kpc,
+        y_kpc,
+        float(re_multiple) * float(re_major_kpc),
+        ep=1.0 - float(axis_ratio),
+        pa=float(pa_rad),
+        center_x=float(center_x_kpc),
+        center_y=float(center_y_kpc),
+    )
+
+
+def projected_dwarf_star_coordinates(
+    snapshot: Mapping[str, Any],
+    projection_config: Mapping[str, Any],
+    star_types: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return global indices and projected coordinates for all dwarf stars."""
+    df = snapshot["df"]
+    dwarf_mask = np.asarray(snapshot["total_dw_star_mask"], dtype=bool)
+    dwarf_indices = np.flatnonzero(dwarf_mask)
+    dwarf_types = df.loc[dwarf_indices, "tp"].to_numpy(dtype=int)
+    star_local = np.isin(dwarf_types, np.asarray(star_types, dtype=int))
+    star_indices = dwarf_indices[star_local]
+
+    mode = str(projection_config.get("mode", "native")).lower()
+    if mode == "native":
+        x_kpc = np.asarray(snapshot["x_kpc"], dtype=float)[star_local]
+        y_kpc = np.asarray(snapshot["y_kpc"], dtype=float)[star_local]
+    elif mode == "euler":
+        center = np.array(
+            [snapshot["dw_xc"], snapshot["dw_yc"], snapshot["dw_zc"]], dtype=float
+        )
+        positions = df.loc[star_indices, ["x", "y", "z"]].to_numpy(dtype=float) - center
+        x_axis, y_axis, _ = rotation_basis(
+            float(_required(projection_config, "inclination_deg")),
+            float(_required(projection_config, "azimuth_deg")),
+        )
+        x_kpc = positions @ x_axis
+        y_kpc = positions @ y_axis
+    else:
+        raise ValueError("projection.mode must be 'native' or 'euler'")
+    return star_indices, x_kpc, y_kpc
 
 
 def projected_old_star_observables(
@@ -255,6 +317,118 @@ def projected_old_star_observables(
         "shape_center_y_kpc": center_y,
         "sigma_n_old_stars": float(dispersion["nstar"]),
         "sigma_gradient_kms_per_kpc": float(dispersion["gradient"]["grad_amp"]),
+    }
+
+
+def prepare_analysis_snapshot(
+    number: int,
+    snapshot_path: Path,
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    selection = dict(_nested(config, "dwarf_selection", {}))
+    gas_config = dict(_nested(config, "gas", {}))
+    return prepare_snapshot_context(
+        folder_path=str(snapshot_path.parent),
+        snapshot_num=number,
+        core_radius=float(_required(selection, "core_radius_kpc")),
+        r_exclude=float(selection.get("mw_exclusion_radius_kpc", 5.0)),
+        dwarf_radius_factor=float(selection.get("dwarf_radius_factor", 3.0)),
+        k_density=int(selection.get("density_neighbours", 16)),
+        dwarf_gas_radius=float(gas_config.get("aperture_kpc", 20.0)),
+        gas_temperature_split=float(gas_config.get("temperature_split_k", 2.0e4)),
+        include_mw_gas=True,
+        mw_gas_radius=float(_nested(config, "cgm.mw_gas_radius_kpc", 500.0)),
+        include_dark_matter=True,
+        include_star_birth=True,
+    )
+
+
+def read_gas_particle_ids(snapshot_path: Path, gas_count: int) -> np.ndarray:
+    with h5py.File(snapshot_path, "r") as handle:
+        if "PartType0" not in handle or "ParticleIDs" not in handle["PartType0"]:
+            raise RuntimeError(f"PartType0/ParticleIDs is required in {snapshot_path}")
+        values = np.asarray(handle["PartType0"]["ParticleIDs"], dtype=np.uint64)
+    if values.size != gas_count:
+        raise RuntimeError(
+            f"Gas ParticleID count {values.size} does not match loaded gas count {gas_count}"
+        )
+    return values
+
+
+def find_snapshot_path(
+    snapshot_dir: Path,
+    config: Mapping[str, Any],
+    number: int,
+) -> Path:
+    glob_pattern = str(_nested(config, "snapshots.glob", "snapshot_*.hdf5"))
+    number_regex = re.compile(
+        str(_nested(config, "snapshots.number_regex", r"snapshot_(\d+)\.hdf5$"))
+    )
+    for path in sorted(snapshot_dir.glob(glob_pattern)):
+        match = number_regex.search(path.name)
+        if match is not None and int(match.group(1)) == int(number):
+            return path.resolve()
+    raise FileNotFoundError(f"Reference snapshot {number} was not found in {snapshot_dir}")
+
+
+def initial_dwarf_gas_membership(
+    snapshot_dir: Path,
+    config: Mapping[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    exclusion = dict(_nested(config, "cgm.dwarf_gas_exclusion", {}))
+    method = str(exclusion.get("method", "none")).lower()
+    if method == "none":
+        return np.empty(0, dtype=np.uint64), {
+            "method": "none",
+            "reference_snapshot": None,
+            "reference_radius_kpc": None,
+            "particle_count": 0,
+            "particle_ids_sha256": None,
+        }
+    if method != "initial_particle_ids":
+        raise ValueError(
+            "cgm.dwarf_gas_exclusion.method must be 'none' or 'initial_particle_ids'"
+        )
+
+    reference_number = int(exclusion.get("reference_snapshot", 0))
+    reference_path = find_snapshot_path(snapshot_dir, config, reference_number)
+    snapshot = prepare_analysis_snapshot(reference_number, reference_path, config)
+    df = snapshot["df"]
+    gas_type = int(_nested(config, "particle_types.gas", 0))
+    particle_types = df["tp"].to_numpy(dtype=int)
+    gas_global = np.flatnonzero(particle_types == gas_type)
+    gas_ids = read_gas_particle_ids(reference_path, gas_global.size)
+    ids_global = np.zeros(len(df), dtype=np.uint64)
+    ids_global[gas_global] = gas_ids
+
+    center = np.array(
+        [snapshot["dw_xc"], snapshot["dw_yc"], snapshot["dw_zc"]], dtype=float
+    )
+    positions = df[["x", "y", "z"]].to_numpy(dtype=float)
+    radius = np.linalg.norm(positions - center, axis=1)
+    reference_radius = float(
+        exclusion.get(
+            "reference_radius_kpc",
+            _nested(config, "gas.aperture_kpc", 20.0),
+        )
+    )
+    membership_mask = (
+        (particle_types == gas_type)
+        & np.isfinite(radius)
+        & (radius <= reference_radius)
+    )
+    membership_ids = np.unique(ids_global[membership_mask])
+    membership_ids.sort()
+    fingerprint = hashlib.sha256(
+        np.ascontiguousarray(membership_ids).tobytes()
+    ).hexdigest()
+    snapshot["simulation"].df = None
+    return membership_ids, {
+        "method": method,
+        "reference_snapshot": reference_number,
+        "reference_radius_kpc": reference_radius,
+        "particle_count": int(membership_ids.size),
+        "particle_ids_sha256": fingerprint,
     }
 
 
@@ -373,6 +547,7 @@ def local_cgm_measurement(
     dwarf_center: np.ndarray,
     dwarf_velocity: np.ndarray,
     config: Mapping[str, Any],
+    excluded_dwarf_gas_mask: Optional[np.ndarray] = None,
 ) -> dict[str, float]:
     particle_type = int(config.get("particle_type", 0))
     gas = df["tp"].to_numpy(dtype=int) == particle_type
@@ -387,7 +562,7 @@ def local_cgm_measurement(
     outer = float(config.get("search_radius_kpc", 60.0))
     hot_min = float(config.get("temperature_min_k", 2.0e4))
     neutral_max = float(config.get("neutral_fraction_max", 1.0))
-    candidates = (
+    shell_candidates = (
         gas
         & np.isfinite(radius)
         & (radius >= inner)
@@ -399,6 +574,14 @@ def local_cgm_measurement(
         & np.isfinite(masses)
         & (masses > 0.0)
     )
+    if excluded_dwarf_gas_mask is None:
+        excluded_dwarf_gas_mask = np.zeros(len(df), dtype=bool)
+    else:
+        excluded_dwarf_gas_mask = np.asarray(excluded_dwarf_gas_mask, dtype=bool)
+        if excluded_dwarf_gas_mask.size != len(df):
+            raise ValueError("excluded_dwarf_gas_mask must have one value per dataframe row")
+    excluded_in_shell = int(np.count_nonzero(shell_candidates & excluded_dwarf_gas_mask))
+    candidates = shell_candidates & ~excluded_dwarf_gas_mask
     indices = np.flatnonzero(candidates)
     method = str(config.get("method", "knn_shell")).lower()
     if method not in {"knn_shell", "fixed_shell"}:
@@ -412,6 +595,7 @@ def local_cgm_measurement(
     if indices.size < minimum_particles:
         return {
             "cgm_particle_count": float(indices.size),
+            "cgm_excluded_dwarf_gas_particle_count": float(excluded_in_shell),
             "cgm_effective_outer_radius_kpc": np.nan,
             "cgm_density_msun_kpc3": np.nan,
             "cgm_density_g_cm3": np.nan,
@@ -442,6 +626,7 @@ def local_cgm_measurement(
     pressure = density_g_cm3 * (speed * 1.0e5) ** 2
     return {
         "cgm_particle_count": float(indices.size),
+        "cgm_excluded_dwarf_gas_particle_count": float(excluded_in_shell),
         "cgm_effective_outer_radius_kpc": effective_outer,
         "cgm_density_msun_kpc3": density_msun_kpc3,
         "cgm_density_g_cm3": density_g_cm3,
@@ -474,26 +659,10 @@ def process_snapshot(
     snapshot_path: Path,
     config: Mapping[str, Any],
     config_hash: str,
+    excluded_cgm_gas_ids: Optional[np.ndarray] = None,
+    cgm_membership_info: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
-    selection = dict(_nested(config, "dwarf_selection", {}))
-    gas_config = dict(_nested(config, "gas", {}))
-    core_radius = float(_required(selection, "core_radius_kpc"))
-    gas_aperture = float(gas_config.get("aperture_kpc", 20.0))
-    hot_split = float(gas_config.get("temperature_split_k", 2.0e4))
-    snapshot = prepare_snapshot_context(
-        folder_path=str(snapshot_path.parent),
-        snapshot_num=number,
-        core_radius=core_radius,
-        r_exclude=float(selection.get("mw_exclusion_radius_kpc", 5.0)),
-        dwarf_radius_factor=float(selection.get("dwarf_radius_factor", 3.0)),
-        k_density=int(selection.get("density_neighbours", 16)),
-        dwarf_gas_radius=gas_aperture,
-        gas_temperature_split=hot_split,
-        include_mw_gas=True,
-        mw_gas_radius=float(_nested(config, "cgm.mw_gas_radius_kpc", 500.0)),
-        include_dark_matter=True,
-        include_star_birth=True,
-    )
+    snapshot = prepare_analysis_snapshot(number, snapshot_path, config)
     summary = compute_snapshot_summary(snapshot, number)
     projection = projected_old_star_observables(
         snapshot, summary, dict(_nested(config, "projection", {"mode": "native"}))
@@ -508,10 +677,72 @@ def process_snapshot(
 
     star_types = np.asarray(_nested(config, "particle_types.stars", [2, 3, 4]), dtype=int)
     gas_type = int(_nested(config, "particle_types.gas", 0))
+    gas_global = np.flatnonzero(particle_types == gas_type)
+    gas_ids = read_gas_particle_ids(snapshot_path, gas_global.size)
+    excluded_global = np.zeros(len(df), dtype=bool)
+    if excluded_cgm_gas_ids is not None and len(excluded_cgm_gas_ids):
+        excluded_global[gas_global] = np.isin(
+            gas_ids,
+            np.asarray(excluded_cgm_gas_ids, dtype=np.uint64),
+            assume_unique=False,
+        )
     star_mask = np.asarray(snapshot["total_dw_star_mask"], dtype=bool) & np.isin(particle_types, star_types)
-    stellar_aperture = float(_nested(config, "stellar.mass_aperture_kpc", 20.0))
-    star_mass_mask = star_mask & (distance_from_dwarf <= stellar_aperture)
+    projection_config = dict(_nested(config, "projection", {"mode": "native"}))
+    star_indices, star_x_kpc, star_y_kpc = projected_dwarf_star_coordinates(
+        snapshot, projection_config, star_types
+    )
+    mass_aperture_re_multiple = float(
+        _nested(config, "stellar.mass_aperture_re_multiple", 8.0)
+    )
+    sensitivity_re_multiple = float(
+        _nested(config, "stellar.sensitivity_aperture_re_multiple", 10.0)
+    )
+    aperture_local = projected_elliptical_aperture_mask(
+        star_x_kpc,
+        star_y_kpc,
+        projection["re_major_kpc"],
+        mass_aperture_re_multiple,
+        projection["axis_ratio"],
+        projection["pa_rad"],
+        projection["shape_center_x_kpc"],
+        projection["shape_center_y_kpc"],
+    )
+    sensitivity_local = projected_elliptical_aperture_mask(
+        star_x_kpc,
+        star_y_kpc,
+        projection["re_major_kpc"],
+        sensitivity_re_multiple,
+        projection["axis_ratio"],
+        projection["pa_rad"],
+        projection["shape_center_x_kpc"],
+        projection["shape_center_y_kpc"],
+    )
+    star_mass_mask = np.zeros(len(df), dtype=bool)
+    star_mass_mask[star_indices[aperture_local]] = True
+    star_sensitivity_mask = np.zeros(len(df), dtype=bool)
+    star_sensitivity_mask[star_indices[sensitivity_local]] = True
+
+    if "birth" in df.columns:
+        old_star_mask = star_mask & (df["birth"].to_numpy(dtype=float) == 0.0)
+    else:
+        new_star_type = int(_nested(config, "particle_types.new_stars", 4))
+        old_star_mask = star_mask & (particle_types != new_star_type)
+    new_star_mask = star_mask & ~old_star_mask
+
     stellar_mass = float(np.sum(masses[star_mass_mask]))
+    stellar_mass_old = float(np.sum(masses[star_mass_mask & old_star_mask]))
+    stellar_mass_new = float(np.sum(masses[star_mass_mask & new_star_mask]))
+    stellar_mass_sensitivity = float(np.sum(masses[star_sensitivity_mask]))
+
+    preselection_radius = float(
+        _nested(
+            config,
+            "stellar.preselection_radius_kpc",
+            _nested(config, "stellar.mass_aperture_kpc", 20.0),
+        )
+    )
+    star_preselection_mask = star_mask & (distance_from_dwarf <= preselection_radius)
+    stellar_mass_preselection = float(np.sum(masses[star_preselection_mask]))
 
     configured_com_aperture = _nested(config, "stellar.com_velocity_aperture_kpc", None)
     if configured_com_aperture is None:
@@ -554,6 +785,7 @@ def process_snapshot(
         center,
         dwarf_velocity,
         dict(_nested(config, "cgm", {})),
+        excluded_dwarf_gas_mask=excluded_global,
     )
     rgc = float(np.linalg.norm(center))
     mw_mass = float(summary["mw_mass_r"])
@@ -577,9 +809,22 @@ def process_snapshot(
         "tidal_proxy_kms2_kpc2": tidal,
         "tidal_proxy_gyr2": tidal_gyr2,
         "stellar_mass_msun": stellar_mass,
-        "stellar_mass_old_observational_aperture_msun": float(summary["star_mass"]),
+        "stellar_mass_old_tracer_aperture_msun": stellar_mass_old,
+        "stellar_mass_new_aperture_msun": stellar_mass_new,
+        "stellar_mass_sensitivity_aperture_msun": stellar_mass_sensitivity,
+        "stellar_mass_preselection_msun": stellar_mass_preselection,
+        "stellar_mass_aperture_re_multiple": mass_aperture_re_multiple,
+        "stellar_mass_sensitivity_re_multiple": sensitivity_re_multiple,
+        "stellar_mass_aperture_major_kpc": (
+            mass_aperture_re_multiple * float(projection["re_major_kpc"])
+        ),
+        "stellar_mass_preselection_radius_kpc": preselection_radius,
+        # Deprecated compatibility alias.  It is explicitly an old-star
+        # tracer mass, never the total gravitating stellar mass.
+        "stellar_mass_old_observational_aperture_msun": stellar_mass_old,
         "gas_mass_msun": total_gas_mass,
         "hi_mass_msun": float(hi_mass),
+        "hi_fraction_total_stars": gas_fraction(stellar_mass, float(hi_mass)),
         "hi_mass_particle_msun": hi_particle_mass,
         "hi_mass_contour_msun": float(hi_contour_mass),
         "re_major_kpc": projection["re_major_kpc"],
@@ -596,8 +841,19 @@ def process_snapshot(
         "projection_inclination_deg": _nested(config, "projection.inclination_deg", np.nan),
         "projection_azimuth_deg": _nested(config, "projection.azimuth_deg", np.nan),
         "stellar_particle_count": int(np.count_nonzero(star_mass_mask)),
+        "stellar_particle_count_old_tracer": int(
+            np.count_nonzero(star_mass_mask & old_star_mask)
+        ),
+        "stellar_particle_count_new": int(np.count_nonzero(star_mass_mask & new_star_mask)),
+        "stellar_particle_count_preselection": int(np.count_nonzero(star_preselection_mask)),
         "gas_particle_count": int(np.count_nonzero(dwarf_gas_mask)),
         "hi_particle_count": int(np.count_nonzero(hi_mask)),
+        "cgm_dwarf_gas_membership_count": int(
+            (cgm_membership_info or {}).get("particle_count", 0)
+        ),
+        "cgm_dwarf_gas_membership_sha256": (
+            (cgm_membership_info or {}).get("particle_ids_sha256") or ""
+        ),
     }
     row.update(cgm)
 
@@ -649,7 +905,7 @@ def smooth_series(values: np.ndarray, config: Mapping[str, Any]) -> np.ndarray:
     filled = pd.Series(values).interpolate(limit_direction="both").to_numpy(dtype=float)
     method = str(config.get("method", "savgol")).lower()
     if method == "none":
-        smoothed = filled
+        smoothed = filled.copy()
     elif method == "savgol":
         window = int(_required(config, "window_snapshots"))
         polyorder = int(config.get("polyorder", 2))
@@ -686,6 +942,107 @@ def smooth_series(values: np.ndarray, config: Mapping[str, Any]) -> np.ndarray:
         )
     smoothed[~finite] = np.nan
     return smoothed
+
+
+def add_central_gas_timescale_columns(
+    frame: pd.DataFrame,
+    time: np.ndarray,
+    tdyn: np.ndarray,
+    config: Mapping[str, Any],
+) -> pd.DataFrame:
+    """Add central enclosed-gas timescales without reopening snapshots.
+
+    The raw enclosed masses are produced by :func:`process_snapshot` using the
+    adopted three-dimensional dwarf centre.  Fixed physical apertures and the
+    evolving projected semi-major-axis effective radius are intentionally kept
+    as separate series because the latter changes the enclosing volume.
+    """
+    default_smoothing = dict(_nested(config, "smoothing", {}))
+    central_smoothing = dict(
+        _nested(config, "smoothing.central_gas", default_smoothing)
+    )
+    minimum_rate = float(
+        central_smoothing.get(
+            "minimum_abs_rate_msun_per_gyr",
+            _nested(config, "smoothing.minimum_abs_rate_msun_per_gyr", 0.0),
+        )
+    )
+    aperture_specs: list[tuple[str, Optional[float]]] = []
+    for radius_kpc in _nested(config, "enclosed_mass.radii_kpc", [0.5, 1.0, 2.0]):
+        radius = float(radius_kpc)
+        if np.isclose(radius, 0.5) or np.isclose(radius, 1.0):
+            aperture_specs.append((aperture_label(radius), radius))
+    if bool(_nested(config, "enclosed_mass.include_effective_radius", True)):
+        aperture_specs.append(("re", None))
+
+    for label, fixed_radius_kpc in aperture_specs:
+        gas_column = f"gas_mass_3d_lt_{label}_msun"
+        stellar_column = f"stellar_mass_3d_lt_{label}_msun"
+        if gas_column not in frame or stellar_column not in frame:
+            continue
+        gas = frame[gas_column].to_numpy(dtype=float)
+        stellar = frame[stellar_column].to_numpy(dtype=float)
+        smoothed_unclipped = smooth_series(gas, central_smoothing)
+        smoothed = np.maximum(smoothed_unclipped, 0.0)
+        raw_derivative = (
+            np.gradient(gas, time) if time.size > 1 else np.full_like(gas, np.nan)
+        )
+        smooth_derivative = (
+            np.gradient(smoothed, time)
+            if time.size > 1
+            else np.full_like(gas, np.nan)
+        )
+        raw_valid = (
+            np.isfinite(gas)
+            & (gas > 0.0)
+            & np.isfinite(raw_derivative)
+            & (np.abs(raw_derivative) > minimum_rate)
+        )
+        smooth_valid = (
+            np.isfinite(smoothed)
+            & (smoothed > 0.0)
+            & np.isfinite(smooth_derivative)
+            & (np.abs(smooth_derivative) > minimum_rate)
+        )
+        tau_raw = np.divide(
+            gas,
+            np.abs(raw_derivative),
+            out=np.full_like(gas, np.nan),
+            where=raw_valid,
+        )
+        tau_smoothed = np.divide(
+            smoothed,
+            np.abs(smooth_derivative),
+            out=np.full_like(gas, np.nan),
+            where=smooth_valid,
+        )
+        frame[f"gas_mass_3d_lt_{label}_smoothed_unclipped_msun"] = smoothed_unclipped
+        frame[f"gas_mass_3d_lt_{label}_smoothed_msun"] = smoothed
+        frame[f"dgas_3d_lt_{label}_dt_raw_msun_per_gyr"] = raw_derivative
+        frame[f"dgas_3d_lt_{label}_dt_smoothed_msun_per_gyr"] = smooth_derivative
+        frame[f"tau_gas_3d_lt_{label}_raw_gyr"] = tau_raw
+        frame[f"tau_gas_3d_lt_{label}_smoothed_gyr"] = tau_smoothed
+        frame[f"tau_gas_3d_lt_{label}_over_tdyn"] = np.divide(
+            tau_smoothed,
+            tdyn,
+            out=np.full_like(tdyn, np.nan),
+            where=np.isfinite(tdyn) & (tdyn > 0.0),
+        )
+
+        if fixed_radius_kpc is not None:
+            factor = G_KPC_KMS2_PER_MSUN / fixed_radius_kpc
+            gas_nonnegative = np.where(np.isfinite(gas) & (gas >= 0.0), gas, np.nan)
+            stellar_nonnegative = np.where(
+                np.isfinite(stellar) & (stellar >= 0.0), stellar, np.nan
+            )
+            frame[f"vcirc_gas_3d_lt_{label}_kms"] = np.sqrt(factor * gas_nonnegative)
+            frame[f"vcirc_stellar_3d_lt_{label}_kms"] = np.sqrt(
+                factor * stellar_nonnegative
+            )
+            frame[f"vcirc_baryon_3d_lt_{label}_kms"] = np.sqrt(
+                factor * (gas_nonnegative + stellar_nonnegative)
+            )
+    return frame
 
 
 def actual_crossing_index(
@@ -733,6 +1090,38 @@ def reached_pericentre_index(radius: np.ndarray, config: Mapping[str, Any]) -> O
     return min(candidates, key=lambda item: radius[item]) if candidates else None
 
 
+def duration_in_value_interval(
+    time: np.ndarray,
+    values: np.ndarray,
+    lower: float,
+    upper: float,
+) -> float:
+    """Integrate time within [lower, upper] using linear interpolation."""
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    if lower > upper:
+        raise ValueError("interval lower bound must not exceed upper bound")
+    if time.size != values.size:
+        raise ValueError("time and values must have the same length")
+    duration = 0.0
+    for t0, t1, y0, y1 in zip(time[:-1], time[1:], values[:-1], values[1:]):
+        if not np.all(np.isfinite([t0, t1, y0, y1])) or t1 <= t0:
+            continue
+        breaks = [0.0, 1.0]
+        if y1 != y0:
+            for boundary in (lower, upper):
+                fraction = (boundary - y0) / (y1 - y0)
+                if 0.0 < fraction < 1.0:
+                    breaks.append(float(fraction))
+        breaks = sorted(set(breaks))
+        for left, right in zip(breaks[:-1], breaks[1:]):
+            midpoint = 0.5 * (left + right)
+            value = y0 + midpoint * (y1 - y0)
+            if lower <= value <= upper:
+                duration += (right - left) * (t1 - t0)
+    return float(duration)
+
+
 def add_derived_columns(frame: pd.DataFrame, config: Mapping[str, Any]) -> pd.DataFrame:
     frame = frame.sort_values(["time_gyr", "snapshot"]).drop_duplicates("snapshot", keep="last").reset_index(drop=True)
     time = frame["time_gyr"].to_numpy(dtype=float)
@@ -778,6 +1167,28 @@ def add_derived_columns(frame: pd.DataFrame, config: Mapping[str, Any]) -> pd.Da
         tdyn,
         out=np.full_like(tdyn, np.nan),
         where=np.isfinite(tdyn) & (tdyn > 0.0),
+    )
+    frame = add_central_gas_timescale_columns(frame, time, tdyn, config)
+    pressure = frame["ram_pressure_dyn_cm2"].to_numpy(dtype=float)
+    pressure_smoothing = dict(
+        _nested(config, "smoothing.ram_pressure", {"method": "none"})
+    )
+    frame["ram_pressure_smoothed_dyn_cm2"] = smooth_series(
+        pressure, pressure_smoothing
+    )
+    sigma_interval = dict(
+        _nested(
+            config,
+            "diagnostics.sigma_los_interval",
+            {"lower_kms": 9.0, "upper_kms": 11.0},
+        )
+    )
+    sigma_lower = float(sigma_interval.get("lower_kms", 9.0))
+    sigma_upper = float(sigma_interval.get("upper_kms", 11.0))
+    if sigma_lower > sigma_upper:
+        raise ValueError("diagnostics.sigma_los_interval lower_kms must not exceed upper_kms")
+    frame["sigma_in_fornax_like_interval"] = (
+        np.isfinite(sigma) & (sigma >= sigma_lower) & (sigma <= sigma_upper)
     )
 
     frame["is_interaction_start"] = False
@@ -833,6 +1244,32 @@ def save_metadata(
             "distance_heliocentric_kpc": float(row["distance_heliocentric_kpc"]),
         }
 
+    sigma_interval = dict(
+        _nested(
+            config,
+            "diagnostics.sigma_los_interval",
+            {"lower_kms": 9.0, "upper_kms": 11.0},
+        )
+    )
+    sigma_lower = float(sigma_interval.get("lower_kms", 9.0))
+    sigma_upper = float(sigma_interval.get("upper_kms", 11.0))
+    sigma_duration = duration_in_value_interval(
+        frame["time_gyr"].to_numpy(dtype=float),
+        frame["sigma_los_kms"].to_numpy(dtype=float),
+        sigma_lower,
+        sigma_upper,
+    )
+    membership_count = (
+        int(frame["cgm_dwarf_gas_membership_count"].iloc[0])
+        if len(frame) and "cgm_dwarf_gas_membership_count" in frame
+        else 0
+    )
+    membership_hash = (
+        str(frame["cgm_dwarf_gas_membership_sha256"].iloc[0])
+        if len(frame) and "cgm_dwarf_gas_membership_sha256" in frame
+        else None
+    )
+
     metadata = {
         "schema_version": 1,
         "analysis_config_sha256": analysis_config_hash(config),
@@ -850,14 +1287,27 @@ def save_metadata(
             "enclosed_masses": "three-dimensional spherical apertures centred on the adopted dwarf centre",
             "hi_particle": "sum(mass * neutral fraction) below the configured temperature threshold",
             "hi_contour": "adaptive projected H I map integrated above the configured fixed N_HI contour",
+            "hi_plot": "raw configured H I mass; no temporal smoothing",
+            "local_cgm": "configured hot-gas shell after excluding all gas particles tagged as dwarf members in the reference snapshot",
+            "ram_pressure_plot": "configured light smoothing of the raw rho_CGM * v_rel^2 series",
             "tidal_proxy": "G M_MW(<R_GC) / R_GC^3",
             "gas_timescale": "absolute M_gas / (dM_gas/dt) after the configured smoothing",
+            "central_gas_timescale": "the same smoothed absolute mass-loss timescale applied separately to 3D gas masses within 0.5 kpc, 1.0 kpc, and the evolving R_e(t) aperture",
+            "central_apertures": "0.5 and 1.0 kpc are fixed 3D spheres; R_e(t) is an evolving 3D sphere whose radius is the projected old-star semi-major-axis effective radius",
+            "baryonic_circular_velocity": "sqrt(G M(<r) / r) for gas, stars, and their sum at the fixed 0.5 and 1.0 kpc apertures",
             "stellar_dynamical_time": "0.9777922217 Gyr * R_e[kpc] / sigma_los[km/s]",
         },
         "events": {
             "interaction_start": marker("is_interaction_start"),
             "comparison_epoch": marker("is_comparison_epoch"),
             "pericentre": marker("is_pericentre"),
+        },
+        "diagnostics": {
+            "sigma_los_interval_kms": [sigma_lower, sigma_upper],
+            "duration_in_sigma_los_interval_gyr": sigma_duration,
+            "duration_method": "piecewise-linear interpolation between consecutive snapshots",
+            "cgm_dwarf_gas_exclusion_particle_count": membership_count,
+            "cgm_dwarf_gas_exclusion_particle_ids_sha256": membership_hash,
         },
         "config": config,
     }
@@ -893,11 +1343,31 @@ def extract(config: Mapping[str, Any], config_path: Path, overwrite: bool = Fals
         f"[evolution] discovered={len(discovered)} existing={len(existing_numbers)} pending={len(pending)}",
         flush=True,
     )
+    excluded_cgm_gas_ids = np.empty(0, dtype=np.uint64)
+    cgm_membership_info: dict[str, Any] = {}
+    if pending:
+        excluded_cgm_gas_ids, cgm_membership_info = initial_dwarf_gas_membership(
+            paths["snapshot_dir"], config
+        )
+        if cgm_membership_info["method"] != "none":
+            print(
+                "[evolution] CGM exclusion: "
+                f"{cgm_membership_info['particle_count']} initial dwarf-gas ParticleIDs "
+                f"from snapshot {cgm_membership_info['reference_snapshot']}",
+                flush=True,
+            )
     frame = existing.copy()
     checkpoint_every = int(_nested(config, "processing.checkpoint_every", 1))
     for count, (number, path) in enumerate(pending, start=1):
         print(f"[evolution] snapshot {number}: {path.name}", flush=True)
-        row = process_snapshot(number, path, config, config_hash)
+        row = process_snapshot(
+            number,
+            path,
+            config,
+            config_hash,
+            excluded_cgm_gas_ids=excluded_cgm_gas_ids,
+            cgm_membership_info=cgm_membership_info,
+        )
         if overwrite and not frame.empty and "snapshot" in frame:
             frame = frame.loc[frame["snapshot"].astype(int) != number]
         frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True, sort=False)
@@ -921,14 +1391,11 @@ def _normalise(values: np.ndarray) -> np.ndarray:
     return values / values[finite[0]]
 
 
-def draw_event_lines(axes: Sequence[plt.Axes], frame: pd.DataFrame) -> tuple[list[Any], list[str]]:
+def draw_event_lines(axes: Sequence[plt.Axes], frame: pd.DataFrame) -> Optional[float]:
     events = [
-        ("is_interaction_start", "MW interaction", "#303030", (0, (1.2, 2.0))),
         ("is_comparison_epoch", "comparison epoch", "#777777", (0, (4.0, 2.8))),
-        ("is_pericentre", "pericentre", "#9b4b3f", (0, (2.0, 2.0))),
     ]
-    handles: list[Any] = []
-    labels: list[str] = []
+    comparison_time: Optional[float] = None
     for column, label, color, linestyle in events:
         if column not in frame:
             continue
@@ -938,9 +1405,9 @@ def draw_event_lines(axes: Sequence[plt.Axes], frame: pd.DataFrame) -> tuple[lis
         time = float(selected.iloc[0]["time_gyr"])
         for axis in axes:
             axis.axvline(time, color=color, lw=0.85, ls=linestyle, zorder=1)
-        handles.append(axes[0].plot([], [], color=color, lw=0.9, ls=linestyle)[0])
-        labels.append(label)
-    return handles, labels
+        if column == "is_comparison_epoch":
+            comparison_time = time
+    return comparison_time
 
 
 def plot_timeseries(config: Mapping[str, Any], config_path: Path) -> list[Path]:
@@ -962,68 +1429,92 @@ def plot_timeseries(config: Mapping[str, Any], config_path: Path) -> list[Path]:
             "axes.linewidth": 0.75,
         }
     )
-    blue = "#2f6f9f"
-    teal = "#2a9d8f"
-    amber = "#d08c32"
-    purple = "#7b3294"
-    red = "#b6534c"
-    fig, axes = plt.subplots(4, 1, figsize=(6.9, 7.9), sharex=True)
+    blue = "#3b78a8"
+    teal = "#4a9b8e"
+    cyan = "#35b9c5"
+    purple = "#80679b"
+    red = "#c35b42"
+    fig, axes = plt.subplots(4, 1, figsize=(6.9, 6.85), sharex=True)
 
     ax = axes[0]
-    orbit_line = ax.plot(time, frame["distance_galactocentric_kpc"], color=blue, lw=1.55, label=r"$R_{\rm GC}$")[0]
+    orbit_line = ax.plot(
+        time,
+        frame["distance_galactocentric_kpc"].to_numpy(dtype=float),
+        color=blue,
+        lw=1.65,
+        label=r"$R_{\rm GC}$",
+    )[0]
     ax.set_ylabel(r"$R_{\rm GC}$ (kpc)")
     ax2 = ax.twinx()
-    pressure = frame["ram_pressure_dyn_cm2"].to_numpy(dtype=float)
-    pressure_line = ax2.plot(time, pressure, color=red, lw=1.35, label=r"$P_{\rm ram}$")[0]
+    pressure = frame["ram_pressure_smoothed_dyn_cm2"].to_numpy(dtype=float)
+    pressure_line = ax2.plot(time, pressure, color=red, lw=1.45, label=r"$P_{\rm ram}$")[0]
     if np.any(np.isfinite(pressure) & (pressure > 0.0)):
         ax2.set_yscale("log")
     ax2.set_ylabel(r"$P_{\rm ram}$ (dyn cm$^{-2}$)")
-    ax.legend(handles=[orbit_line, pressure_line], loc="best", frameon=False, ncol=2)
-    ax.set_title("Environment and orbit", loc="left", fontweight="semibold")
+    ax.legend(handles=[orbit_line, pressure_line], loc="lower left", frameon=False, ncol=2)
+    ax.set_title("(a) Environment", loc="left", fontweight="semibold")
 
     ax = axes[1]
-    gas_line = ax.plot(time, _normalise(frame["gas_mass_msun"]), color=teal, lw=1.55, label=r"$M_{\rm gas}/M_{\rm gas,0}$")[0]
-    hi_line = ax.plot(time, _normalise(frame["hi_mass_msun"]), color=amber, lw=1.45, label=r"$M_{\rm H\,I}/M_{\rm H\,I,0}$")[0]
-    ax.set_ylabel("Retained fraction")
+    gas_line = ax.plot(time, _normalise(frame["gas_mass_msun"]), color=teal, lw=1.65, label=r"$M_{\rm gas}/M_{\rm gas,0}$")[0]
+    hi_line = ax.plot(time, _normalise(frame["hi_mass_msun"]), color=cyan, lw=1.55, label=r"$M_{\rm H\,I}/M_{\rm H\,I,0}$")[0]
+    ax.set_ylabel("Normalized mass")
     ax.set_ylim(bottom=0.0)
-    ax.legend(handles=[gas_line, hi_line], loc="best", frameon=False, ncol=2)
-    ax.set_title("Gas evolution", loc="left", fontweight="semibold")
+    ax.legend(handles=[gas_line, hi_line], loc="lower left", frameon=False, ncol=2)
+    ax.set_title("(b) Gas evolution", loc="left", fontweight="semibold")
 
     ax = axes[2]
-    re_line = ax.plot(time, frame["re_major_kpc"], color=blue, lw=1.55, label=r"$R_e$")[0]
+    re_line = ax.plot(
+        time,
+        frame["re_major_kpc"].to_numpy(dtype=float),
+        color=blue,
+        lw=1.65,
+        label=r"$R_e$",
+    )[0]
     ax.set_ylabel(r"$R_e$ (kpc)")
     ax2 = ax.twinx()
     fraction_line = ax2.plot(
         time,
-        frame["gas_fraction_3d_lt_re"],
+        frame["gas_fraction_3d_lt_re"].to_numpy(dtype=float),
         color=purple,
-        lw=1.35,
+        lw=1.45,
         label=r"$f_{\rm gas}(<R_e)$",
     )[0]
     ax2.set_ylabel(r"$f_{\rm gas}(<R_e)$")
     ax2.set_ylim(0.0, 1.0)
-    ax.legend(handles=[re_line, fraction_line], loc="best", frameon=False, ncol=2)
-    ax.set_title("Stellar structural response", loc="left", fontweight="semibold")
+    ax.legend(handles=[re_line, fraction_line], loc="upper left", frameon=False, ncol=2)
+    ax.set_title("(c) Stellar structure", loc="left", fontweight="semibold")
 
     ax = axes[3]
-    ax.plot(time, frame["sigma_los_kms"], color=blue, lw=1.55, label=r"$\sigma_{\rm los}$")
+    ax.plot(
+        time,
+        frame["sigma_los_kms"].to_numpy(dtype=float),
+        color=blue,
+        lw=1.65,
+        label=r"$\sigma_{\rm los}$",
+    )
     ax.set_ylabel(r"$\sigma_{\rm los}$ (km s$^{-1}$)")
     ax.set_xlabel("Simulation time (Gyr)")
-    ax.legend(loc="best", frameon=False)
-    ax.set_title("Stellar kinematics", loc="left", fontweight="semibold")
+    ax.legend(loc="upper right", frameon=False)
+    ax.set_title("(d) Stellar kinematics", loc="left", fontweight="semibold")
 
-    event_handles, event_labels = draw_event_lines(axes, frame)
-    axes[0].legend(
-        [orbit_line, pressure_line] + event_handles,
-        [r"$R_{\rm GC}$", r"$P_{\rm ram}$"] + event_labels,
-        loc="best",
-        frameon=False,
-        ncol=2,
-    )
+    comparison_time = draw_event_lines(axes, frame)
+    if comparison_time is not None:
+        axes[0].text(
+            comparison_time,
+            0.96,
+            "comparison epoch",
+            transform=axes[0].get_xaxis_transform(),
+            rotation=90,
+            ha="right",
+            va="top",
+            color="#666666",
+            fontsize=6.8,
+        )
     for axis in axes:
-        axis.grid(color="#d8d8d8", lw=0.45, alpha=0.55)
         axis.tick_params(direction="in", top=True, right=False)
-    fig.subplots_adjust(left=0.105, right=0.885, bottom=0.075, top=0.975, hspace=0.25)
+        axis.minorticks_on()
+        axis.label_outer()
+    fig.subplots_adjust(left=0.105, right=0.885, bottom=0.080, top=0.975, hspace=0.16)
 
     formats = [str(value).lower() for value in _nested(config, "plot.formats", ["pdf", "png"])]
     dpi = int(_nested(config, "plot.dpi", 350))
