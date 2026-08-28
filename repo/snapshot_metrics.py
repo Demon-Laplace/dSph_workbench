@@ -175,6 +175,11 @@ def compute_snapshot_summary(snapshot, numsp):
     obs_star_vy = star_vy[old_star_local_mask]
     obs_star_vz = star_vz[old_star_local_mask]
     obs_star_m = star_m[old_star_local_mask]
+    new_star_local_mask = ~old_star_local_mask
+    new_star_x = star_x[new_star_local_mask]
+    new_star_y = star_y[new_star_local_mask]
+    new_star_z = star_z[new_star_local_mask]
+    new_star_m = star_m[new_star_local_mask]
     obs_x_kpc = old_kinematics["x_kpc"]
     obs_y_kpc = old_kinematics["y_kpc"]
     obs_vlos_detrended = old_kinematics["vlos_detrended"]
@@ -245,6 +250,12 @@ def compute_snapshot_summary(snapshot, numsp):
         obs_star_z - dw_zc,
         r_half_3d,
     )
+    dw_new_star_rhalf_mask = Analysis.get_3d_radial_mask(
+        new_star_x - dw_xc,
+        new_star_y - dw_yc,
+        new_star_z - dw_zc,
+        r_half_3d,
+    )
     dw_hot_gas_rhalf_mask = Analysis.get_3d_radial_mask(
         hot_x - dw_xc,
         hot_y - dw_yc,
@@ -259,6 +270,7 @@ def compute_snapshot_summary(snapshot, numsp):
     )
 
     star_half_mass = obs_star_m[dw_star_rhalf_mask].sum()
+    new_star_half_mass = new_star_m[dw_new_star_rhalf_mask].sum()
     hotgas_half_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_rhalf_mask)
     coldgas_half_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask)
 
@@ -353,7 +365,9 @@ def compute_snapshot_summary(snapshot, numsp):
     sigma_z = _safe_std(obs_star_vz[dw_star_500pc_mask])
     sigma_xyz = np.sqrt((sigma_x**2 + sigma_y**2 + sigma_z**2) / 3)
 
-    baryon_half_mass = star_half_mass + hotgas_half_mass + coldgas_half_mass
+    baryon_half_mass = (
+        star_half_mass + new_star_half_mass + hotgas_half_mass + coldgas_half_mass
+    )
     if not np.isfinite(r_half_3d) or r_half_3d <= 0 or baryon_half_mass < 0:
         theoretical_sigma = np.nan
     else:
@@ -362,6 +376,7 @@ def compute_snapshot_summary(snapshot, numsp):
     return {
         "star_mass": star_mass,
         "star_half_mass": star_half_mass,
+        "new_star_half_mass": new_star_half_mass,
         "hotgas_mass": hotgas_mass,
         "hotgas_half_mass": hotgas_half_mass,
         "coldgas_mass": coldgas_mass,
