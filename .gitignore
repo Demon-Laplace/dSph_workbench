@@ -2,6 +2,7 @@
 *
 !.gitignore
 !sync_fornax_models.sh
+!model_tool.py
 !IniFile/
 !IniFile/SYNC_POLICY.md
 
