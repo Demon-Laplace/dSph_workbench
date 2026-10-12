@@ -14,6 +14,7 @@ import workflow_models as models
 import workflow_release as release
 import workflow_github as github
 import workflow_archive as archive
+import workflow_management as management
 
 
 class WorkflowTests(unittest.TestCase):
@@ -100,6 +101,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual((template / 'mergegalaxy.par').read_text(), 'MW.ini Fornax.ini\n')
         self.assertFalse((case / 'subgetinfo.sh').exists())
         self.assertFalse((case / 'output').exists())
+        with contextlib.redirect_stdout(io.StringIO()):
+            management.organize(SimpleNamespace(root=self.root, repo=self.root / 'missing-checkout'))
+        self.assertTrue(case.is_dir())
+        self.assertFalse(case.is_symlink())
         with self.assertRaisesRegex(ValueError, 'already exists'):
             models.new_case(args)
 

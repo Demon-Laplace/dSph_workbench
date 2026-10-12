@@ -23,7 +23,8 @@ def link(root, target, source, replace=False):
             temporary.symlink_to(os.path.relpath(source, target.parent), target_is_directory=source.is_dir())
             temporary.replace(target)
     elif target.exists():
-        raise ValueError(f'Refusing to replace existing path: {target}')
+        if target.resolve() != source.resolve():
+            raise ValueError(f'Refusing to replace existing path: {target}')
     else:
         target.symlink_to(os.path.relpath(source, target.parent), target_is_directory=source.is_dir())
 

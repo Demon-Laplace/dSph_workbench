@@ -19,7 +19,7 @@ import workflow_release as release
 import workflow_github as github
 
 ROOT = Path(__file__).resolve().parent
-MODEL = re.compile(r"(?:Fornax|MW)\d+(?:_.+)?$")
+MODEL = re.compile(r"(?:Fornax|MW)\d+[A-Za-z0-9_.-]*$")
 SKIP = {".git", ".aws", ".codex", ".agents", "__pycache__", ".ipynb_checkpoints"}
 
 
@@ -36,7 +36,7 @@ def files_under(root, exclude=()):
 
 def model_rows(root):
     for directory in sorted(root.iterdir()):
-        if not directory.is_dir() or directory.is_symlink() or not MODEL.fullmatch(directory.name):
+        if not directory.is_dir() or not directory.resolve().is_relative_to(root) or not MODEL.fullmatch(directory.name):
             continue
         files = list(files_under(directory))
         snapshots = [p for p in files if re.fullmatch(r"snapshot_\d+(?:\.\d+)?\.hdf5", p.name)]
