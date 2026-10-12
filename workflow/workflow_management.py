@@ -12,12 +12,16 @@ import time
 import workflow_runtime as runtime
 
 
-def link(root, target, source):
+def link(root, target, source, replace=False):
     runtime.confined(root, target.parent)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_symlink():
         if target.resolve() != source.resolve():
-            raise ValueError(f'Existing link points elsewhere: {target}')
+            if not replace:
+                raise ValueError(f'Existing link points elsewhere: {target}')
+            temporary = target.with_name(target.name + '.next')
+            temporary.symlink_to(os.path.relpath(source, target.parent), target_is_directory=source.is_dir())
+            temporary.replace(target)
     elif target.exists():
         raise ValueError(f'Refusing to replace existing path: {target}')
     else:
@@ -73,10 +77,10 @@ def organize(args):
             records.append({'name': name, 'category': category, 'source': str(path), 'entry': str(target.relative_to(root))})
     code = runtime.code_dir(args)
     if code.is_dir():
-        link(root, base / 'code/production', code)
+        link(root, base / 'code/production', code, replace=True)
     if args.repo.is_dir():
-        link(root, base / 'code/github', args.repo)
-        link(root, base / 'inputs/parameters/github', args.repo / 'IniFile')
+        link(root, base / 'code/github', args.repo, replace=True)
+        link(root, base / 'inputs/parameters/github', args.repo / 'IniFile', replace=True)
     runtime.write_json(base / 'catalog/layout.json', {'created_utc': runtime.now(), 'entries': records})
     print(f'Organized {len(records)} entries under {base}; existing model data stay in place.')
     return 0

@@ -263,7 +263,8 @@ def main():
             p.add_argument("--resume", action="store_true", help="resubmit after previous job has left the queue")
     args = parser.parse_args()
     args.root = args.root.resolve()
-    args.repo = (args.repo or args.root / "tools" / "dSph_workbench").resolve()
+    configured_repo = runtime.config(args.root).get('github', {}).get('checkout', 'tools/dSph_workbench')
+    args.repo = (args.repo or args.root / configured_repo).resolve()
     try:
         return args.func(args)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
