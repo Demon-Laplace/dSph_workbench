@@ -17,6 +17,7 @@ import workflow_management as management
 import workflow_models as models
 import workflow_release as release
 import workflow_github as github
+import workflow_isolation as isolation
 
 ROOT = Path(__file__).resolve().parent
 if ROOT.name == 'workflow' and (ROOT.parent / 'model_tool.py').is_file():
@@ -164,6 +165,20 @@ def main():
     parser.add_argument("--root", type=Path, default=ROOT, help="simulation workspace (default: this script's directory)")
     parser.add_argument("--repo", type=Path, help="dSph_workbench checkout (default: ROOT/tools/dSph_workbench)")
     commands = parser.add_subparsers(dest="command", required=True)
+    p = commands.add_parser('isolation', help='generate/reuse IC, verify transfer, prepare and optionally submit isolation')
+    p.add_argument('model', help='e.g. Fornax7003')
+    p.add_argument('--name', required=True, help='unique run name, reused for retries')
+    p.add_argument('--ic-run', help='reuse a completed run under IC generated/')
+    p.add_argument('--profile', default='default', help='server isolation profile')
+    p.add_argument('--threads', type=int, default=2)
+    p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--python')
+    p.add_argument('--submit', action='store_true', help='submit; otherwise only Slurm preflight')
+    p.add_argument('--dry-run', action='store_true', help='show plan without building or connecting')
+    p.set_defaults(func=isolation.pipeline)
+    p = commands.add_parser('isolation-status', help='read the recorded server isolation job state')
+    p.add_argument('--name', required=True)
+    p.set_defaults(func=isolation.status)
     p = commands.add_parser("sync-github", help="validate, commit and push production source to GitHub main")
     p.add_argument("--message", required=True)
     p.set_defaults(func=github.sync)

@@ -277,3 +277,63 @@ python3 ~/data/workflow_archive.py --root ~/data --plan ~/data/observer_review_d
 另有两次明确标记为 smoke 的流程测试记录。旧测试 IC 已迁至同一 generated/，原路径保留兼容链接。
 18 项定向测试通过，覆盖重复登记、远端快进、推送失败重试、文件篡改拒绝、质量单位和目录逃逸。
 两个笔记本所有代码单元通过语法检查，目录初始化实测通过；整套诊断绘图未重跑。
+
+
+## 一条命令运行 isolation
+
+新入口把本地 AGAMA 生成、总表同步、粒子与参数校验上传、服务器 case 准备、IC 格式转换、
+Slurm 提交和结束时间检查串起来。服务器首次需要配置 `isolation_profiles.default`；
+配置必须从实际可用的隔离模板和启动脚本核对，不能猜测转换器参数或复制周期边界求解器。
+当前实现的本地集成测试通过；本次会话 SSH 连接失效，服务器配置与真实 Slurm 实测尚未完成。
+
+在分析工作区或 IC 工作区使用：
+
+```bash
+# 完全只读预览，不连接服务器、不生成 IC
+python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --dry-run
+# 一条命令：生成 -> 登记总表 -> 校验上传 -> 提交隔离模拟
+python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --submit
+# 使用 generated/ 中已完成的 IC，不重复计算
+python3 workflow.py isolation Fornax7003 --ic-run Fornax7003-v1 --name Fornax7003-iso-v2 --submit
+python3 workflow.py isolation-status --name Fornax7003-iso-v1
+```
+
+不传 `--submit` 会完成生成/上传/准备，然后仅运行 `sbatch --test-only`。随后加 `--submit`
+重复同一命令即可提交。相同运行名绑定固定 IC、参数与 profile：已生成的 IC 校验后复用，
+已接收的 case 不重复上传，已提交的作业返回原 JobID，不再提交。参数或种子改变需要新运行名。
+上传中断时重试使用新的 staging 目录，完整接收的 case 原子发布；未完成的 staging 保留供检查。
+提交响应不确定时停止盲目重试，需要先核对 Slurm，防止产生两个同时写入同一目录的作业。
+失败/取消任务的重启不是这个命令的隐式行为，需要检查后使用新的运行名或既有重启流程。
+
+本地回执在 IC 工作区的 `jobs/<name>/`，服务器输出在
+`data/workspace/models/isolation/<name>/`。`isolation-status` 读取服务器保存的状态；
+如果 Slurm 在启动前取消作业或强制杀死进程，应根据回执中的 JobID 查 `sacct`，因为进程可能
+没有机会更新状态。生成、转换、求解日志分别保留。最后快照必须达到 `TimeMax` 才标记完成；
+这不代替平衡性、收敛性或科学结果检查。服务器执行验证的 Python 需要 h5py。
+
+服务器 profile 保存在 data 根目录的 `workflow.json` 的 `isolation_profiles` 字段，键为 profile 名：
+
+- `template`：data 内已有隔离模板目录，包含 `GZWJL.PARAM` 和可选 `TREECOOL`。
+- `converter` / `solver`：根据既有可运行脚本填写的命令参数数组。占位符有 `{ascii}`、
+  `{binary}`（预期 `Fornax.IC_000`）、`{prefix}`（Fornax 路径前缀）、`{parameters}`。
+- `setup`：既有模块加载命令，写入作业脚本；`python` 指定支持 h5py 的 Python。
+- `sbatch`：资源配置，可用 partition、account、nodes、ntasks、cpus-per-task、time、mem、constraint。
+- `parameter_overrides`：明确指定的参数覆盖；默认保留模板物理参数。输入和输出路径自动重写，
+  `ResubmitOn` 置零，由本流程负责记录提交，避免旧脚本自动重提绕开防重复保护。
+
+模板、脚本、配置和输入 SHA256 一同冻结；修改已准备的参数会被拒绝。求解器及转换器可以
+只读调用现有安装，所有新文件限制在指定 data 根目录内。GitHub 仍只同步源码和 IC 总表。
+
+## IC 工作区旧文件清理
+
+IC 根目录的 24 个历史检查/分析工具迁入 `local_tools/isolation_analysis/`，其中 6 个逐字节相同
+的模块用相对链接复用公共工具，18 个有不同逻辑的文件独立保留；不以日期判断科学程序是否无用。
+从 IC 根目录运行这些工具，例如 `python3 local_tools/isolation_analysis/CheckDensityProfile.py --help`。
+旧工具原件、退役 benchmark 启动脚本、重复 Schwarzschild 求解器、根缓存和 5 张独立比较图放入
+系统回收站。模型内部图片、粒子、轨道及模拟数据保留。
+
+8 个其余笔记本迁到 `notebooks/`，添加工作目录和旧工具导入初始化，原件在回收站。打开后重启
+内核并先执行首单元。`Test.ipynb` 原有一个未完成的 `df[]` 草稿单元保持原样。
+历史统计表格和演示文件集中在 `reports/historical/`；包含粒子文件的旧性能测试目录保存在
+`archive/benchmark_results/`。观测输入仍保留原路径，避免旧检查程序失去输入。
+逐项清理记录在分析工作区 `workspace/catalog/ic-cleanup-20261012.json`。
