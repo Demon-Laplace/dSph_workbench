@@ -41,7 +41,7 @@ ssh -M -S /tmp/fornax-mesopsl-v2.sock -o ControlPersist=1h -o ProxyJump=xhuang@r
 
 ## GitHub、源码同步与发布
 
-GitHub 保存代码、参数定义、测试和工作流文档；本地和服务器保存机器配置及数据。正确工作副本为 `tools/dSph_workbench/`，同步分支为 `workflow/server-sync`。原仓库的 `repo/` 保留上游版本，`production_analysis/` 保存当前服务器生产源码基线；两者的科学计算差异没有被自动合并。
+GitHub 保存代码、参数定义、测试和工作流文档；本地和服务器保存机器配置及数据。GitHub 远端只保留 main 分支。正确工作副本为 `tools/dSph_workbench/`，同步分支为 `main`。原仓库的 `repo/` 保留上游版本，`production_analysis/` 保存当前服务器生产源码基线；两者的科学计算差异没有被自动合并。
 
 服务器 `dSph_workbench/AGENTS.md` 要求智能体在修改源码、完成相关验证后自动执行：
 
@@ -49,13 +49,13 @@ GitHub 保存代码、参数定义、测试和工作流文档；本地和服务�
 python3 workflow.py sync-github --message "说明修改内容与验证结果"
 ```
 
-在服务器数据根运行这条命令，源码来自 `github.source`，Git 工作副本由 `github.checkout` 指定。命令检查 Python 语法、仅复制允许的源码/文档/测试，提交并推送专用分支。它不会推送数据，也不会强制覆盖远程历史；认证、网络或分支冲突失败时保留本地提交并返回失败。AGENTS.md 是智能体操作约定，不是监控所有编辑器的后台服务。
+在服务器数据根运行这条命令，源码来自 `github.source`，Git 工作副本由 `github.checkout` 指定。命令检查 Python 语法、仅复制允许的源码/文档/测试，提交并推送main 分支。它不会推送数据，也不会强制覆盖远程历史；认证、网络或分支冲突失败时保留本地提交并返回失败。AGENTS.md 是智能体操作约定，不是监控所有编辑器的后台服务。
 
 发布前确保本地工作副本已获取并快进到所需提交。发布只读取干净 Git 提交中的文件：
 
 ```bash
 git -C tools/dSph_workbench fetch origin
-git -C tools/dSph_workbench merge --ff-only origin/workflow/server-sync
+git -C tools/dSph_workbench merge --ff-only origin/main
 python3 workflow.py release --name analysis-v1
 python3 workflow.py deploy --name analysis-v1
 ```

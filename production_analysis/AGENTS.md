@@ -10,7 +10,7 @@ and videos as part of a code change.
 ## Required GitHub synchronization after a code change
 
 The workspace owner explicitly authorizes automatic Git commits and pushes of
-validated code changes to the configured dedicated synchronization branch.
+validated code changes to the configured main branch.
 After changing source code, documentation, or tests here:
 
 1. Run the smallest relevant verification; for scientific changes also compare
@@ -23,7 +23,7 @@ After changing source code, documentation, or tests here:
 
    Use the configured Python module on the server. This command snapshots the
    allowed source files into `production_analysis/` of the configured Git
-   checkout, commits them, and pushes `workflow/server-sync` by default.
+   checkout, commits them, and pushes `main` by default.
 3. Report the resulting commit and push result. Authentication failures,
    conflicting remote edits, or unavailable networking mean synchronization is
    incomplete. Preserve the local commit and report the error; never claim a
@@ -36,7 +36,7 @@ necessary source directory or file type, explicitly extend and test the
 allowlist before relying on automatic synchronization. Never stage the whole
 simulation workspace. Never push raw data, particle INIs, notebooks with embedded
 outputs, credentials, machine configuration, Slurm logs, images, or videos.
-Do not force-push, reset away user changes, or overwrite the GitHub main branch.
+Do not force-push or reset away user changes. Push only fast-forward updates to main.
 Resolve divergent changes explicitly.
 
 ## Code publication and reproducibility

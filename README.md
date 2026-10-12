@@ -9,8 +9,8 @@ results retrieval, and Git-based analysis releases.
 Read [the workflow guide](workflow/WORKFLOW.md) for setup and commands.
 Machine-specific configuration, particle ICs, snapshots, logs, images, and
 videos belong in the simulation workspace and must not enter this repository.
-The `workflow/server-sync` branch receives scoped automatic agent updates;
-changes are not automatically merged into `main`.
+The remote keeps only `main`, which receives validated, scoped automatic agent
+updates. Divergent history stops synchronization; force pushes are not used.
 
 Install the `workflow/workflow*.py` modules together in the simulation data
 root, copy and adapt `workflow/workflow.example.json` as `workflow.json`, and

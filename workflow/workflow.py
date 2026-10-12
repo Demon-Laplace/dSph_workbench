@@ -162,7 +162,7 @@ def main():
     parser.add_argument("--root", type=Path, default=ROOT, help="simulation workspace (default: this script's directory)")
     parser.add_argument("--repo", type=Path, help="dSph_workbench checkout (default: ROOT/tools/dSph_workbench)")
     commands = parser.add_subparsers(dest="command", required=True)
-    p = commands.add_parser("sync-github", help="validate, commit and push production source to the dedicated GitHub branch")
+    p = commands.add_parser("sync-github", help="validate, commit and push production source to GitHub main")
     p.add_argument("--message", required=True)
     p.set_defaults(func=github.sync)
     for name, function in (("release", release.build), ("deploy", release.deploy),

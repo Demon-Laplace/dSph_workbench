@@ -11,7 +11,7 @@
   "github": {
     "checkout": "tools/dSph_workbench",
     "source": "tools/server-analysis",
-    "branch": "workflow/server-sync",
+    "branch": "main",
     "url": "https://github.com/Demon-Laplace/dSph_workbench.git"
   }
 }

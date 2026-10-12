@@ -1,4 +1,4 @@
-"""Publish a scoped production-source snapshot to a dedicated GitHub branch."""
+"""Publish a scoped production-source snapshot to a GitHub main branch."""
 import ast
 from pathlib import Path
 import shutil
@@ -28,7 +28,7 @@ def sync(args):
     settings = runtime.config(args.root).get('github', {})
     repo = runtime.confined(args.root, args.root / settings.get('checkout', 'tools/dSph_workbench'))
     source = (args.root / settings.get('source', 'tools/server-analysis')).resolve()
-    branch = settings.get('branch', 'workflow/server-sync')
+    branch = settings.get('branch', 'main')
     url = settings.get('url', 'https://github.com/Demon-Laplace/dSph_workbench.git')
     files = source_files(source)
     if not repo.exists():
