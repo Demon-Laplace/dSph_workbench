@@ -171,6 +171,10 @@ def main():
     p = commands.add_parser("export-source", help="export only allowed source files for GitHub synchronization")
     p.add_argument("--name", required=True)
     p.set_defaults(func=github.export_source)
+    p = commands.add_parser("record-source-sync", help="record an exported source baseline after a successful push")
+    p.add_argument("--name", required=True)
+    p.add_argument("--commit", required=True)
+    p.set_defaults(func=github.record_source_sync)
     for name, function in (("release", release.build), ("deploy", release.deploy),
                            ("activate-release", release.activate)):
         p = commands.add_parser(name, help="create, transfer or activate a checksum-verified Git release")

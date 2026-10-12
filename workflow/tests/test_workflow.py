@@ -193,6 +193,9 @@ class WorkflowTests(unittest.TestCase):
         git_at(peer, 'add', '.')
         git_at(peer, 'commit', '-m', 'peer change')
         git_at(peer, 'push', 'origin', 'main')
+        # Even a previously updated checkout must not make stale server code look new.
+        git_at(checkout, 'fetch', 'origin')
+        git_at(checkout, 'merge', '--ff-only', 'origin/main')
         with self.assertRaisesRegex(ValueError, 'both changed'):
             github.sync(args)
         self.assertEqual(code.read_text(), '# newer remote change\n')
