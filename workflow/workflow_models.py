@@ -6,8 +6,22 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 
 import workflow_runtime as runtime
+
+
+def build_ic(args):
+    source = resolve_input(args.root, args.ini)
+    destination = runtime.confined(args.root, args.root / 'workspace/models/initial' / runtime.label(args.name))
+    if destination.exists() or destination.is_symlink():
+        raise ValueError('Initial-condition run already exists; refusing to overwrite')
+    builder = args.repo / 'local_tools/ic_generation/build_ic.py'
+    if not builder.is_file():
+        raise ValueError(f'Missing versioned IC builder: {builder}')
+    python = args.python or runtime.config(args.root).get('ic_python') or sys.executable
+    return subprocess.run([python, str(builder), '--ini', str(source), '--output', str(destination),
+                           '--threads', str(args.threads), '--seed', str(args.seed)]).returncode
 
 
 def model_name(value):

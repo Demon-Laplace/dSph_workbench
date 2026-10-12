@@ -135,7 +135,15 @@ python3 workflow.py remote simulate Fornax9001 --name sim9001-run --launcher sub
 
 模拟提交复用该模型已有的 Slurm 资源配置和 GIZMO 启动命令。默认仅预检；只有 `--submit` 才提交。存在快照或 restart 数据时拒绝重跑，避免覆盖已有模拟。这里没有自动替代原有重启程序。
 
-AGAMA 初始模型构建尚未纳入可执行的自动流水线：当前检查的两端 Python 环境均未找到 `agama`。粒子 IC 合并工具位于服务器已有 `zimpack` 安装中，但新案例的合并步骤和长时间 GIZMO 模拟本次没有执行验证。参数上传不会伪装成已生成粒子初始条件；`simulate` 会检查合并后的 `InitCondFile` 是否已存在。
+本机 `simulation` Conda 环境已有 AGAMA，当前默认 Python 未安装该模块。`workflow.json` 的 `ic_python` 指定建模解释器，也可用 `--python` 显式覆盖。统一建模入口会拒绝已有输出目录，冻结输入参数、记录随机种子和求解器 SHA256，生成独立粒子 IC；不会把粒子数据推入 GitHub：
+
+```bash
+python3 workflow.py build-ic --ini tools/dSph_workbench/IniFile/IC_Fornax7003.ini --name Fornax7003-ic-v1 --threads 2 --seed 42
+```
+
+该命令使用原来的 Schwarzschild 求解器，输出到 `workspace/models/initial/<name>/`，包括 `Fornax.ini`、`parameters.ini`、`build.json` 和 `build.log`。失败目录保留供排查，下一次使用新名称。建模计算精度不变。新入口替代旧 `makeini.py`，也避免直接使用依赖仓库文件夹名称的 `model_tool.py build`。
+
+两级粒子 IC 合并工具仍使用服务器已有 `zimpack` 安装。2026-10-12 已在独立测试目录实测合并与短时模拟；`new-case` 仍只准备输入，未自动执行合并。`simulate` 会检查合并后的 `InitCondFile` 是否存在。完整规模及长时间稳定性不在本次验证范围内。
 
 ## 整理与清理记录
 
@@ -146,7 +154,11 @@ python3 workflow.py list
 python3 workflow.py audit
 ```
 
-`organize` 更新分类入口，不搬动历史模拟数据。旧笔记本和旧脚本仍可通过原路径使用。五个本地旧脚本变体已移入 `workspace/archive/local_legacy_20261012/`，原位置保留链接。
+`organize` 更新分类入口，不搬动历史模拟数据。本地根目录原有 23 个旧 Python 脚本或链接已清除：12 个仍被历史笔记本或专用检查使用的工具迁到 `tools/dSph_workbench/local_tools/analysis/`，通过 `workspace/code/local-analysis/` 访问；建模核心统一放到 `local_tools/ic_generation/`。生产分析仍使用 `repo/` 中经过验证的当前版本，两套源码用途明确区分。
+
+本地按用户要求使用系统回收站：31 个旧脚本/旧链接、12 个迁移前原件、15 个笔记本修改前原件，以及 4 个缓存/旧分类链接目录，均可在回收站恢复。15 个笔记本已加入显式路径初始化，保留原工作目录及已存输出；已打开的旧内核需重启后从首单元运行。`makeini.ipynb` 的旧求解器路径和 Python 入口也已更新。`test_pyscript` 的专用研究程序保留，其空脚本已清理。
+
+逐文件清单及恢复位置：`workspace/catalog/local-cleanup-receipt-20261012.json`。不要恢复旧入口覆盖统一工作流；如需历史代码，可从回收站恢复到单独目录。模型快照、IC、图片和视频未参与这次本地脚本清理。
 
 服务器归档位置：
 
@@ -176,7 +188,22 @@ python3 ~/data/workflow_archive.py --root ~/data --plan ~/data/observer_review_d
 
 已实测参数 7002、7003 的批次上传和 SHA256 校验，以及 Fornax7001 快照 100–102 的 Slurm 提交、统计、三张 PNG、视频合成和成果回传。测试成果位于 `workspace/results/remote/workflow-smoke-20261012/`。这是工作流冒烟测试，三帧历史不足以用于完整轨道或恒星形成史推断。
 
-`tests/test_workflow.py` 覆盖输入与输出隔离、原数据变化检测、禁止覆盖、路径逃逸、快照位置歧义、统计完整性及日志识别。完整新模型生成、IC 合并和长时间模拟不在已验证范围内。
+`tests/test_workflow.py` 覆盖输入与输出隔离、原数据变化检测、禁止覆盖、路径逃逸、快照位置歧义、统计完整性及日志识别。另已实测统一 `build-ic` 入口：1536 个粒子与旧流程输出逐值一致，并验证了拒绝覆盖已有输出。长时间模拟尚未验证。
+
+### 2026-10-12 建模与短时演化验证
+
+完整记录位于本地及服务器的 `workspace/validation/ic-smoke-20261012/`，摘要为 `workspace/catalog/ic-validation-20261012.json`。这是缩小轨道库和粒子数的流程验证模型，轨道约束存在残差，不用于物理结论。
+
+- AGAMA 生成 512 个气体和 1024 个恒星粒子；质量与 AGAMA 实际密度积分匹配。Sersic 的实际积分质量与 INI 名义质量约差 0.0102%，没有人为修改粒子质量。
+- 两级 IC 合并得到 3136 个粒子，独立读取二进制块验证了数量、唯一 ID、位置、速度及质量。
+- 原隔离求解器成功推进到 `TimeMax=1e-5`，写出三帧有效快照。
+- 原周期边界求解器在 `PartAllocFactor=5.5`、4 或 2 个 MPI 任务时崩溃。GDB 显示 `drift_particle` 中的 SIMD 指令访问仅按 8 字节对齐的地址；旧分配器的四处申请/重申请都只向 8 字节取整。
+- 在独立 `data/workspace/validation/` 副本中将四处取整改为 16 字节，复用既有其他目标文件，仅重编译分配器并重新链接；原参数下 4 和 2 个 MPI 任务均通过，Slurm 作业 236563 为 `COMPLETED`。候选没有替换原安装或正式模型启动命令。
+- 原程序仅改变测试内存预留系数到 6.0 也能完成，验证了布局相关性；该数值不是通用修复。修复候选的 4 任务结果与这个对照的三帧坐标、速度、质量、密度及内能逐值一致。2 任务结果有微小并行差异。
+
+补丁保存在 `workflow/solver_patches/gizmo_allocator_alignment16.patch`，只适用于经过匹配检查的旧分配器源码。不要直接修改服务器 `data/` 外的程序。补丁没有改变物理方程或数值类型；生产规模、长时间演化及重启读写仍未验证，不能据短时测试直接替换所有正式求解器。
+
+`workflow/tests/verify_simulation.py` 验证快照确实推进到目标时间、粒子数和 ID、质量及有限值；它针对固定粒子数的短时测试，不适用于发生星形成/粒子合并的通用生产验证。Slurm `COMPLETED` 本身不足以判定成功，调试器可在被调试程序崩溃后返回零退出码。
 
 ## 分支整理与精度约定
 

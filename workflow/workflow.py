@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory, validate, and prepare isolated analysis runs; never starts simulations."""
+"""Manage simulation inputs, isolated analyses, transfers and explicit job submission."""
 
 import argparse
 import csv
@@ -123,8 +123,8 @@ def doctor(args):
         if not found:
             missing.append(module)
     print("agama (IC generation):", "installed" if importlib.util.find_spec("agama") else "MISSING")
-    print("Upstream model_tool infers the model prefix from its directory name.")
-    print("Use check-ini below for validation by explicit path; direct builds also auto-push to GitHub.")
+    print("Configured IC Python:", runtime.config(args.root).get('ic_python', sys.executable))
+    print("Use build-ic for isolated IC generation; use check-ini for parameter validation.")
     print("Configured production code:", runtime.code_dir(args))
     print("Configuration:", args.root / "workflow.json")
     return int(bool(missing) or not (args.repo / "repo" / "GetInfo.py").is_file())
@@ -191,6 +191,13 @@ def main():
     p = commands.add_parser("check-ini", help="validate GitHub parameter files without writes or automatic push")
     p.add_argument("models", nargs="+", help='e.g. "4001,7002-7003"')
     p.set_defaults(func=check_ini)
+    p = commands.add_parser("build-ic", help="build particle ICs in a new directory using an explicit AGAMA Python")
+    p.add_argument("--ini", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--python", help="AGAMA Python executable; defaults to ic_python in workflow.json")
+    p.add_argument("--threads", type=int, default=2)
+    p.add_argument("--seed", type=int, default=42)
+    p.set_defaults(func=models.build_ic)
     p = commands.add_parser("prepare", help="prepare a separate analysis directory with pinned code and linked data")
     p.add_argument("model", help="e.g. Fornax1071")
     p.add_argument("--name", required=True, help="unique analysis run name")

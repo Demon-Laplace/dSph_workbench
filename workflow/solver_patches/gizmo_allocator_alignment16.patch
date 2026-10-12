@@ -1,0 +1,74 @@
+--- a/system/mymalloc.c
++++ b/system/mymalloc.c
+@@ -139,11 +139,12 @@
+ 
+ void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int line)
+ {
+-  if((n % 8) > 0)
+-    n = (n / 8 + 1) * 8;
+-
+-  if(n < 8)
+-    n = 8;
++  /* Keep SIMD particle fields aligned across allocation and relocation. */
++  if((n % 16) > 0)
++    n = (n / 16 + 1) * 16;
++
++  if(n < 16)
++    n = 16;
+ 
+   if(Nblocks >= MAXBLOCKS)
+     {
+@@ -184,11 +185,12 @@
+ void *mymalloc_movable_fullinfo(void *ptr, const char *varname, size_t n, const char *func, const char *file,
+ 				int line)
+ {
+-  if((n % 8) > 0)
+-    n = (n / 8 + 1) * 8;
+-
+-  if(n < 8)
+-    n = 8;
++  /* Keep SIMD particle fields aligned across allocation and relocation. */
++  if((n % 16) > 0)
++    n = (n / 16 + 1) * 16;
++
++  if(n < 16)
++    n = 16;
+ 
+   if(Nblocks >= MAXBLOCKS)
+     {
+@@ -331,11 +333,12 @@
+ 
+ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, int line)
+ {
+-  if((n % 8) > 0)
+-    n = (n / 8 + 1) * 8;
+-
+-  if(n < 8)
+-    n = 8;
++  /* Keep SIMD particle fields aligned across allocation and relocation. */
++  if((n % 16) > 0)
++    n = (n / 16 + 1) * 16;
++
++  if(n < 16)
++    n = 16;
+ 
+   if(Nblocks == 0)
+     endrun(76879);
+@@ -377,11 +380,12 @@
+ {
+   unsigned int i;
+ 
+-  if((n % 8) > 0)
+-    n = (n / 8 + 1) * 8;
+-
+-  if(n < 8)
+-    n = 8;
++  /* Keep SIMD particle fields aligned across allocation and relocation. */
++  if((n % 16) > 0)
++    n = (n / 16 + 1) * 16;
++
++  if(n < 16)
++    n = 16;
+ 
+   if(Nblocks == 0)
+     endrun(768799);
