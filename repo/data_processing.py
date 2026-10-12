@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,12 @@ from variable import gizmo_config, orbit_file
 
 ELINFO_DTYPE_MAP = {
     'star_mass': np.float32,
+    'star_mass_old_tracer': np.float32,
+    'star_mass_new': np.float32,
+    'star_mass_aperture_re_multiple': np.float32,
+    'star_mass_aperture_major_kpc': np.float32,
+    'star_half_mass_old_tracer': np.float32,
+    'new_star_half_mass': np.float32,
     'star_half_mass': np.float32,
     'hotgas_mass': np.float32,
     'hotgas_half_mass': np.float32,
@@ -200,9 +207,48 @@ class DataProcessor:
                 f"Multiple IC snapshot INI files found for {dwarf_name} under {search_dir}: {matched_names}"
             )
 
+        merge_par = search_dir / 'mergegalaxy.par'
+        if merge_par.is_file():
+            for line in merge_par.read_text(encoding='utf-8').splitlines():
+                parts = shlex.split(line, comments=True, posix=True)
+                if not parts:
+                    continue
+                if len(parts) < 2:
+                    raise ValueError(
+                        f"Expected two INI paths on the first data line of {merge_par}"
+                    )
+
+                dwarf_ini = Path(parts[1])
+                ic_match = ic_pattern.fullmatch(dwarf_ini.name)
+                if dwarf_ini.name != default_ini.name and ic_match is None:
+                    raise ValueError(
+                        f"Unexpected dwarf INI filename in {merge_par}: {dwarf_ini.name}"
+                    )
+                model_match = DataProcessor.MODEL_NAME_PATTERN.fullmatch(search_dir.name)
+                if ic_match and model_match and (
+                    model_match.group(1) != dwarf_name
+                    or int(ic_match.group('model')) != int(model_match.group(2))
+                ):
+                    raise ValueError(
+                        f"Dwarf INI in {merge_par} does not match model {search_dir.name}: "
+                        f"{dwarf_ini.name}"
+                    )
+
+                resolved_ini = (
+                    dwarf_ini if dwarf_ini.is_absolute() else search_dir / dwarf_ini
+                ).resolve()
+                if not resolved_ini.is_file():
+                    raise FileNotFoundError(
+                        f"Dwarf INI referenced by {merge_par} does not exist: {resolved_ini}"
+                    )
+                return resolved_ini
+
+            raise ValueError(f"No INI paths found in {merge_par}")
+
         raise FileNotFoundError(
             f"INI file not found: expected {default_ini.name} or exactly one "
-            f"{DataProcessor.IC_SNAPSHOT_INI_TEMPLATE.format(dwarf_name=dwarf_name)} under {search_dir}"
+            f"{DataProcessor.IC_SNAPSHOT_INI_TEMPLATE.format(dwarf_name=dwarf_name)} "
+            f"under {search_dir}, or a dwarf INI reference in {merge_par}"
         )
 
     @staticmethod

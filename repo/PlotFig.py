@@ -69,6 +69,8 @@ ADAPTIVE_ML_FIT_MAX_RADIUS_KPC = 5.0
 ADAPTIVE_ML_MIN = 0.1
 ADAPTIVE_ML_MAX = 50.0
 SIM_SB_MARKER_SPACING_KPC = 0.2
+SFH_SFR_UNIT_MSUN_PER_YEAR = 1.0e-4
+PLOT_VIDEO_VERSION = 5
 
 try:
     LIBC = ctypes.CDLL("libc.so.6")
@@ -144,17 +146,17 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         print("[PlotFigVideo] Skip video generation: ffmpeg not found in PATH")
         return None
 
-    output_dir = os.path.abspath(output_dir)
-    output_name = f"{modelname}_v3.mp4"
-    output_path = os.path.join(output_dir, output_name)
+    frames_dir = os.path.abspath(output_dir)
+    video_dir = os.path.dirname(os.path.normpath(frames_dir))
+    output_name = f"{modelname}_v{PLOT_VIDEO_VERSION}.mp4"
+    output_path = os.path.join(video_dir, output_name)
     with tempfile.NamedTemporaryFile(
         suffix='.mp4',
         prefix=f".{output_name}.tmp.",
-        dir=output_dir,
+        dir=video_dir,
         delete=False,
     ) as handle:
         tmp_output_path = handle.name
-    tmp_output_name = os.path.basename(tmp_output_path)
     cmd = [
         ffmpeg_path,
         "-start_number",
@@ -170,13 +172,13 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         "-pix_fmt",
         "yuv420p",
         "-y",
-        tmp_output_name,
+        tmp_output_path,
     ]
 
     try:
         subprocess.run(
             cmd,
-            cwd=output_dir,
+            cwd=frames_dir,
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
@@ -446,6 +448,30 @@ def _load_surface_brightness_observation(dwarf_name, factor):
     return obs_surface_brightness
 
 
+def _normalize_elinfo_schema(dw_elinfo):
+    """Supply plotting-only defaults for elinfo files made by older GetInfo versions."""
+    legacy_fallbacks = []
+
+    if 'rhalf_circularized' not in dw_elinfo.columns:
+        if 'rhalf' not in dw_elinfo.columns:
+            raise KeyError("elinfo is missing both 'rhalf_circularized' and 'rhalf'")
+        dw_elinfo['rhalf_circularized'] = dw_elinfo['rhalf']
+        legacy_fallbacks.append("rhalf_circularized=rhalf")
+
+    for column in ('shape_center_x_kpc', 'shape_center_y_kpc'):
+        if column not in dw_elinfo.columns:
+            dw_elinfo[column] = 0.0
+            legacy_fallbacks.append(f"{column}=0")
+
+    if legacy_fallbacks:
+        print(
+            "[PlotFig] Legacy elinfo compatibility: "
+            + ", ".join(legacy_fallbacks)
+        )
+
+    return dw_elinfo
+
+
 def build_plot_context():
     model_info = DataProcessor.parse_model_name_details()
     modelname = model_info['modelname']
@@ -465,6 +491,13 @@ def build_plot_context():
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
+    dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
+    if 'numsp' not in dw_elinfo.columns:
+        raise ValueError("The elinfo file does not contain a numsp column")
+    elinfo_numsp_values = pd.to_numeric(dw_elinfo['numsp'], errors='coerce').dropna()
+    elinfo_snapshots = sorted(set(elinfo_numsp_values.astype(int).tolist()))
+    if not elinfo_snapshots:
+        raise ValueError("The elinfo file does not contain any valid snapshot numbers")
     elinfo_by_numsp = dw_elinfo.set_index('numsp', drop=False)
 
     if not os.path.exists(output_folder):
@@ -486,7 +519,7 @@ def build_plot_context():
     mag_obs_err = obs_surface_brightness['mag_obs_err']
 
     gas_loss_rate = Analysis.calculate_gas_loss_rate(dw_elinfo['age'].to_numpy(), dw_elinfo['coldgas_half_mass'].to_numpy())
-    distance_series = dw_elinfo['distance_gal'] if 'distance_gal' in dw_elinfo.columns else dw_elinfo['distance']
+    distance_series = dw_elinfo['distance']
     sigma_mw = np.where(
         dw_elinfo.sigma >= dw_elinfo.tsigma,
         np.sqrt(dw_elinfo.sigma**2 - dw_elinfo.tsigma**2),
@@ -508,7 +541,11 @@ def build_plot_context():
         .idxmin(),
         'age'
     ]
-    dw_sfrmass = Analysis.GetSFH_sim(folder_path=folder_path, Tage=Tage)
+    dw_sfrmass = Analysis.GetSFH_sim(
+        folder_path=folder_path,
+        Tage=Tage,
+        snapshot_num=elinfo_snapshots[-1],
+    )
     lookback_sim, sfr_sim, lookback_obs, sfr_obs = _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri)
 
     return {
@@ -523,6 +560,7 @@ def build_plot_context():
         'core_radius': core_radius,
         'dw_elinfo': dw_elinfo,
         'elinfo_by_numsp': elinfo_by_numsp,
+        'elinfo_snapshots': elinfo_snapshots,
         'ini_x': ini_x,
         'ini_y': ini_y,
         'ini_z': ini_z,
@@ -1096,6 +1134,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         total_dw_star_mask,
         ['m', 'x', 'y', 'z', 'vx', 'vy', 'vz'],
     ].iloc[old_star_local_mask]
+    # Photometric and kinematic tracers intentionally remain restricted to old stars.
     star_mass_array = star_df['m'].to_numpy()
     x_star = star_df['x'].to_numpy()
     y_star = star_df['y'].to_numpy()
@@ -1328,7 +1367,7 @@ def _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri, bin_width=0.5):
 
     mass_sim, edges_sim = np.histogram(lookback, bins=bins, weights=sfh_mass)
     dt = np.diff(edges_sim)
-    sfr_sim = mass_sim / dt / 1e4
+    sfr_sim = mass_sim / (dt * 1.0e9) / SFH_SFR_UNIT_MSUN_PER_YEAR
     lookback_sim = edges_sim[:-1]
     lookback_obs, sfr_obs = DataProcessor.GetSFR(sfh_dw, bins=bins)
 
@@ -1348,7 +1387,7 @@ def _plot_sfr_panel(ax, lookback_sim, sfr_sim, lookback_obs, sfr_obs, t_peri):
     ax.legend(loc='upper left')
 
 
-def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, d_mean_gal, vr, vtheta, vphi, vgsr):
+def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta, vphi, vgsr):
     ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.distance.to_numpy(), color='black', lw=3, zorder=1)
     ax.scatter(
         tsnap,
@@ -1364,7 +1403,7 @@ def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, d_mean_gal
     ax.text(
         0.05,
         0.95,
-        f'D : {d_mean_gal:.2f} kpc\n'
+        f'D : {current_distance:.2f} kpc\n'
         f'$v_{{r}}$ : {vr:.2f} km/s\n'
         f'$v_{{\\theta}}$ : {vtheta:.2f} km/s\n'
         f'$v_{{\\phi}}$ : {vphi:.2f} km/s\n'
@@ -1427,7 +1466,6 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     simulation = snapshot['simulation']
     df = snapshot['df']
     tsnap = snapshot['tsnap']
-    d_mean_gal = snapshot['d_mean_gal']
     hot_gas_x_kpc = snapshot['hot_gas_x_kpc']
     hot_gas_y_kpc = snapshot['hot_gas_y_kpc']
     cold_gas_x_kpc = snapshot['cold_gas_x_kpc']
@@ -1645,7 +1683,6 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         tsnap,
         row['distance'],
         t_peri,
-        d_mean_gal,
         metrics['vr'],
         metrics['vtheta'],
         metrics['vphi'],
@@ -1705,8 +1742,8 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         # f'{dwarf_name} stellar mass:\n'
         f'$R_{{half}}$: {metrics["r_half"]:.2f} kpc \n'  
         f'$D_{{peri}}$: {d_peri:.2f} kpc \n'
-        f'$Stellar Mass_{{{stellar_region_subscript_label}}}$: {sm_str} $M_{{\\odot}}$ \n'
-        f'$Stellar Mass_{{Rhalf}}$: {shm_str} $M_{{\\odot}}$ \n'
+        f'Stellar Mass within ${stellar_region_tex_label}$: {sm_str} $M_{{\\odot}}$ \n'
+        f'Stellar Mass within $R_{{half}}$: {shm_str} $M_{{\\odot}}$ \n'
         f'$Cold Gas Mass_{{{stellar_region_subscript_label}}}$: {cg_str} $M_{{\\odot}}$ \n'
         f'$Cold Gas Mass_{{Rhalf}}$: {cghm_str} $M_{{\\odot}}$ \n'
         f'Gas Fraction in Contour: {gas_frac_contour:.3f} \n'
@@ -1787,9 +1824,16 @@ def main():
     if not available_snapshots:
         raise FileNotFoundError(f"No snapshots found under {folder_path}")
 
+    elinfo_snapshots = PLOT_CONTEXT['elinfo_snapshots']
+
+    drawable_snapshots = sorted(set(available_snapshots) & set(elinfo_snapshots))
+    if not drawable_snapshots:
+        raise FileNotFoundError(
+            "No snapshot numbers are present in both the output directory and the elinfo file"
+        )
+
     parser = argparse.ArgumentParser(description='Process some integers.')
-    max_snapshot_num = available_snapshots[-1]
-    default_range = f'0,{max_snapshot_num}'
+    default_range = f'{elinfo_snapshots[0]},{elinfo_snapshots[-1]}'
     
     parser.add_argument('--range', type=str, default=default_range, help='the range of snapshots, e.g., "1,20"')
     parser.add_argument('--processes', type=int, default=1, help='number of processes to use')
@@ -1807,13 +1851,16 @@ def main():
     args = parser.parse_args()
 
     start, end = map(int, args.range.split(','))
-    requested_numsp = filter_available_snapshots(start, end, available_snapshots)
+    requested_numsp = filter_available_snapshots(start, end, drawable_snapshots)
     missing_numsp = [numsp for numsp in range(start, end + 1) if numsp not in set(requested_numsp)]
     if not requested_numsp:
-        raise FileNotFoundError(f"No snapshot files found within requested range {start},{end} under {folder_path}")
+        raise FileNotFoundError(
+            f"No snapshot numbers within requested range {start},{end} are present in both "
+            f"the output directory and the elinfo file"
+        )
     if missing_numsp:
         print(
-            f"PlotFig: skipping {len(missing_numsp)} missing snapshot ids in requested range: "
+            f"PlotFig: skipping {len(missing_numsp)} snapshot ids without both snapshot and elinfo data: "
             + ",".join(str(numsp) for numsp in missing_numsp[:10])
             + ("..." if len(missing_numsp) > 10 else "")
         )

@@ -1,0 +1,51 @@
+{
+  "origin/agent/fornax-evolution-pipeline": {
+    "tip": "d9cb643c2049b425eb2366f2376388f7f4f27bd9",
+    "base": "5ecabf988e05a1c363fefb46ad9a3acc66e2d402",
+    "last_commit": "2026-08-09 13:24:19 +0200 Handle empty CGM neighbour shells",
+    "changes": "M\trepo/GetInfo.py\nM\trepo/analysis_core.py\nM\trepo/coordinate_transform.py\nA\trepo/evolution_pipeline/.gitignore\nA\trepo/evolution_pipeline/README.md\nA\trepo/evolution_pipeline/config.example.json\nA\trepo/evolution_pipeline/config_fornax4001.json\nA\trepo/evolution_pipeline/fornax_evolution_pipeline.py\nA\trepo/evolution_pipeline/run_evolution_pipeline.slurm\nM\trepo/snapshot_metrics.py\nA\trepo/tests/test_evolution_pipeline.py\nA\trepo/tests/test_sigma_re_observational_aperture.py",
+    "commits": "d9cb643 2026-08-09 13:24:19 +0200 Handle empty CGM neighbour shells\neeb3cee 2026-08-09 13:22:06 +0200 Bound evolution job memory and threads\nd98ef47 2026-08-09 13:20:02 +0200 Add reusable Fornax evolution pipeline\n6280c90 2026-07-28 16:45:19 +0200 Use old stars for circular-aperture sigma\nee819c2 2026-07-28 16:23:01 +0200 Define sigma in circular half-light aperture"
+  },
+  "origin/agent/heliocentric-distance-paper-figure": {
+    "tip": "31097d41a8b29b294ffef77efd18e72162705e3a",
+    "base": "5ecabf988e05a1c363fefb46ad9a3acc66e2d402",
+    "last_commit": "2026-07-22 13:08:00 +0200 Support legacy elinfo reruns",
+    "changes": "A\trepo/.gitattributes\nM\trepo/PlotFig.py\nA\trepo/SERVER_WORKFLOW.md\nM\trepo/build_production_ic/orbit_aliases.py\nA\trepo/paper_figures/fornax_mock_observation/README.md\nA\trepo/paper_figures/fornax_mock_observation/make_evolution_montage.py\nA\trepo/paper_figures/fornax_mock_observation/make_snapshot_mock.py\nA\trepo/paper_figures/fornax_mock_observation/run_montage.slurm\nA\trepo/paper_figures/fornax_observable_comparison/README.md\nA\trepo/paper_figures/fornax_observable_comparison/make_current_observables.py\nA\trepo/paper_figures/fornax_observable_comparison/run_current_observables.slurm\nA\trepo/subchecknature.sh\nA\trepo/subgetinfo.sh\nM\trepo/variable.py\nM\trepo/yang_fornax_surface_brightness.py",
+    "commits": "31097d4 2026-07-22 13:08:00 +0200 Support legacy elinfo reruns\ne0b2af2 2026-07-22 12:49:02 +0200 Harden central Slurm launchers\n8f5820b 2026-07-22 12:45:30 +0200 Centralize server processing workflow\n7d389b4 2026-07-22 12:23:30 +0200 Correct SFH absolute normalization\n351ae2a 2026-07-22 12:13:24 +0200 Add current-epoch observable comparison figure\na526475 2026-07-22 11:05:08 +0200 Use fixed H I contours in paper figures\ne17e036 2026-07-22 09:12:06 +0200 Use 139.4 kpc Fornax distance throughout\nd1230ab 2026-07-21 22:46:04 +0200 Select evolution panels on a 0.5 Gyr lookback grid\n943390d 2026-07-21 22:15:33 +0200 Double the proper-motion arrow shaft\nf8a420f 2026-07-21 22:11:04 +0200 Use distance-defined lookback time in paper figures\n3aa91df 2026-07-21 21:54:28 +0200 Use heliocentric distance in Fornax paper figures"
+  },
+  "origin/agent/sigma-re-time-series": {
+    "tip": "e045d8909847be1463c611fd2829086272f9c2ed",
+    "base": "5ecabf988e05a1c363fefb46ad9a3acc66e2d402",
+    "last_commit": "2026-07-28 16:46:09 +0200 Use old stars for circular-aperture sigma",
+    "changes": "M\trepo/GetInfo.py\nM\trepo/analysis_core.py\nM\trepo/snapshot_metrics.py\nA\trepo/tests/test_sigma_re_observational_aperture.py",
+    "commits": "e045d89 2026-07-28 16:46:09 +0200 Use old stars for circular-aperture sigma\n4f35057 2026-07-28 16:46:04 +0200 Use old stars for circular-aperture sigma\n4032244 2026-07-28 16:25:46 +0200 Test circular half-light sigma measurement\nd0c7eb1 2026-07-28 16:25:38 +0200 Define sigma in circular half-light aperture\nec6abf4 2026-07-28 16:25:30 +0200 Define sigma in circular half-light aperture\ndf6e225 2026-07-28 16:25:21 +0200 Define sigma in circular half-light aperture"
+  },
+  "origin/agent/stellar-mass-aperture-fix": {
+    "tip": "d5d783a0dab7c57bf8e40f0493ad3c87731b013a",
+    "base": "83df912007d7bca49a7eb27aa52143bf75fa1b33",
+    "last_commit": "2026-08-23 14:03:11 +0200 Separate total stellar mass from old-star tracers",
+    "changes": "A\trepo/.gitattributes\nM\trepo/GetInfo.py\nM\trepo/PlotFig.py\nA\trepo/SERVER_WORKFLOW.md\nM\trepo/analysis_core.py\nM\trepo/build_production_ic/orbit_aliases.py\nM\trepo/coordinate_transform.py\nM\trepo/data_processing.py\nA\trepo/evolution_pipeline/.gitignore\nA\trepo/evolution_pipeline/README.md\nA\trepo/evolution_pipeline/config.example.json\nA\trepo/evolution_pipeline/config_fornax4001.json\nA\trepo/evolution_pipeline/fornax_evolution_pipeline.py\nA\trepo/evolution_pipeline/run_evolution_pipeline.slurm\nA\trepo/paper_figures/fornax_mock_observation/README.md\nA\trepo/paper_figures/fornax_mock_observation/make_evolution_montage.py\nA\trepo/paper_figures/fornax_mock_observation/make_snapshot_mock.py\nA\trepo/paper_figures/fornax_mock_observation/run_montage.slurm\nA\trepo/paper_figures/fornax_observable_comparison/README.md\nA\trepo/paper_figures/fornax_observable_comparison/make_current_observables.py\nA\trepo/paper_figures/fornax_observable_comparison/run_current_observables.slurm\nM\trepo/snapshot_metrics.py\nA\trepo/subchecknature.sh\nA\trepo/subgetinfo.sh\nA\trepo/tests/test_evolution_pipeline.py\nA\trepo/tests/test_sigma_re_observational_aperture.py\nM\trepo/variable.py\nM\trepo/yang_fornax_surface_brightness.py",
+    "commits": "d5d783a 2026-08-23 14:03:11 +0200 Separate total stellar mass from old-star tracers\ne5f2039 2026-08-23 13:51:43 +0200 Merge remote-tracking branch 'origin/main' into agent/stellar-mass-aperture-fix\n6e5d6bb 2026-08-23 13:47:26 +0200 Merge remote-tracking branch 'origin/agent/fornax-evolution-pipeline' into agent/stellar-mass-aperture-fix\nd9cb643 2026-08-09 13:24:19 +0200 Handle empty CGM neighbour shells\neeb3cee 2026-08-09 13:22:06 +0200 Bound evolution job memory and threads\nd98ef47 2026-08-09 13:20:02 +0200 Add reusable Fornax evolution pipeline\n6280c90 2026-07-28 16:45:19 +0200 Use old stars for circular-aperture sigma\nee819c2 2026-07-28 16:23:01 +0200 Define sigma in circular half-light aperture\n31097d4 2026-07-22 13:08:00 +0200 Support legacy elinfo reruns\ne0b2af2 2026-07-22 12:49:02 +0200 Harden central Slurm launchers\n8f5820b 2026-07-22 12:45:30 +0200 Centralize server processing workflow\n7d389b4 2026-07-22 12:23:30 +0200 Correct SFH absolute normalization\n351ae2a 2026-07-22 12:13:24 +0200 Add current-epoch observable comparison figure\na526475 2026-07-22 11:05:08 +0200 Use fixed H I contours in paper figures\ne17e036 2026-07-22 09:12:06 +0200 Use 139.4 kpc Fornax distance throughout\nd1230ab 2026-07-21 22:46:04 +0200 Select evolution panels on a 0.5 Gyr lookback grid\n943390d 2026-07-21 22:15:33 +0200 Double the proper-motion arrow shaft\nf8a420f 2026-07-21 22:11:04 +0200 Use distance-defined lookback time in paper figures\n3aa91df 2026-07-21 21:54:28 +0200 Use heliocentric distance in Fornax paper figures"
+  },
+  "origin/codex/sigma-eq-new-stars-20260828": {
+    "tip": "770fbe6b0743b4874e8faf5e7fbf8a943cd7515c",
+    "base": "83df912007d7bca49a7eb27aa52143bf75fa1b33",
+    "last_commit": "2026-08-28 11:27:48 +0200 Include new stars in baryonic sigma reference",
+    "changes": "M\trepo/snapshot_metrics.py",
+    "commits": "770fbe6 2026-08-28 11:27:48 +0200 Include new stars in baryonic sigma reference"
+  },
+  "integration_decisions": {
+    "analysis_core.py": "evolution/stellar branch identical to server; retained",
+    "coordinate_transform.py": "evolution/stellar branch identical to server; retained",
+    "GetInfo.py": "branch diagnostic columns plus server total-mass description; six added columns",
+    "snapshot_metrics.py": "all-star gravitating mass; old-star photometric/kinematic tracers; new-star half-mass field; float32 accumulation retained",
+    "PlotFig.py": "server v5, current distance and snapshot intersection plus branch legacy CSV normalization",
+    "data_processing.py": "server external mergegalaxy IC resolution plus diagnostic dtypes",
+    "variable.py": "server skip-cube environment support and existing physical settings",
+    "evolution_pipeline": "branch source includes newer central-gas timescales and explicit 8-Re mass aperture; preserve server-only merge_evolution_chunks.py",
+    "paper_figures": "branch utilities retained; full paper production not rerun",
+    "sigma-re-time-series": "equivalent circular old-star sigma already present through evolution/stellar branch",
+    "codex/sigma-eq-new-stars": "new-star mass already included in all-star total; expose diagnostic without double counting",
+    "server_specific_chunk_slurm": "old machine/model-specific scripts retained in reversible source backup, not copied into canonical code"
+  }
+}

@@ -14,8 +14,6 @@ IniFile/*.ini
 !README.md
 !workflow/
 !workflow/**
-!production_analysis/
-!production_analysis/**
 **/__pycache__/
 **/*.pyc
 workflow/workflow.json

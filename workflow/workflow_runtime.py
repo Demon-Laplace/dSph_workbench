@@ -42,7 +42,7 @@ def config(root):
 
 
 def code_dir(args):
-    setting = config(args.root).get('analysis_code', 'tools/server-analysis')
+    setting = getattr(args, 'code', None) or config(args.root).get('analysis_code', 'tools/server-analysis')
     return (args.root / setting).resolve()
 
 

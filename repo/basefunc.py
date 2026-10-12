@@ -58,12 +58,18 @@ class Analysis(AnalysisCore):
     """Simulation-aware analysis helpers."""
 
     @staticmethod
-    def GetSFH_sim(folder_path=folder_path, Tage=None):
+    def GetSFH_sim(folder_path=folder_path, Tage=None, snapshot_num=None):
 
         if Tage is None:
             print('Please input the age of the universe at the snapshot (Tage) in Gyr')
         
-        numsp = DataProcessor.find_snapshot_range(folder_path)
+        numsp = (
+            DataProcessor.find_snapshot_range(folder_path)
+            if snapshot_num is None
+            else int(snapshot_num)
+        )
+        if numsp is None:
+            raise FileNotFoundError(f"No snapshots found under {folder_path}")
         print(f'Choose snapshot{numsp} for SFH calculation')
         simulation = GalaxySimulation(folder_path=folder_path, snapshot_num=numsp)
         df, tsnap = simulation.load_snapshot()

@@ -20,7 +20,7 @@ def build(args):
     if git(args.repo, 'status', '--porcelain'):
         raise ValueError('Commit or resolve checkout changes before creating a release')
     commit = git(args.repo, 'rev-parse', 'HEAD')
-    entries = git(args.repo, 'ls-tree', '-r', commit, '--', 'production_analysis', 'workflow', 'IniFile').splitlines()
+    entries = git(args.repo, 'ls-tree', '-r', commit, '--', 'repo', 'workflow', 'IniFile').splitlines()
     blobs = []
     for entry in entries:
         metadata, name = entry.split('\t', 1)
@@ -33,7 +33,7 @@ def build(args):
         if size > 2 * 1024**2:
             raise ValueError(f'Unexpected large source file: {name}')
         blobs.append((name, blob))
-    if not any(name == 'production_analysis/GetInfo.py' for name, _ in blobs):
+    if not any(name == 'repo/GetInfo.py' for name, _ in blobs):
         raise ValueError('Commit the production analysis baseline before releasing')
     directory.mkdir(parents=True)
     hashes = {}
@@ -58,7 +58,7 @@ def verify(directory):
     actual = {str(p.relative_to(directory)) for p in directory.rglob('*') if p.is_file()}
     if actual != set(manifest['files']) | {'release.json'}:
         raise ValueError('Unexpected files in immutable release')
-    if 'production_analysis/GetInfo.py' not in manifest['files']:
+    if 'repo/GetInfo.py' not in manifest['files']:
         raise ValueError('Release lacks production analysis')
     return manifest
 
@@ -69,7 +69,7 @@ def activate(args):
     config_path = runtime.confined(args.root, args.root / 'workflow.json')
     settings = runtime.config(args.root)
     old_code = settings.get('analysis_code')
-    settings['analysis_code'] = str((directory / 'production_analysis').relative_to(args.root))
+    settings['analysis_code'] = str((directory / 'repo').relative_to(args.root))
     settings['analysis_release'] = {'name': args.name, 'git_commit': manifest['git_commit']}
     journal = runtime.confined(args.root, args.root / 'workspace/catalog')
     journal.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ def activate(args):
         temporary = link.with_name('production.next')
         if temporary.is_symlink():
             temporary.unlink()
-        temporary.symlink_to(directory / 'production_analysis', target_is_directory=True)
+        temporary.symlink_to(directory / 'repo', target_is_directory=True)
         temporary.replace(link)
     print(f'Activated analysis release {args.name} ({manifest["git_commit"]})')
     return 0

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import re
 import warnings
 import numpy as np
@@ -62,9 +63,9 @@ gizmo_config = './GZWJL.PARAM'
 T_min = 0.001
 dw_filed = 7.5
 sculptor_core_radius = 1
-fornax_core_radius = 5.4
-d_today = 139.6
+d_today = 139.4
 dw_filed_deg = 2.1
+fornax_core_radius = np.radians(dw_filed_deg) * d_today
 dw_cold_gas_lower_limit = 1.46e5
 xylabel_size = 16
 cd_threshold = 6e19
@@ -97,7 +98,8 @@ stars_color = 'royalblue'
 Sname = './Sample1_'
 fcat =Sname+'candidates.csv'
 fndens = Sname+'density.csv'
-cube_path = get_cube_path()
+# Isolation converters do not use a Milky Way cube configuration.
+cube_path = None if os.environ.get('DSPH_SKIP_CUBE_PATH') == '1' else get_cube_path()
 
 r_pc = np.array([
     56.8182, 96.5909, 126.420, 149.148, 174.716, 194.602, 214.489, 234.375, 254.261, 272.727,

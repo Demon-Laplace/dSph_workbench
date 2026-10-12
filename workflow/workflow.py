@@ -165,6 +165,12 @@ def main():
     p = commands.add_parser("sync-github", help="validate, commit and push production source to GitHub main")
     p.add_argument("--message", required=True)
     p.set_defaults(func=github.sync)
+    p = commands.add_parser("sync-server-github", help="fetch a verified server source snapshot and push with local GitHub credentials")
+    p.add_argument("--message", required=True)
+    p.set_defaults(func=github.sync_server)
+    p = commands.add_parser("export-source", help="export only allowed source files for GitHub synchronization")
+    p.add_argument("--name", required=True)
+    p.set_defaults(func=github.export_source)
     for name, function in (("release", release.build), ("deploy", release.deploy),
                            ("activate-release", release.activate)):
         p = commands.add_parser(name, help="create, transfer or activate a checksum-verified Git release")
@@ -186,6 +192,7 @@ def main():
     p.add_argument("--name", required=True, help="unique analysis run name")
     p.add_argument("--snapshots", choices=("model", "output"), help="explicit choice when snapshots exist in both locations")
     p.add_argument("--dry-run", action="store_true", help="validate and display paths without creating files")
+    p.add_argument("--code", help="explicit candidate analysis directory for isolated validation")
     p.set_defaults(func=prepare)
     p = commands.add_parser("new-ini", help="create a draft parameter file without overwriting GitHub or pushing")
     p.add_argument("model")
@@ -242,6 +249,7 @@ def main():
             p.add_argument("--dry-run", action="store_true")
         if name == "pipeline":
             p.add_argument("model")
+            p.add_argument("--code", help="explicit candidate analysis directory for isolated validation")
             p.add_argument("--snapshots", choices=("model", "output"))
             p.add_argument("--submit", action="store_true", help="submit job; otherwise only validate with sbatch --test-only")
         if name in ("run", "submit", "pipeline"):

@@ -1,10 +1,9 @@
 # dSph workbench
 
-`IniFile/` contains the existing model parameter definitions; `repo/` retains
-its upstream analysis and IC utilities. `production_analysis/` captures the
-validated server analysis baseline without overwriting upstream scientific
-implementations. `workflow/` coordinates local preparation, server Slurm work,
-results retrieval, and Git-based analysis releases.
+`IniFile/` contains small model parameter definitions. `repo/` is the unified
+analysis and IC-tool source, reconciled from the prior feature branches and
+server production fixes. `workflow/` coordinates local preparation, server
+Slurm jobs, result retrieval, source synchronization, and Git-based releases.
 
 Read [the workflow guide](workflow/WORKFLOW.md) for setup and commands.
 Machine-specific configuration, particle ICs, snapshots, logs, images, and

@@ -1,0 +1,27 @@
+{
+  "snapshots": [
+    100,
+    101,
+    102
+  ],
+  "common_columns": 36,
+  "changed_common_columns": {},
+  "comparison_rtol": 1e-10,
+  "comparison_atol": 1e-12,
+  "added_columns": [
+    "new_star_half_mass",
+    "star_half_mass_old_tracer",
+    "star_mass_aperture_major_kpc",
+    "star_mass_aperture_re_multiple",
+    "star_mass_new",
+    "star_mass_old_tracer"
+  ],
+  "stellar_component_sums": "passed at float32 mass accumulation precision (rtol=1e-6, atol=1 solar mass)",
+  "reference_job": "297257",
+  "candidate_job": "297264",
+  "branch_tests_passed": 12,
+  "workflow_tests_passed": 12,
+  "plot_and_video": "completed",
+  "float32_final_job": "297265",
+  "float32_final_common_columns": "36/36 passed"
+}

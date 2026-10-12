@@ -41,15 +41,21 @@ ssh -M -S /tmp/fornax-mesopsl-v2.sock -o ControlPersist=1h -o ProxyJump=xhuang@r
 
 ## GitHub、源码同步与发布
 
-GitHub 保存代码、参数定义、测试和工作流文档；本地和服务器保存机器配置及数据。GitHub 远端只保留 main 分支。正确工作副本为 `tools/dSph_workbench/`，同步分支为 `main`。原仓库的 `repo/` 保留上游版本，`production_analysis/` 保存当前服务器生产源码基线；两者的科学计算差异没有被自动合并。
+GitHub 保存代码、参数定义、测试和工作流文档；本地和服务器保存机器配置及数据。GitHub 远端只保留 main 分支。正确工作副本为 `tools/dSph_workbench/`，同步分支为 `main`。`repo/` 是统一分析源码目录，包含已核对的分支功能与服务器兼容修复；`workflow/` 管理运行、同步与发布。
 
-服务器 `dSph_workbench/AGENTS.md` 要求智能体在修改源码、完成相关验证后自动执行：
+服务器 `dSph_workbench/AGENTS.md` 要求智能体在修改源码、完成相关验证后自动同步。当前推荐在本地工作目录执行（复用本机 GitHub 凭据）：
+
+```bash
+python3 workflow.py sync-server-github --message "说明服务器修改与验证结果"
+```
+
+该入口先导出允许的服务器源码并验证 SHA256，再提交和推送。服务器当前没有独立 GitHub 推送凭据；直接在服务器操作的智能体必须报告认证失败，不能伪报同步完成。若服务器已有认证，可在数据根直接执行：
 
 ```bash
 python3 workflow.py sync-github --message "说明修改内容与验证结果"
 ```
 
-在服务器数据根运行这条命令，源码来自 `github.source`，Git 工作副本由 `github.checkout` 指定。命令检查 Python 语法、仅复制允许的源码/文档/测试，提交并推送main 分支。它不会推送数据，也不会强制覆盖远程历史；认证、网络或分支冲突失败时保留本地提交并返回失败。AGENTS.md 是智能体操作约定，不是监控所有编辑器的后台服务。
+在服务器数据根运行这条命令，源码来自 `github.source`，Git 工作副本由 `github.checkout` 指定。命令检查 Python 语法、仅复制允许的源码/文档/测试，提交并推送main 分支。它不会推送数据，也不会强制覆盖远程历史；发现 GitHub 与源码都改动的文件会停止并要求先合并；认证、网络或分支冲突失败时保留本地提交并返回失败。AGENTS.md 是智能体操作约定，不是监控所有编辑器的后台服务。
 
 发布前确保本地工作副本已获取并快进到所需提交。发布只读取干净 Git 提交中的文件：
 
@@ -79,7 +85,7 @@ python3 workflow.py push-params 9001 --batch experiment-9001-v1
 
 `new-ini` 的新编号必须尚未使用；草稿写入 `workspace/inputs/parameters/drafts/`，不修改 GitHub 原件。它复用现有模型工具的轴比约束同步。上传前先校验参数，按不可覆盖的新批次上传，服务器逐文件验证 SHA256。重复批次名会报错，上传失败的批次应检查后用新名称重试。
 
-当前 GitHub 的 `IC_Fornax4001.ini` 有轴比不一致：`Component_stellar=0.5`、`Density_stellar=0.4`。本次没有擅自更改该物理设定。服务器生产代码也包含 GitHub 中没有的统计和路径修复，因此没有用 GitHub 整体覆盖服务器。
+当前 GitHub 的 `IC_Fornax4001.ini` 有轴比不一致：`Component_stellar=0.5`、`Density_stellar=0.4`。本次没有擅自更改该物理设定。服务器独有的统计、输入路径和绘图修复已与其他分支逐项比对后整合；保留历史源码备份，避免用某个分支整体覆盖。
 
 ## 自动分析与成果回传
 
@@ -171,3 +177,11 @@ python3 ~/data/workflow_archive.py --root ~/data --plan ~/data/observer_review_d
 已实测参数 7002、7003 的批次上传和 SHA256 校验，以及 Fornax7001 快照 100–102 的 Slurm 提交、统计、三张 PNG、视频合成和成果回传。测试成果位于 `workspace/results/remote/workflow-smoke-20261012/`。这是工作流冒烟测试，三帧历史不足以用于完整轨道或恒星形成史推断。
 
 `tests/test_workflow.py` 覆盖输入与输出隔离、原数据变化检测、禁止覆盖、路径逃逸、快照位置歧义、统计完整性及日志识别。完整新模型生成、IC 合并和长时间模拟不在已验证范围内。
+
+## 分支整理与精度约定
+
+原有 5 个功能分支已逐文件比对；演化和论文图分支被恒星质量分支包含，圆孔径速度弥散改动已等价包含。统一源码合并这些功能、服务器输入路径/绘图修复及分块合并工具，并保留新旧恒星质量分量，避免把新生恒星质量重复计入总质量。各原分支用 `archive/20261012/` 标签及本地 Git bundle 保留历史；日常远端分支仅使用 `main`。
+
+检查分析使用 float32 粒子和质量数组；不改模拟求解器精度，不统一启用 float16。真实 Fornax7001 的 100–102 帧回归已验证原有 36 列一致，新增 6 个诊断字段。分支科学测试及工作流保护测试各 12 项通过。论文图整套生成和完整历史演化任务未重新运行。
+
+工作目录根部原先指向其他项目的空 `.git` 已可逆归档到 `workspace/archive/local_legacy_20261012/empty_git_metadata`。日常 Git 命令应在 `tools/dSph_workbench/` 执行。

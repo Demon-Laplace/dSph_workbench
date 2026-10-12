@@ -24,6 +24,21 @@ def _safe_mean(values):
     return np.nan if values.size == 0 else np.mean(values)
 
 
+def stellar_mass_components(masses, aperture_mask, old_star_mask):
+    """Return total, old-tracer, and newly formed mass in one aperture."""
+    masses = np.asarray(masses, dtype=np.float32)
+    aperture_mask = np.asarray(aperture_mask, dtype=bool)
+    old_star_mask = np.asarray(old_star_mask, dtype=bool)
+    if not (masses.shape == aperture_mask.shape == old_star_mask.shape):
+        raise ValueError("stellar mass and mask arrays must have identical shapes")
+    selected = aperture_mask & np.isfinite(masses)
+    return {
+        "total": float(np.sum(masses[selected])),
+        "old_tracer": float(np.sum(masses[selected & old_star_mask])),
+        "new": float(np.sum(masses[selected & ~old_star_mask])),
+    }
+
+
 def old_dwarf_star_local_mask(snapshot):
     """Return a local mask selecting old dwarf stars from total_dw_star_mask arrays."""
     df = snapshot["df"]
@@ -81,21 +96,35 @@ def fit_velocity_gradient(x_kpc, y_kpc, vlos, mask=None):
     }
 
 
+def _star_projected_kinematics(snapshot, local_mask):
+    """Return projected positions and LOS velocities for a local star mask."""
+    local_mask = np.asarray(local_mask, dtype=bool)
+    star_coords = snapshot["star_coords"]
+
+    x_kpc = np.asarray(snapshot["x_kpc"], dtype=float)[local_mask]
+    y_kpc = np.asarray(snapshot["y_kpc"], dtype=float)[local_mask]
+    vlos = Analysis.cal_vlos(
+        np.asarray(star_coords["xh"], dtype=float)[local_mask],
+        np.asarray(star_coords["yh"], dtype=float)[local_mask],
+        np.asarray(star_coords["zh"], dtype=float)[local_mask],
+        np.asarray(star_coords["vxh"], dtype=float)[local_mask],
+        np.asarray(star_coords["vyh"], dtype=float)[local_mask],
+        np.asarray(star_coords["vzh"], dtype=float)[local_mask],
+    )
+    return {
+        "x_kpc": x_kpc,
+        "y_kpc": y_kpc,
+        "vlos": vlos,
+    }
+
+
 def old_star_projected_kinematics(snapshot):
     """Projected old-star arrays with raw and velocity-gradient-subtracted vlos."""
     old_local_mask = old_dwarf_star_local_mask(snapshot)
-    star_coords = snapshot["star_coords"]
-
-    x_kpc = np.asarray(snapshot["x_kpc"], dtype=float)[old_local_mask]
-    y_kpc = np.asarray(snapshot["y_kpc"], dtype=float)[old_local_mask]
-    vlos = Analysis.cal_vlos(
-        np.asarray(star_coords["xh"], dtype=float)[old_local_mask],
-        np.asarray(star_coords["yh"], dtype=float)[old_local_mask],
-        np.asarray(star_coords["zh"], dtype=float)[old_local_mask],
-        np.asarray(star_coords["vxh"], dtype=float)[old_local_mask],
-        np.asarray(star_coords["vyh"], dtype=float)[old_local_mask],
-        np.asarray(star_coords["vzh"], dtype=float)[old_local_mask],
-    )
+    projected = _star_projected_kinematics(snapshot, old_local_mask)
+    x_kpc = projected["x_kpc"]
+    y_kpc = projected["y_kpc"]
+    vlos = projected["vlos"]
     gradient = fit_velocity_gradient(x_kpc, y_kpc, vlos)
 
     return {
@@ -105,6 +134,58 @@ def old_star_projected_kinematics(snapshot):
         "vlos": vlos,
         "vlos_detrended": gradient["v_resid"],
         "velocity_gradient": gradient,
+    }
+
+
+def detrended_dispersion_in_aperture(
+    x_kpc,
+    y_kpc,
+    vlos,
+    radius_kpc,
+    center_x_kpc=0.0,
+    center_y_kpc=0.0,
+    ep=0.0,
+    pa=0.0,
+    circular=True,
+):
+    """Fit and remove a planar velocity gradient inside an aperture.
+
+    The default aperture is circular, matching the Walker-style observational
+    selection.  Set ``circular=False`` only for an explicit elliptical
+    diagnostic.
+    """
+    x_kpc = np.asarray(x_kpc, dtype=float)
+    y_kpc = np.asarray(y_kpc, dtype=float)
+    vlos = np.asarray(vlos, dtype=float)
+    if x_kpc.shape != y_kpc.shape or x_kpc.shape != vlos.shape:
+        raise ValueError("x_kpc, y_kpc, and vlos must have matching shapes")
+
+    if circular:
+        radius = np.hypot(x_kpc - center_x_kpc, y_kpc - center_y_kpc)
+    else:
+        radius = Analysis.projected_elliptical_radius(
+            x_kpc,
+            y_kpc,
+            ep=ep,
+            pa=pa,
+            center_x=center_x_kpc,
+            center_y=center_y_kpc,
+        )
+
+    aperture_mask = (
+        np.isfinite(radius)
+        & np.isfinite(vlos)
+        & np.isfinite(radius_kpc)
+        & (radius_kpc > 0.0)
+        & (radius <= radius_kpc)
+    )
+    gradient = fit_velocity_gradient(x_kpc, y_kpc, vlos, mask=aperture_mask)
+    residual = gradient["v_resid"]
+    sigma = _safe_std(residual[aperture_mask])
+    return {
+        "sigma": sigma,
+        "nstar": int(np.count_nonzero(aperture_mask)),
+        "gradient": gradient,
     }
 
 
@@ -177,8 +258,6 @@ def compute_snapshot_summary(snapshot, numsp):
     obs_star_m = star_m[old_star_local_mask]
     obs_x_kpc = old_kinematics["x_kpc"]
     obs_y_kpc = old_kinematics["y_kpc"]
-    obs_vlos_detrended = old_kinematics["vlos_detrended"]
-
     hot_x = x_all[dw_hot_gas_mask]
     hot_y = y_all[dw_hot_gas_mask]
     hot_z = z_all[dw_hot_gas_mask]
@@ -228,6 +307,15 @@ def compute_snapshot_summary(snapshot, numsp):
         center_y=shape_center_y_kpc,
     )
     r_half_circularized = float(Analysis.circularized_half_light_radius(r_half, eps))
+    r_half_circular = Analysis.half_light_radius(
+        obs_x_kpc,
+        obs_y_kpc,
+        obs_star_m,
+        ep=0.0,
+        pa=0.0,
+        center_x=shape_center_x_kpc,
+        center_y=shape_center_y_kpc,
+    )
 
     r_half_3d = Analysis.calculate_half_mass_radius(
         obs_star_x,
@@ -239,10 +327,16 @@ def compute_snapshot_summary(snapshot, numsp):
         center_z=dw_zc,
     )
 
-    dw_star_rhalf_mask = Analysis.get_3d_radial_mask(
+    dw_old_star_rhalf_mask = Analysis.get_3d_radial_mask(
         obs_star_x - dw_xc,
         obs_star_y - dw_yc,
         obs_star_z - dw_zc,
+        r_half_3d,
+    )
+    dw_total_star_rhalf_mask = Analysis.get_3d_radial_mask(
+        star_x - dw_xc,
+        star_y - dw_yc,
+        star_z - dw_zc,
         r_half_3d,
     )
     dw_hot_gas_rhalf_mask = Analysis.get_3d_radial_mask(
@@ -258,20 +352,63 @@ def compute_snapshot_summary(snapshot, numsp):
         r_half_3d,
     )
 
-    star_half_mass = obs_star_m[dw_star_rhalf_mask].sum()
+    half_mass_components = stellar_mass_components(
+        star_m, dw_total_star_rhalf_mask, old_star_local_mask
+    )
+    # Preserve the existing production summation dtype for total-mass reproducibility.
+    star_half_mass = star_m[dw_total_star_rhalf_mask].sum()
+    star_half_mass_old_tracer = half_mass_components["old_tracer"]
     hotgas_half_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_rhalf_mask)
     coldgas_half_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask)
 
-    r_projected = np.sqrt(
-        (obs_x_kpc - shape_center_x_kpc) ** 2
-        + (obs_y_kpc - shape_center_y_kpc) ** 2
+    sigma_re_circular_result = detrended_dispersion_in_aperture(
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
+        r_half_circular,
+        center_x_kpc=shape_center_x_kpc,
+        center_y_kpc=shape_center_y_kpc,
+        circular=True,
     )
-    sigma_los = _safe_std(obs_vlos_detrended[r_projected < r_3d_cut])
+    sigma_re_elliptical_result = detrended_dispersion_in_aperture(
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
+        r_half,
+        center_x_kpc=shape_center_x_kpc,
+        center_y_kpc=shape_center_y_kpc,
+        ep=eps,
+        pa=pa,
+        circular=False,
+    )
+    sigma_fixed_500pc_result = detrended_dispersion_in_aperture(
+        old_kinematics["x_kpc"],
+        old_kinematics["y_kpc"],
+        old_kinematics["vlos"],
+        r_3d_cut,
+        center_x_kpc=shape_center_x_kpc,
+        center_y_kpc=shape_center_y_kpc,
+        circular=True,
+    )
+    sigma_re_circular = sigma_re_circular_result["sigma"]
+    sigma_re_elliptical = sigma_re_elliptical_result["sigma"]
+    sigma_fixed_500pc = sigma_fixed_500pc_result["sigma"]
+    sigma_re_noldstar = sigma_re_circular_result["nstar"]
+    sigma_gradient_kms_per_kpc = sigma_re_circular_result["gradient"]["grad_amp"]
 
     stellar_region_radius = stellar_region_rhalf_multiplier * r_half
-    dw_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
+    dw_old_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
         obs_x_kpc,
         obs_y_kpc,
+        stellar_region_radius,
+        ep=eps,
+        pa=pa,
+        center_x=shape_center_x_kpc,
+        center_y=shape_center_y_kpc,
+    )
+    dw_total_star_stellar_region_mask = Analysis.get_elliptical_radial_mask(
+        x_kpc,
+        y_kpc,
         stellar_region_radius,
         ep=eps,
         pa=pa,
@@ -298,12 +435,12 @@ def compute_snapshot_summary(snapshot, numsp):
     )
 
     v_r, v_theta, v_phi = Analysis.cartesian_to_spherical(
-        obs_star_x[dw_star_stellar_region_mask],
-        obs_star_y[dw_star_stellar_region_mask],
-        obs_star_z[dw_star_stellar_region_mask],
-        obs_star_vx[dw_star_stellar_region_mask],
-        obs_star_vy[dw_star_stellar_region_mask],
-        obs_star_vz[dw_star_stellar_region_mask],
+        obs_star_x[dw_old_star_stellar_region_mask],
+        obs_star_y[dw_old_star_stellar_region_mask],
+        obs_star_z[dw_old_star_stellar_region_mask],
+        obs_star_vx[dw_old_star_stellar_region_mask],
+        obs_star_vy[dw_old_star_stellar_region_mask],
+        obs_star_vz[dw_old_star_stellar_region_mask],
     )
 
     dw_star_500pc_mask = Analysis.get_3d_radial_mask(
@@ -335,7 +472,14 @@ def compute_snapshot_summary(snapshot, numsp):
         obs_star_vz,
     )
 
-    star_mass = obs_star_m[dw_star_stellar_region_mask].sum()
+    # Total gravitating stellar mass includes newly formed stars.  Old stars
+    # remain a separate RGB-like tracer for light and kinematic diagnostics.
+    aperture_mass_components = stellar_mass_components(
+        star_m, dw_total_star_stellar_region_mask, old_star_local_mask
+    )
+    star_mass = star_m[dw_total_star_stellar_region_mask].sum()
+    star_mass_old_tracer = aperture_mass_components["old_tracer"]
+    star_mass_new = aperture_mass_components["new"]
     coldgas_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_stellar_region_mask)
     hotgas_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_stellar_region_mask)
     gas_density = Analysis.GetGasdensity(
@@ -361,7 +505,13 @@ def compute_snapshot_summary(snapshot, numsp):
 
     return {
         "star_mass": star_mass,
+        "star_mass_old_tracer": star_mass_old_tracer,
+        "star_mass_new": star_mass_new,
+        "star_mass_aperture_re_multiple": float(stellar_region_rhalf_multiplier),
+        "star_mass_aperture_major_kpc": float(stellar_region_radius),
         "star_half_mass": star_half_mass,
+        "star_half_mass_old_tracer": star_half_mass_old_tracer,
+        "new_star_half_mass": half_mass_components["new"],
         "hotgas_mass": hotgas_mass,
         "hotgas_half_mass": hotgas_half_mass,
         "coldgas_mass": coldgas_mass,
@@ -376,11 +526,20 @@ def compute_snapshot_summary(snapshot, numsp):
         "distance_gal": d_mean_gal,
         "rhalf": r_half,
         "rhalf_circularized": r_half_circularized,
+        "rhalf_circular": r_half_circular,
         "shape_center_x_kpc": shape_center_x_kpc,
         "shape_center_y_kpc": shape_center_y_kpc,
         "distance": d_mean,
         "age": tsnap,
-        "sigma": sigma_los,
+        # ``sigma`` is the Walker-style observable: old stars inside
+        # the directly measured circular half-light aperture, after fitting
+        # and removing a planar LOS velocity gradient on that same sample.
+        "sigma": sigma_re_circular,
+        "sigma_re_circular": sigma_re_circular,
+        "sigma_re_elliptical": sigma_re_elliptical,
+        "sigma_fixed_500pc": sigma_fixed_500pc,
+        "sigma_re_noldstar": sigma_re_noldstar,
+        "sigma_gradient_kms_per_kpc": sigma_gradient_kms_per_kpc,
         "tsigma": theoretical_sigma,
         "tsigma_xyz": sigma_xyz,
         "sigma_x": sigma_x,

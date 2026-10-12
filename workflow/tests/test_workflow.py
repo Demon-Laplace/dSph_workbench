@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -121,12 +122,12 @@ class WorkflowTests(unittest.TestCase):
             github.source_files(source)
 
     def test_tampered_release_cannot_change_active_configuration(self):
-        directory = self.root / 'workspace/releases/test/production_analysis'
+        directory = self.root / 'workspace/releases/test/repo'
         directory.mkdir(parents=True)
         code = directory / 'GetInfo.py'
         code.write_text('# original\n')
         runtime.write_json(directory.parent / 'release.json', {'git_commit': 'fixture',
-                           'files': {'production_analysis/GetInfo.py': runtime.sha(code)}})
+                           'files': {'repo/GetInfo.py': runtime.sha(code)}})
         settings = (self.root / 'workflow.json').read_bytes()
         code.write_text('# changed\n')
         with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
@@ -149,6 +150,48 @@ class WorkflowTests(unittest.TestCase):
         (self.root / 'archive/old-check').mkdir()
         with self.assertRaisesRegex(ValueError, 'Destination exists'):
             archive.execute(self.root, plan)
+
+    def test_github_sync_refuses_stale_source_over_new_remote_code(self):
+        remote = self.root / 'remote.git'
+        checkout = self.root / 'checkout'
+        def git_at(path, *arguments):
+            return subprocess.run(['git', '-C', str(path), *arguments], check=True,
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+        subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+        checkout.mkdir()
+        git_at(checkout, 'init', '-b', 'main')
+        git_at(checkout, 'config', 'user.name', 'Workflow test')
+        git_at(checkout, 'config', 'user.email', 'workflow-test@example.invalid')
+        git_at(checkout, 'remote', 'add', 'origin', str(remote))
+        (checkout / 'repo').mkdir(); (checkout / 'workflow').mkdir()
+        code = checkout / 'repo/GetInfo.py'
+        code.write_text('# baseline\n')
+        runtime.write_json(checkout / 'workflow/source_manifest.json', {'files': {'GetInfo.py': runtime.sha(code)}})
+        git_at(checkout, 'add', '.')
+        git_at(checkout, 'commit', '-m', 'baseline')
+        git_at(checkout, 'push', '-u', 'origin', 'main')
+        source = self.root / 'source'; source.mkdir()
+        (source / 'GetInfo.py').write_text('# baseline\r\n')
+        (source / 'secret-config.json').write_text('must stay outside Git')
+        settings = {'github': {'checkout': 'checkout', 'source': 'source', 'branch': 'main', 'url': str(remote)}}
+        runtime.write_json(self.root / 'workflow.json', settings)
+        args = SimpleNamespace(root=self.root, message='test source sync')
+        with contextlib.redirect_stdout(io.StringIO()):
+            github.sync(args)
+        self.assertFalse((checkout / 'repo/secret-config.json').exists())
+        peer = self.root / 'peer'
+        subprocess.run(['git', 'clone', '-b', 'main', str(remote), str(peer)], check=True, capture_output=True)
+        git_at(peer, 'config', 'user.name', 'Workflow test')
+        git_at(peer, 'config', 'user.email', 'workflow-test@example.invalid')
+        (peer / 'repo/GetInfo.py').write_text('# newer remote change\n')
+        runtime.write_json(peer / 'workflow/source_manifest.json', {'files': {'GetInfo.py': runtime.sha(peer / 'repo/GetInfo.py')}})
+        git_at(peer, 'add', '.')
+        git_at(peer, 'commit', '-m', 'peer change')
+        git_at(peer, 'push', 'origin', 'main')
+        with self.assertRaisesRegex(ValueError, 'both changed'):
+            github.sync(args)
+        self.assertEqual(code.read_text(), '# newer remote change\n')
+        self.assertEqual((source / 'GetInfo.py').read_text(), '# baseline\n')
 
 
 if __name__ == '__main__':
