@@ -137,11 +137,67 @@ python3 workflow.py remote simulate Fornax9001 --name sim9001-run --launcher sub
 
 本机 `simulation` Conda 环境已有 AGAMA，当前默认 Python 未安装该模块。`workflow.json` 的 `ic_python` 指定建模解释器，也可用 `--python` 显式覆盖。统一建模入口会拒绝已有输出目录，冻结输入参数、记录随机种子和求解器 SHA256，生成独立粒子 IC；不会把粒子数据推入 GitHub：
 
-```bash
-python3 workflow.py build-ic --ini tools/dSph_workbench/IniFile/IC_Fornax7003.ini --name Fornax7003-ic-v1 --threads 2 --seed 42
+IC 在独立的 `model/IsolationModel/Fornax/` 工作区生成，不再放在分析目录内。
+在分析目录的 `workflow.json` 配置 `ic.root` 和 `ic.repository`，二者均为
+`../IsolationModel/Fornax`；在 IC 工作区配置为 `.`，`github.checkout` 为 `.`。
+`ic_python` 指向安装了 AGAMA 的 Python。路径相对于各自工作区，服务器需要单独配置到 data/ 内。
+
+```text
+IsolationModel/Fornax/
+  IniFile/              # 已确认的参数；原有文件保留
+  drafts/               # new-ini 产生的参数草稿
+  generated/<运行名>/   # 新生成的 IC、冻结参数、日志和回执
+  Fornax*/              # 原来的模型及图像，不移动、不覆盖
+  IC_MODELS.csv         # 自动维护并同步 GitHub 的参数总表
+  local_tools/ic_generation/  # 版本化生成程序
 ```
 
-该命令使用原来的 Schwarzschild 求解器，输出到 `workspace/models/initial/<name>/`，包括 `Fornax.ini`、`parameters.ini`、`build.json` 和 `build.log`。失败目录保留供排查，下一次使用新名称。建模计算精度不变。新入口替代旧 `makeini.py`，也避免直接使用依赖仓库文件夹名称的 `model_tool.py build`。
+在分析工作区运行：
+
+```bash
+python3 workflow.py build-ic --model Fornax7003 --name Fornax7003-v1 --threads 2 --seed 42
+python3 workflow.py new-ini 7004 --base 7003 --set Density_stellar.axisRatioZ=0.6
+python3 workflow.py build-ic --ini ../IsolationModel/Fornax/drafts/IC_Fornax7004.ini --name Fornax7004-v1
+```
+
+在 IC 工作区也可使用 `python3 workflow.py ...`，或者批量生成：
+
+```bash
+python3 model_tool.py build "7002-7003" --processes 2 --threads 2 --seed 42
+```
+
+旧 `makeini.py` 兼容入口转交给 `model_tool.py`。批量命令生成带时间和随机标识的独立目录；
+`--overwrite` 已停用。旧流程的关联扁率修正和 Fornax2047+ 参数同步保留，在批量生成前执行。
+新 `build-ic` 使用指定参数的原样快照，不自动修正科学参数。`--ini` 路径相对于工作区；
+`--model` 从 IC 工作区的 `IniFile/` 读取。草稿没有自动成为正式参数文件。
+
+每次成功生成并检查粒子数量、有限值和正质量后，会追加 `IC_MODELS.csv`，自动提交并推送
+GitHub `main`。重复登记同一运行不会增加重复行，不同运行保留各自记录。锁串行化同一
+Git 工作区的并行登记；先快进获取远端变化，再提交精确的总表文件。代码工作区存在未提交
+修改或分支分歧时停止同步，不强制覆盖。生成失败不会登记为成功。
+
+网络或 Git 推送失败时，退出码为 3，已完成的粒子文件和 `catalog-entry.json` 保留；
+`build.json` 中生成状态仍为 `complete`，`catalog_sync.state` 为 `pending`。恢复连接或
+解决 Git 工作区问题后，仅重试总表，不重新计算：
+
+```bash
+python3 workflow.py ic-catalog --run Fornax7003-v1
+python3 workflow.py ic-catalog --refresh  # 扫描历史 IniFile/ 和原模型目录，补充历史记录
+```
+
+总表包含名义气体/恒星质量（M_sun）、粒子数、尺度半径及厚度（kpc）、Sersic 指数、恒星
+扁率、beta/kappa、随机种子、UTC 生成时间及文件 SHA256。质量单位来自求解器的 1e10 M_sun；
+它们是参数的名义质量，并非对旧粒子文件重新积分。气体 scaleHeight 的负号保留原 AGAMA
+参数约定。历史多气体分量的质量和粒子数求和，尺度按分量列出，未知分量保存在 other_components。
+
+`existing_ic` 表示保存的参数和 IC 文件存在，且文件头气体/恒星数量匹配；没有逐粒子复验。
+`existing_ic_check_needed` 表示文件头数量需要检查；`parameters_only` 表示仅有该版本参数，
+不推定已经成功生成；`generated` 是新流程验证完成的运行。历史冻结参数与当前参数不同
+时分别记行，不把新版参数错误地归给旧 IC。测试模型以 smoke 命名，不用于物理结论。
+历史生成时间未知时留空。Git 只保存总表和源码，粒子、日志、图片和机器配置不上传。
+
+该命令保留原 Schwarzschild 求解器及计算精度。每次输出包含 `Fornax.ini`、`parameters.ini`、
+`build.json`、`build.log` 和分量文件。失败目录保留供排查；下一次使用新名称。
 
 两级粒子 IC 合并工具仍使用服务器已有 `zimpack` 安装。2026-10-12 已在独立测试目录实测合并与短时模拟；`new-case` 仍只准备输入，未自动执行合并。`simulate` 会检查合并后的 `InitCondFile` 是否存在。完整规模及长时间稳定性不在本次验证范围内。
 

@@ -11,9 +11,21 @@ import sys
 import workflow_runtime as runtime
 
 
+def ic_paths(args):
+    settings = runtime.config(args.root).get('ic', {})
+    if not settings.get('root'):
+        raise ValueError('Configure ic.root in workflow.json to the separate IC workspace')
+    root = (args.root / settings['root']).resolve()
+    if not root.is_dir():
+        raise ValueError(f'Missing configured IC workspace: {root}')
+    repo = (args.root / settings.get('repository', settings['root'])).resolve()
+    return root, repo
+
+
 def build_ic(args):
-    source = resolve_input(args.root, args.ini)
-    destination = runtime.confined(args.root, args.root / 'workspace/models/initial' / runtime.label(args.name))
+    root, repo = ic_paths(args)
+    source = resolve_input(args.root, args.ini) if args.ini else resolve_input(root, f'IniFile/IC_{model_name(args.model)}.ini')
+    destination = runtime.confined(root, root / 'generated' / runtime.label(args.name))
     if destination.exists() or destination.is_symlink():
         raise ValueError('Initial-condition run already exists; refusing to overwrite')
     builder = args.repo / 'local_tools/ic_generation/build_ic.py'
@@ -21,7 +33,18 @@ def build_ic(args):
         raise ValueError(f'Missing versioned IC builder: {builder}')
     python = args.python or runtime.config(args.root).get('ic_python') or sys.executable
     return subprocess.run([python, str(builder), '--ini', str(source), '--output', str(destination),
-                           '--threads', str(args.threads), '--seed', str(args.seed)]).returncode
+                           '--threads', str(args.threads), '--seed', str(args.seed),
+                           '--catalog-repo', str(repo)]).returncode
+
+
+def ic_catalog(args):
+    root, repo = ic_paths(args)
+    command = [sys.executable, str(args.repo / 'local_tools/ic_generation/catalog.py'), '--repo', str(repo)]
+    if args.run:
+        command += ['--run', str(runtime.confined(root, root / 'generated' / runtime.label(args.run)))]
+    else:
+        command += ['--history-root', str(root)]
+    return subprocess.run(command).returncode
 
 
 def model_name(value):

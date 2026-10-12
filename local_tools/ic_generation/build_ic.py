@@ -10,6 +10,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
+import uuid
+
+import catalog
 
 
 def component_type(name):
@@ -28,6 +32,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     source, output = args.ini.resolve(), args.output.absolute()
     if not source.is_file() or output.exists() or output.is_symlink():
@@ -53,7 +58,8 @@ def main():
     output.mkdir(parents=True)
     params = output / 'parameters.ini'
     shutil.copy2(source, params)
-    manifest = {'state': 'building', 'seed': args.seed, 'threads': args.threads,
+    manifest = {'state': 'building', 'build_id': str(uuid.uuid4()),
+                'seed': args.seed, 'threads': args.threads,
                 'python': sys.executable, 'source_ini': str(source),
                 'ini_sha256': hashlib.sha256(params.read_bytes()).hexdigest(),
                 'solver_sha256': hashlib.sha256(solver.read_bytes()).hexdigest()}
@@ -84,7 +90,8 @@ def main():
             stream.write(' '.join(map(str, counts)) + '\n')
             np.savetxt(stream, np.column_stack((np.arange(len(data)), data)),
                        fmt=['%d'] + ['%.17g'] * 7 + ['%d', '%d'])
-        manifest.update(state='complete', counts=counts, component_masses=masses,
+        manifest.update(state='complete', generated_utc=datetime.now(timezone.utc).isoformat(),
+                        counts=counts, component_masses=masses,
                         particle_ic=destination.name,
                         particle_sha256=hashlib.sha256(destination.read_bytes()).hexdigest())
     except Exception as error:
@@ -93,7 +100,15 @@ def main():
         raise
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Built {sum(counts)} particles: {destination}')
+    try:
+        catalog.register(output, args.catalog_repo)
+    except Exception as error:
+        print(f'IC generation succeeded; catalogue sync pending: {error}\n'
+              f'Retry with workflow.py ic-catalog --run {output.name}', file=sys.stderr)
+        return 3
+    print('IC catalogue updated and pushed to GitHub main.')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

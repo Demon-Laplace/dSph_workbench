@@ -12,6 +12,7 @@ IniFile/*.ini
 
 # Versioned workflow and production source; data remain ignored.
 !README.md
+!IC_MODELS.csv
 !workflow/
 !workflow/**
 !local_tools/
@@ -20,3 +21,4 @@ IniFile/*.ini
 **/__pycache__/
 **/*.pyc
 workflow/workflow.json
+!makeini.py

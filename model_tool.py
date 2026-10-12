@@ -28,26 +28,27 @@ For compatibility, omitting ``build`` also works::
 
 Before every write or build, ``axisRatioZ`` in each ``Component_*`` section
 that has such a constraint is copied from the referenced ``Density_*``
-section.  Section and option names are matched case-insensitively.  After a
-successful build, changed ``Fornax2047+`` IC files are committed and pushed to
-``origin/main`` automatically.
+section. Section and option names are matched case-insensitively. Before builds,
+changed ``Fornax2047+`` parameter files are synchronized to ``origin/main``.
+Successful builds automatically update and push ``IC_MODELS.csv``. Configure
+``ic.root`` and ``ic_python`` in workflow.json; outputs use unique generated/ runs.
 """
 
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from datetime import datetime, timezone
+import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 INI_DIR = PROJECT_ROOT / "IniFile"
-PROJECT_NAME = PROJECT_ROOT.name
+PROJECT_NAME = "Fornax"
 DEFAULT_THREADS = 6
 COMMANDS = {"create", "set", "check", "sync", "build"}
 SYNC_MIN_MODEL = 2047
@@ -429,114 +430,20 @@ def command_sync(args):
     return 0
 
 
-def confirm_overwrite(path):
-    """Ask whether an existing model output should be replaced."""
-    prompt = (
-        "model output already exists: {}\n"
-        "replace it? The existing output will be permanently deleted.\n"
-        "continue [y/N]: "
-    ).format(path)
-    while True:
-        try:
-            answer = input(prompt).strip().casefold()
-        except (EOFError, KeyboardInterrupt):
-            print("\nnot overwriting {}".format(path))
-            return False
-        if answer in ("y", "yes"):
-            return True
-        if answer in ("", "n", "no"):
-            return False
-        print("please answer y or n")
-
-
-def remove_existing_output(path):
-    """Remove one exact model output after the caller has confirmed it."""
-    project_root = PROJECT_ROOT.resolve()
-    if path.parent.resolve() != project_root or not path.name.startswith(PROJECT_NAME):
-        raise IniError("refusing to remove unexpected output path: {}".format(path))
-    try:
-        if path.is_symlink() or path.is_file():
-            path.unlink()
-        elif path.is_dir():
-            shutil.rmtree(str(path))
-        elif path.exists():
-            raise IniError("unsupported output type: {}".format(path))
-    except OSError as error:
-        raise IniError("unable to remove {}: {}".format(path, error))
-
-
-def prepare_existing_outputs(models, overwrite):
-    """Confirm and remove existing outputs before launching any workers."""
-    decisions = []
-    for model_name, ini_path in models:
-        output = PROJECT_ROOT / model_name
-        if not output.exists():
-            decisions.append((model_name, ini_path, False))
-            continue
-        accepted = overwrite or confirm_overwrite(output)
-        if accepted:
-            decisions.append((model_name, ini_path, True))
-        else:
-            print("SKIP {}: existing output kept unchanged".format(model_name))
-
-    selected = []
-    for model_name, ini_path, should_remove in decisions:
-        output = PROJECT_ROOT / model_name
-        if should_remove:
-            remove_existing_output(output)
-            print("removed existing output: {}".format(output))
-        selected.append((model_name, ini_path))
-    return selected
-
-
 def build_one(task):
-    model_name, ini_path, threads = task
-    output_dir = PROJECT_ROOT / model_name
-    original_dir = Path.cwd()
-    try:
-        if output_dir.exists():
-            return model_name, False, "output directory already exists: {}".format(output_dir)
-        output_dir.mkdir()
-        copied_ini = output_dir / ini_path.name
-        shutil.copy2(str(ini_path), str(copied_ini))
-        log_path = output_dir / "schwarzschild.log"
-        environment = os.environ.copy()
-        environment["OMP_NUM_THREADS"] = str(threads)
-        with log_path.open("w", encoding="utf-8") as log:
-            subprocess.run(
-                [sys.executable, str(PROJECT_ROOT / "schwarzschild.py"), str(ini_path)],
-                cwd=str(output_dir),
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                check=True,
-                text=True,
-                env=environment,
-            )
-
-        # funcini operates on files in the current working directory.
-        os.chdir(str(output_dir))
-        from funcini import process_components, save_ini_file
-
-        merged_data = process_components(model_name, str(copied_ini))
-        if merged_data is None:
-            raise RuntimeError("no component particle data were produced")
-        save_ini_file(merged_data, PROJECT_NAME)
-        return model_name, True, None
-    except subprocess.CalledProcessError as error:
-        return model_name, False, (
-            "schwarzschild.py failed with exit code {}\n"
-            "full log: {}\n"
-            "--- log tail ---\n{}"
-        ).format(error.returncode, log_path, log_tail(log_path))
-    except Exception as error:
-        return model_name, False, (
-            "{}: {}\n--- traceback ---\n{}"
-        ).format(type(error).__name__, error, traceback.format_exc().rstrip())
-    finally:
-        os.chdir(str(original_dir))
+    model_name, ini_path, threads, seed = task
+    name = model_name + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
+    command = [sys.executable, str(PROJECT_ROOT / 'workflow/workflow.py'),
+               '--root', str(PROJECT_ROOT), '--repo', str(PROJECT_ROOT),
+               'build-ic', '--ini', str(ini_path), '--name', name,
+               '--threads', str(threads), '--seed', str(seed)]
+    result = subprocess.run(command)
+    return model_name, result.returncode == 0, f'Run {name}; exit status {result.returncode}'
 
 
 def command_build(args):
+    if args.overwrite:
+        raise IniError("--overwrite is retired; each build now creates a separate generated/ run")
     paths = existing_ini_paths(args.models)
     models = []
     for path in paths:
@@ -555,7 +462,6 @@ def command_build(args):
         raise IniError("--processes must be at least 1")
     if args.threads is not None and args.threads < 1:
         raise IniError("--threads must be at least 1")
-    models = prepare_existing_outputs(models, args.overwrite)
     if not models:
         print("no models selected for building")
         return 0
@@ -582,7 +488,9 @@ def command_build(args):
                 processes, threads, available
             )
         )
-    tasks = [(name, path, threads) for name, path in models]
+    # Preserve the established parameter synchronization policy before builds.
+    sync_generated_models(paths)
+    tasks = [(name, path, threads, args.seed) for name, path in models]
     print(
         "building {} model(s) with {} process(es) and {} AGAMA thread(s) per model"
         .format(len(tasks), processes, threads)
@@ -599,16 +507,12 @@ def command_build(args):
                 results.append(future.result())
 
     failures = []
-    successful_paths = []
     for model_name, success, error in sorted(results):
         if success:
             print("OK {}".format(model_name))
-            successful_paths.append(INI_DIR / "IC_{}.ini".format(model_name))
         else:
             failures.append((model_name, error))
             print("ERROR {}\n{}".format(model_name, error))
-    if successful_paths:
-        sync_generated_models(successful_paths)
     return 1 if failures else 0
 
 
@@ -651,8 +555,9 @@ def make_parser():
     )
     build.add_argument(
         "--overwrite", action="store_true",
-        help="permanently delete and replace existing model outputs without prompting"
+        help="retired; existing outputs are always preserved"
     )
+    build.add_argument("--seed", type=int, default=42)
     build.set_defaults(handler=command_build)
     return parser
 

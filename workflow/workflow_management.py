@@ -194,6 +194,11 @@ def parameter_path(args, number):
     if not number.isdigit():
         raise ValueError('Use numeric Fornax model IDs')
     name = f'IC_Fornax{number}.ini'
+    if runtime.config(args.root).get('ic', {}).get('root'):
+        from workflow_models import ic_paths
+        root, _ = ic_paths(args)
+        draft = root / 'drafts' / name
+        return draft if draft.is_file() else root / 'IniFile' / name
     draft = args.root / 'workspace/inputs/parameters/drafts' / name
     return draft if draft.is_file() else args.repo / 'IniFile' / name
 
@@ -202,7 +207,14 @@ def new_ini(args):
     if not args.model.isdigit():
         raise ValueError('Use a numeric model ID')
     source = parameter_path(args, args.base)
-    target = runtime.confined(args.root, args.root / 'workspace/inputs/parameters/drafts' / f'IC_Fornax{args.model}.ini')
+    if runtime.config(args.root).get('ic', {}).get('root'):
+        from workflow_models import ic_paths
+        root, _ = ic_paths(args)
+        target = runtime.confined(root, root / 'drafts' / f'IC_Fornax{args.model}.ini')
+        if (root / 'IniFile' / target.name).exists():
+            raise ValueError('Model ID already exists; choose a new ID')
+    else:
+        target = runtime.confined(args.root, args.root / 'workspace/inputs/parameters/drafts' / f'IC_Fornax{args.model}.ini')
     if target.exists() or (args.repo / 'IniFile' / target.name).exists():
         raise ValueError('Model ID already exists; choose a new ID')
     target.parent.mkdir(parents=True, exist_ok=True)
