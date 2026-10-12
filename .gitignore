@@ -9,3 +9,13 @@
 # Model files are staged only by sync_fornax_models.sh, which enforces the
 # Fornax2047+ policy numerically.
 IniFile/*.ini
+
+# Versioned workflow and production source; data remain ignored.
+!README.md
+!workflow/
+!workflow/**
+!production_analysis/
+!production_analysis/**
+**/__pycache__/
+**/*.pyc
+workflow/workflow.json

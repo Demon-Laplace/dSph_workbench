@@ -1,0 +1,17 @@
+{
+  "analysis_code": "tools/server-analysis",
+  "remote": {
+    "host": "configured-ssh-alias",
+    "root": "/absolute/path/to/data",
+    "module_init": "/etc/profile.d/z00_lmod.sh",
+    "modules": [
+      "python/3.9.1"
+    ]
+  },
+  "github": {
+    "checkout": "tools/dSph_workbench",
+    "source": "tools/server-analysis",
+    "branch": "workflow/server-sync",
+    "url": "https://github.com/Demon-Laplace/dSph_workbench.git"
+  }
+}
