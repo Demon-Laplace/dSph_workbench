@@ -1,0 +1,16 @@
+{
+  "models": 91,
+  "moved_entries": 1491,
+  "aliases_updated": 91,
+  "source_records": 84,
+  "empty_directories_removed": 232,
+  "shell_files_changed": 0,
+  "verification": "device, inode, size and mtime preserved for data; source metadata paths updated",
+  "workflow_tests": 39,
+  "layout": "<model>/isolation/",
+  "receipts": "workspace/receipts/isolation/<model>/<run>",
+  "server_data_moved": false,
+  "existing_remote_run_retry": "passed; original prepared case reused",
+  "both_local_entry_workspaces_share_receipts": true,
+  "final_isolation_tests": 15
+}

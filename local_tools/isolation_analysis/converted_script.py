@@ -5,8 +5,9 @@ from basefunc import *
 from variable import *
 from scipy.interpolate import UnivariateSpline
 from pathlib import Path
+from model_paths import model_id
 
-modelname = Path().resolve().name
+modelname = model_id()
 match = re.match(r'([A-Za-z]+)(\d+)', modelname)
 if not match:
     raise ValueError(f"can't get '{modelname}' to dwarf name and number")

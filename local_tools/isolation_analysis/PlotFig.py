@@ -1,6 +1,7 @@
 from basefunc import *
 from variable import *
 from pathlib import Path
+from model_paths import model_id
 import re
 from astropy.coordinates import CartesianRepresentation, CartesianDifferential, SkyCoord
 # from scipy.interpolate import UnivariateSpline
@@ -19,7 +20,7 @@ from multiprocessing import get_context
 warnings.filterwarnings("ignore")
 plt.switch_backend('Agg')
 
-modelname = Path().resolve().name
+modelname = model_id()
 match = re.match(r'([A-Za-z]+)(\d+)', modelname)
 if not match:
     raise ValueError(f"can't get '{modelname}' to dwarf name and number")

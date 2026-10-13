@@ -43,3 +43,8 @@ models' shells or frozen run.sh files. Future template changes still require
 explicit user authorization. Template Python duplicates are archived; do not
 reintroduce per-model copies. TREECOOL is materialized from the configured
 template, and new manual inputs must be named after their model directory.
+
+Local model results use a single <model>/isolation/ directory. Do not recreate
+isolation/legacy/<model>/ or isolation/<run>/client/ locally. Local transport
+receipts belong in workspace/receipts/isolation/<model>/<run>/. Server isolation
+paths and frozen cases remain separate and are not flattened by this convention.

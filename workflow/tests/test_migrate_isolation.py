@@ -16,7 +16,7 @@ class MigrationTests(unittest.TestCase):
             (source/'internal').symlink_to('output/snapshot')
             plan = dict(root=str(root), source_root=str(old), models=['Fornax7001'], receipt=str(root/'receipt.jsonl'))
             migration.migrate(plan); migration.migrate(plan)
-            target = root/'Fornax7001/isolation/legacy/Fornax7001'
+            target = root/'Fornax7001/isolation'
             self.assertTrue(source.is_symlink())
             self.assertEqual((target/'output/snapshot').stat().st_ino, inode)
             self.assertEqual((target/'external').read_text(), 'shared')
@@ -29,6 +29,6 @@ class MigrationTests(unittest.TestCase):
             plan=dict(root=str(root),source_root=str(source.parent),models=['Fornax7001'],receipt=str(root/'receipt.jsonl'))
             with self.assertRaisesRegex(ValueError,'local-only'):
                 migration.migrate(plan, server=True)
-            target=root/'Fornax7001/isolation/legacy/Fornax7001';target.mkdir(parents=True)
+            target=root/'Fornax7001/isolation';target.mkdir(parents=True)
             with self.assertRaisesRegex(ValueError,'occupied'):migration.migrate(plan)
             self.assertFalse(source.is_symlink())

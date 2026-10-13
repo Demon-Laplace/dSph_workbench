@@ -158,8 +158,9 @@ class IsolationTests(unittest.TestCase):
             self.assertEqual(isolation.pipeline(args), 0)
         self.assertEqual((self.root / 'sbatch-count').read_text(), '1')
         self.assertEqual(len(list((self.root / 'workspace/transfers/isolation').iterdir())), 1)
-        receipt = json.loads((local / 'Fornax7003/isolation/transport/client/server.json').read_text())
+        receipt = json.loads((local / 'workspace/receipts/isolation/Fornax7003/transport/server.json').read_text())
         self.assertEqual(receipt['job_id'], '45678')
+        self.assertEqual(list((local / 'Fornax7003/isolation').iterdir()), [])
         self.assertEqual((self.root / 'isoFornax/Fornax7003/runs/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
 
     def test_cooling_is_materialized_and_required_table_cannot_disappear(self):
@@ -214,6 +215,16 @@ class IsolationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'refusing to overwrite'):
             isolation.prepare_legacy(self.root, model)
         self.assertEqual((model / 'Fornax.IC_000').read_bytes(), b'keep original')
+
+    def test_both_local_workspaces_share_receipts(self):
+        analysis = self.root / 'analysis'
+        ic = self.root / 'ic'
+        analysis.mkdir(); ic.mkdir()
+        runtime.write_json(analysis / 'workflow.json', {'models_root': '.'})
+        runtime.write_json(ic / 'workflow.json', {'models_root': '../analysis'})
+        expected = analysis / 'workspace/receipts/isolation/Fornax7003/run'
+        self.assertEqual(isolation.client_directory(analysis, 'Fornax7003', 'run'), expected)
+        self.assertEqual(isolation.client_directory(ic, 'Fornax7003', 'run'), expected)
 
     def test_batch_keeps_model_identity_and_stops_at_first_failure(self):
         args = SimpleNamespace(model=['Fornax9001', 'Fornax9002', 'Fornax9003'])

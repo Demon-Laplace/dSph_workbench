@@ -336,6 +336,12 @@ def pipeline(args):
     return 0
 
 
+def client_directory(root, model, name):
+    # Both local entry workspaces share the configured model storage and receipts.
+    base = runtime.model_directory(root, model).parent
+    return runtime.confined(base, base / 'workspace/receipts/isolation' / model / runtime.label(name))
+
+
 def pipeline_one(args):
     import workflow_models as models
     import workflow_management as management
@@ -349,7 +355,9 @@ def pipeline_one(args):
               f'Profile: {args.profile}; submit={args.submit}')
         return 0
     model_root = runtime.model_directory(args.root, args.model)
-    local = runtime.confined(model_root, model_root / 'isolation' / args.name / 'client')
+    # Transport bookkeeping belongs outside the browsable model results.
+    local = client_directory(args.root, args.model, args.name)
+    runtime.confined(model_root, model_root / 'isolation').mkdir(parents=True, exist_ok=True)
     local.mkdir(parents=True, exist_ok=True)
     with (local / 'pipeline.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)

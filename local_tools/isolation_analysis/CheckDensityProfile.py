@@ -1,6 +1,7 @@
 from basefunc import *
 from variable import *
 from pathlib import Path
+from model_paths import model_id
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
@@ -15,7 +16,7 @@ warnings.filterwarnings("ignore")
 # ======================================================
 # --- User Configuration ---
 # ======================================================
-modelname = Path().resolve().name
+modelname = model_id()
 match = re.match(r'([A-Za-z]+)(\d+)', modelname)
 if not match:
     raise ValueError(f"can't get '{modelname}' to dwarf name and number")

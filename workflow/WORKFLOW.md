@@ -6,10 +6,7 @@ workspace/models/isolation/ 的新建路径；正式模拟原有文件位置保�
 ```text
 Fornax/Fornax7003/
   ic/<运行名>/            # AGAMA 结果、冻结参数、回执
-  isolation/<运行名>/     # 隔离模拟；本地 client/ 保存上传回执
-  isolation/legacy/Fornax7003/ # 历史文件；保留末级模型名供旧脚本识别
-  isolation/source       # 正式模拟实际引用的隔离模型（有依据时创建）
-  isolation/source.json  # 来源与编号复用记录
+  isolation/             # 直接放历史 IC、图片及当前隔离结果，无包装目录
   GZWJL.PARAM             # 正式模拟参数
   output/                 # 正式模拟输出
 ```
@@ -35,9 +32,10 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 2052/2053/2055 引用 2047。[MODEL_SOURCES.csv](MODEL_SOURCES.csv) 记录声明的来源，
 未能从参数和链接确定的 10 个条目明确保留 unknown，不推测对应关系。
 
-本地 Fornax2047+ 的 91 个目录（含 7002、7003）已归入同号模型的
-`isolation/legacy/<模型名>/`，旧位置保留兼容链接。本地 `source` 链接另指向正式模拟
-实际使用的隔离模型；这是当前参数管理范围，不表示 2047 是编号统一起点。
+本地 Fornax2047+ 的 91 个目录（含 7002、7003）已压平到同号模型的
+`isolation/`，原 IC 工作区的模型名入口仍通过兼容链接访问这里。来源记录集中在
+`workspace/catalog/model-sources/<模型名>.json`，同时保留上述 CSV；不在每个模型里
+重复建立 source 链接和说明文件。这是当前参数管理范围，不表示 2047 是编号统一起点。
 较早的 207 个本地目录保持原位，没有按相同编号推断对应关系。
 
 服务器此前移动的 89 个目录已全部恢复到 `data/isoFornax/`，并复核原目录 inode 和
@@ -357,7 +355,7 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 提交响应不确定时停止盲目重试，需要先核对 Slurm，防止产生两个同时写入同一目录的作业。
 失败/取消任务的重启不是这个命令的隐式行为，需要检查后使用新的运行名或既有重启流程。
 
-本地回执在 `<模型名>/isolation/<name>/client/`，服务器输出在
+本地回执集中在 `workspace/receipts/isolation/<模型名>/<name>/`，服务器输出在
 `data/isoFornax/<模型名>/runs/<name>/`。`isolation-status` 读取服务器保存的状态；
 如果 Slurm 在启动前取消作业或强制杀死进程，应根据回执中的 JobID 查 `sacct`，因为进程可能
 没有机会更新状态。生成、转换、求解日志分别保留。最后快照必须达到 `TimeMax` 才标记完成；
@@ -413,6 +411,10 @@ sbatch subchecdensity.sh
 历史公共代码不覆盖已冻结运行内的代码或启动文件。
 
 ## 带编号 IC、批量上传和精简的手动模板
+
+模型浏览目录只保留一级 `isolation/`。上传锁、请求和服务器回执保存在上述 workspace
+位置，不再创建模型内的 `运行名/client/`。有来源复用时查集中来源表；不混合同一模型
+不同运行的数据。旧路径和压平校验记录在 `workspace/review/flat-isolation-20261013/`。
 
 新 `build-ic` 导出的粒子文件为 `<模型>/ic/<运行名>/<模型>.ini`，例如
 `Fornax7003/ic/ic-v2/Fornax7003.ini`；同目录 `Fornax.ini` 是兼容链接，不占一份

@@ -6,6 +6,7 @@ import sys
 import time
 from multiprocessing import get_context
 from pathlib import Path
+from model_paths import model_id
 from typing import Optional
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig-dsph")
@@ -433,9 +434,7 @@ def compute_summary(dwarf_df: pd.DataFrame, radius_max: float, nbin: int, sigma_
 
 
 def detect_model_name(model_dir: Path):
-    if model_dir.name == "output":
-        return model_dir.parent.name
-    return model_dir.name
+    return model_id(model_dir.parent if model_dir.name == "output" else model_dir)
 
 
 def load_run_metadata():

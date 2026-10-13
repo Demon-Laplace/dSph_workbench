@@ -4,6 +4,7 @@ import argparse
 import os
 import re
 from pathlib import Path
+from model_paths import model_id
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
@@ -60,7 +61,7 @@ def resolve_snapshot_folder(model_dir, numsp):
 
 
 def resolve_ini_file(model_dir):
-    dwarf_name = re.match(r"([A-Za-z]+)", model_dir.name).group(1)
+    dwarf_name = re.match(r"([A-Za-z]+)", model_id(model_dir)).group(1)
     preferred = model_dir / f"{dwarf_name}.ini"
     if preferred.exists():
         return preferred
@@ -292,7 +293,7 @@ def main():
     modelnum, numsp = parse_target(args.target)
     model_dir = resolve_model_dir(root, modelnum, prefix=args.prefix)
     snapshot_dir = resolve_snapshot_folder(model_dir, numsp)
-    model_name = model_dir.name
+    model_name = model_id(model_dir)
 
     if args.dw_particles is not None:
         dw_particles = args.dw_particles

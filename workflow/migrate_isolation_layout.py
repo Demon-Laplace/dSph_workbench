@@ -1,4 +1,4 @@
-"""Move an explicitly listed legacy cohort, preserving leaf names and old paths.
+"""Move an explicitly listed legacy cohort, preserving files and original IC workspace paths.
 
 Run with a JSON plan containing root, source_root, models and receipt. Server
 migration is refused: server isolation must stay separate. This does not infer
@@ -40,7 +40,7 @@ def migrate(plan, server=False):
             if not re.fullmatch(r'Fornax\d+', model):
                 raise ValueError('Invalid model: ' + model)
             source = source_root / model
-            target = confined(root, root / model / 'isolation/legacy' / model)
+            target = confined(root, root / model / 'isolation')
             if source.is_symlink():
                 if source.resolve() != target.resolve() or not target.is_dir():
                     raise ValueError('Unexpected existing source link: ' + str(source))

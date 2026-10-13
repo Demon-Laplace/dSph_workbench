@@ -6,6 +6,7 @@ import argparse
 from basefunc import DataProcessor, GalaxySimulation, Analysis, CoordinateTransform
 from variable import *
 from pathlib import Path
+from model_paths import model_id
 import sys
 import csv
 import re
@@ -15,7 +16,7 @@ class GetInfo:
 
     def __init__(self):
         # Get model name from current directory
-        self.modelname = Path().resolve().name
+        self.modelname = model_id()
         match = re.match(r'([A-Za-z]+)(\d+)', self.modelname)
         if not match:
             raise ValueError(f"Invalid model name format: '{self.modelname}'. "

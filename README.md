@@ -28,7 +28,8 @@ through catalogue synchronization, verified transfer and a real short Slurm
 isolation run. Full-scale, long-duration stability still needs scientific validation.
 
 [IC model catalogue](IC_MODELS.csv) lists historical parameter summaries and
-verified new builds. Local ICs live under each model’s `ic/` directory alongside isolation receipts.
+verified new builds. Local ICs live under each model’s `ic/` directory. Browse isolation data directly in
+`<model>/isolation/`; transport receipts live separately in `workspace/receipts/isolation/`.
 New particle exports use the model ID (e.g. `Fornax7003.ini`) with a local
 `Fornax.ini` compatibility link. Isolation accepts multiple model IDs per command.
 Server isolation stays separate under `isoFornax/<model>/runs/<run>/`;
