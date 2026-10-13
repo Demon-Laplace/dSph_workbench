@@ -33,6 +33,7 @@ class IsolationTests(unittest.TestCase):
             (self.stage / name).write_text('fixture ' + name)
         for name in ('workflow_isolation.py', 'workflow_runtime.py'):
             shutil.copy2(Path(isolation.__file__).with_name(name), self.stage / name)
+            shutil.copy2(Path(isolation.__file__).with_name(name), self.root / name)
         self.request = {'name': 'Fornax7003-test', 'model': 'Fornax7003', 'profile': 'default',
                         'build_id': 'fixture', 'files': {n: isolation.sha(self.stage / n)
                         for n in ('Fornax.ini', 'parameters.ini')}}
@@ -43,6 +44,15 @@ class IsolationTests(unittest.TestCase):
         with patch.object(isolation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '12345\n', '')) as sbatch:
             result = isolation.receive(self.root, self.stage, submit)
             return result, sbatch
+
+    def test_server_layout_is_separate_and_old_frozen_run_is_reused(self):
+        self.assertEqual(self.run, self.root / 'isoFornax/Fornax7003/runs/Fornax7003-test')
+        old = self.root / 'Fornax7003/isolation/Fornax7003-test'
+        old.mkdir(parents=True)
+        self.assertEqual(isolation.case_dir(self.root, self.run.name, 'Fornax7003'), old)
+        self.run.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError, 'Ambiguous'):
+            isolation.case_dir(self.root, self.run.name, 'Fornax7003')
 
     def test_preflight_preserves_physics_and_does_not_submit(self):
         result, sbatch = self.receive()
@@ -109,7 +119,8 @@ class IsolationTests(unittest.TestCase):
         outside.mkdir()
         data = self.root / 'data'
         data.mkdir()
-        (data / 'Fornax7003').symlink_to(outside, target_is_directory=True)
+        (data / 'isoFornax').mkdir()
+        (data / 'isoFornax/Fornax7003').symlink_to(outside, target_is_directory=True)
         with self.assertRaises(ValueError):
             isolation.case_dir(data, self.request['name'], self.request['model'])
         self.assertFalse((outside / 'models').exists())
@@ -149,7 +160,7 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(len(list((self.root / 'workspace/transfers/isolation').iterdir())), 1)
         receipt = json.loads((local / 'Fornax7003/isolation/transport/client/server.json').read_text())
         self.assertEqual(receipt['job_id'], '45678')
-        self.assertEqual((self.root / 'Fornax7003/isolation/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
+        self.assertEqual((self.root / 'isoFornax/Fornax7003/runs/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
 
 
 if __name__ == '__main__':

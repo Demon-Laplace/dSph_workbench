@@ -1,8 +1,8 @@
 """Move an explicitly listed legacy cohort, preserving leaf names and old paths.
 
 Run with a JSON plan containing root, source_root, models and receipt. Server
-operators must stop concurrent submissions; --server checks all Slurm clusters
-before each move. This does not infer that a same-number production uses the IC.
+migration is refused: server isolation must stay separate. This does not infer
+that a same-number production uses the IC.
 """
 import argparse
 import fcntl
@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 
 
 def confined(root, path):
@@ -32,7 +31,7 @@ def links_in(directory):
 def migrate(plan, server=False):
     root, source_root = Path(plan['root']).resolve(), Path(plan['source_root']).resolve()
     if server:
-        confined(root, source_root)
+        raise ValueError('Server isolation directories must remain separate; migration is local-only')
     receipt = confined(root, Path(plan['receipt']))
     receipt.parent.mkdir(parents=True, exist_ok=True)
     with receipt.with_suffix('.lock').open('a') as lock:
@@ -47,13 +46,6 @@ def migrate(plan, server=False):
                     raise ValueError('Unexpected existing source link: ' + str(source))
                 print(model + ': already migrated', flush=True)
                 continue
-            if server:
-                jobs = subprocess.run(['squeue', '-M', 'all', '--me', '--noheader', '--format=%i|%T|%Z'],
-                                      check=True, text=True, capture_output=True).stdout
-                # Slurm may print a CLUSTER heading even for an empty queue.
-                active = [line for line in jobs.splitlines() if line.strip() and not line.startswith('CLUSTER:')]
-                if active:
-                    raise ValueError('Active jobs: defer migration until the user queue is empty')
             if not source.is_dir() or target.exists() or target.is_symlink():
                 raise ValueError('Source absent or destination already occupied: ' + model)
             if source.stat().st_dev != root.stat().st_dev:

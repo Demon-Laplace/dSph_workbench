@@ -1,6 +1,6 @@
-## 当前统一模型目录（2026-10-13）
+## 本地归并、服务器分离（2026-10-13）
 
-新 IC、隔离运行和正式模拟按同一模型 ID 归属。以下布局取代旧 generated/ 和
+本地新 IC、隔离运行回执和正式模拟按同一模型 ID 归属。以下本地布局取代旧 generated/ 和
 workspace/models/isolation/ 的新建路径；正式模拟原有文件位置保持可用：
 
 ```text
@@ -14,7 +14,9 @@ Fornax/Fornax7003/
   output/                 # 正式模拟输出
 ```
 
-服务器对应 `data/Fornax7003/isolation/<运行名>/`，同名参数、快照和图片不平铺混合。
+服务器保持分离：正式模拟在 `data/Fornax7003/`，历史隔离模拟在
+`data/isoFornax/Fornax7003/`，新隔离运行在 `data/isoFornax/Fornax7003/runs/<运行名>/`。
+本地目录与服务器目录由工作流映射，上传时不改变服务器已有模型组织。
 分析工作区配置 `models_root: "."`，IC 工具工作区配置 `models_root: "../../Fornax"`。
 参数库、总表和 Git 代码仍在 IC 工具工作区。旧 generated/ 结果仍可复用，已迁移目录的旧位置保留兼容链接。
 
@@ -33,13 +35,15 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 2052/2053/2055 引用 2047。[MODEL_SOURCES.csv](MODEL_SOURCES.csv) 记录声明的来源，
 未能从参数和链接确定的 10 个条目明确保留 unknown，不推测对应关系。
 
-已迁移服务器 89 个历史隔离目录，以及本地 Fornax2047+ 的 91 个目录（含 7002、7003）。
-这是当前参数管理范围，不表示 2047 是编号统一的起点。每个目录归入同号模型的
-`isolation/legacy/<模型名>/`；`source` 链接另指向正式模拟实际使用的隔离模型，
-所以 2052 自己的历史 IC 和它正式使用的 2047 IC 不会混淆。未确认关系的较早本地目录仍保留。
-迁移使用同文件系统重命名，校验 inode、文件大小并保留旧路径链接；没有重写粒子数据。
-回执在 `workspace/review/unified-models-20261013/`，服务器迁移逐次检查活动 Slurm 作业。
-旧共享输入的相对引用通过兼容链接保留。旧 mkic5.sh 中的样例命令不作为新流程入口。
+本地 Fornax2047+ 的 91 个目录（含 7002、7003）已归入同号模型的
+`isolation/legacy/<模型名>/`，旧位置保留兼容链接。本地 `source` 链接另指向正式模拟
+实际使用的隔离模型；这是当前参数管理范围，不表示 2047 是编号统一起点。
+较早的 207 个本地目录保持原位，没有按相同编号推断对应关系。
+
+服务器此前移动的 89 个目录已全部恢复到 `data/isoFornax/`，并复核原目录 inode 和
+顶层文件大小；新增的归并来源链接、共享输入别名及空目录已清理，来源记录留在回滚归档。
+恢复回执在 `workspace/review/unified-models-20261013/server-restoration-summary.json`。
+已完成且冻结绝对路径的测试运行保留原位置，重试会识别旧运行，避免重复提交。
 
 工作流支持 `remote.proxy_jump` 显式配置跳板。公钥授权并解锁到 ssh-agent 后，可不依赖临时共享
 连接。远端认证配置由用户处理，数据迁移继续限于 data/。
@@ -50,13 +54,13 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 
 ## 目录与数据归属
 
-两端均使用以下分类。历史模型采用目录链接保留原路径，避免破坏 `mergegalaxy.par`、已有脚本和笔记本的相对路径；新分析任务和新生产案例实际写入新结构。
+两端代码、任务和结果使用以下分类；模型存储按上节分别处理。兼容索引避免破坏 `mergegalaxy.par`、已有脚本和笔记本的相对路径；新分析任务和新生产案例实际写入新结构。
 
 | 目录 | 用途 |
 | --- | --- |
-| `<模型名>/` | 模型实际目录：ic/、isolation/ 和正式模拟 |
+| `<模型名>/` | 本地归并模型目录；服务器仅正式模拟 |
 | `workspace/models/production/` | 正式模拟兼容索引 |
-| `workspace/models/isolation/` | 历史隔离模型兼容索引；实际数据位于各模型 isolation/ 内 |
+| `workspace/models/isolation/` | 服务器隔离模型索引，实际数据仍在 isoFornax/ |
 | `workspace/models/milky-way/` | 银河系模型索引 |
 | `workspace/code/production/` | 当前生产分析代码；本地为服务器源码镜像 |
 | `workspace/code/github/` | 独立 GitHub 工作副本 |
@@ -354,11 +358,12 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 失败/取消任务的重启不是这个命令的隐式行为，需要检查后使用新的运行名或既有重启流程。
 
 本地回执在 `<模型名>/isolation/<name>/client/`，服务器输出在
-`data/<模型名>/isolation/<name>/`。`isolation-status` 读取服务器保存的状态；
+`data/isoFornax/<模型名>/runs/<name>/`。`isolation-status` 读取服务器保存的状态；
 如果 Slurm 在启动前取消作业或强制杀死进程，应根据回执中的 JobID 查 `sacct`，因为进程可能
 没有机会更新状态。生成、转换、求解日志分别保留。最后快照必须达到 `TimeMax` 才标记完成；
 这不代替平衡性、收敛性或科学结果检查。服务器执行验证的 Python 需要 h5py。
 
+服务器 `isolation_root` 配置为 `isoFornax`（默认值），与本地 `models_root` 分开。
 服务器 profile 保存在 data 根目录的 `workflow.json` 的 `isolation_profiles` 字段，键为 profile 名：
 
 - `template`：data 内已有隔离模板目录，包含 `GZWJL.PARAM` 和可选 `TREECOOL`。

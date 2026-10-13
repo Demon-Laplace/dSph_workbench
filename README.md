@@ -28,6 +28,7 @@ through catalogue synchronization, verified transfer and a real short Slurm
 isolation run. Full-scale, long-duration stability still needs scientific validation.
 
 [IC model catalogue](IC_MODELS.csv) lists historical parameter summaries and
-verified new builds. New ICs live under each model’s `ic/` directory alongside its `isolation/` runs;
+verified new builds. Local ICs live under each model’s `ic/` directory alongside isolation receipts.
+Server isolation stays separate under `isoFornax/<model>/runs/<run>/`;
 every successful build automatically records and pushes its catalogue row.
 See the workflow guide for layout, batch commands and synchronization retries.

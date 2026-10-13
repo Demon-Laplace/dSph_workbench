@@ -2,8 +2,6 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
-from types import SimpleNamespace
 import migrate_isolation_layout as migration
 
 
@@ -25,12 +23,12 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual((target/'internal').read_bytes(), b'unchanged science')
             self.assertEqual(len((root/'receipt.jsonl').read_text().splitlines()), 2)
 
-    def test_live_queue_and_occupied_target_refuse_move(self):
+    def test_server_and_occupied_target_refuse_move(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); source=root/'old/Fornax7001';source.mkdir(parents=True)
             plan=dict(root=str(root),source_root=str(source.parent),models=['Fornax7001'],receipt=str(root/'receipt.jsonl'))
-            with patch.object(migration.subprocess, 'run', return_value=SimpleNamespace(stdout='123|RUNNING|/data')):
-                with self.assertRaisesRegex(ValueError,'Active jobs'):migration.migrate(plan, server=True)
+            with self.assertRaisesRegex(ValueError,'local-only'):
+                migration.migrate(plan, server=True)
             target=root/'Fornax7001/isolation/legacy/Fornax7001';target.mkdir(parents=True)
             with self.assertRaisesRegex(ValueError,'occupied'):migration.migrate(plan)
             self.assertFalse(source.is_symlink())

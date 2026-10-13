@@ -3,11 +3,13 @@
 All server mutations must remain inside this data directory. Existing solver
 installations outside data may be read and executed, but never edited.
 
-Use model/ic/ for new IC builds and model/isolation/run/ for isolation runs.
-Historical directories reside in model/isolation/legacy/model/ with old-path
-aliases. isolation/source.json records the production IC source; equal numbers
-alone do not prove a match. Never move active Slurm work or overwrite snapshots,
-particle ICs, model images, videos, or frozen run inputs.
+Keep server production models in model/ and isolation models separately in
+isoFornax/model/. Do not consolidate server isolation into production folders.
+New automated isolation runs use isoFornax/model/runs/run/. Only the LOCAL
+workspace consolidates ICs and isolation under each production model directory.
+Never move active Slurm work or overwrite snapshots, particle ICs, model images,
+videos, or frozen run inputs. Existing frozen validation cases keep their paths.
+Equal model numbers alone do not prove matching IC provenance.
 
 GitHub main is the source of truth for code. Root workflow*.py files correspond
 to workflow/ in the Git checkout; dSph_workbench/ corresponds to repo/. After a

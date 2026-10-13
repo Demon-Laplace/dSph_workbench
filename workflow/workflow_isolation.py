@@ -70,14 +70,24 @@ def verify_bundle(stage, request):
 
 def case_dir(root, name, model=None):
     runtime.label(name)
+    base = runtime.confined(root, root / runtime.config(root).get('isolation_root', 'isoFornax'))
     if model:
-        # Receiver is confined to data even when local IC tools use models_root.
-        return runtime.confined(root, runtime.model_directory(root, model) / 'isolation' / name)
-    legacy = runtime.confined(root, root / 'workspace/models/isolation' / name)
-    matches = [p for p in root.glob('*/isolation/' + name) if p.is_dir()]
+        if not re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model):
+            raise ValueError('Use a full model ID')
+        current = runtime.confined(root, base / model / 'runs' / name)
+        previous = runtime.confined(root, root / model / 'isolation' / name)
+        if previous.is_dir():
+            if current.exists() and current.resolve() != previous.resolve():
+                raise ValueError('Ambiguous existing isolation runs; reconcile before retrying')
+            # Frozen completed/active cases retain their original absolute paths.
+            return previous
+        return current
+    matches = list(base.glob('*/runs/' + name))
+    matches += list(root.glob('*/isolation/' + name))
+    legacy = root / 'workspace/models/isolation' / name
     if legacy.is_dir():
         matches.append(legacy)
-    unique = {p.resolve() for p in matches}
+    unique = {p.resolve() for p in matches if p.is_dir()}
     if len(unique) != 1:
         raise ValueError('Specify --model for an absent or ambiguous isolation run')
     return runtime.confined(root, unique.pop())
@@ -245,7 +255,7 @@ def pipeline(args):
     remote = runtime.config(args.root)['remote']
     if args.dry_run:
         print(f'IC: {models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)}\n'
-              f'Server: {remote["root"]}/{args.model}/isolation/{args.name}\n'
+              f'Server: {remote["root"]}/{remote.get("isolation_root", "isoFornax")}/{args.model}/runs/{args.name}\n'
               f'Profile: {args.profile}; submit={args.submit}')
         return 0
     model_root = runtime.model_directory(args.root, args.model)
@@ -285,7 +295,10 @@ def pipeline(args):
         if saved.exists() and json.loads(saved.read_text()) != request:
             raise ValueError('Local run name is bound to different ICs or settings')
         runtime.write_json(saved, request)
-        remote_case = remote['root'] + '/' + args.model + '/isolation/' + args.name
+        location = remote_exec(args, ['python3', remote['root'] + '/workflow_isolation.py',
+                                      'locate', '--root', remote['root'], '--model', args.model,
+                                      '--name', args.name], capture=True)
+        remote_case = json.loads(location.stdout)['directory']
         existing = ('import json; from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
                     'p=Path(' + repr(remote_case) + '); assert p.resolve().is_relative_to(r); '
                     'expected=json.loads(' + repr(json.dumps(request)) + '); '
@@ -334,18 +347,16 @@ def status(args):
     model = getattr(args, 'model', None)
     if model:
         runtime.model_directory(args.root, model)
-    relative = (model + '/isolation/' + args.name) if model else None
-    script = ('from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
-              'items=[r/' + repr(relative) + '] if ' + repr(relative) + ' else list(r.glob("*/isolation/' + args.name + '"))+list(r.glob("workspace/models/isolation/' + args.name + '")); '
-              'items=list({p.resolve() for p in items if p.is_dir()}); '
-              'assert len(items)==1, "Specify --model for an absent or ambiguous run"; '
-              'p=items[0]/"status.json"; assert p.resolve().is_relative_to(r); print(p.read_text())')
-    return remote_exec(args, ['python3', '-c', script]).returncode
+    command = ['python3', remote['root'] + '/workflow_isolation.py', 'status',
+               '--root', remote['root'], '--name', args.name]
+    if model:
+        command += ['--model', model]
+    return remote_exec(args, command).returncode
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('receive', 'run-job'))
+    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'status'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path)
     parser.add_argument('--name')
@@ -354,8 +365,14 @@ def main():
     args = parser.parse_args()
     if args.operation == 'receive':
         print(json.dumps(receive(args.root.resolve(), args.stage, args.submit)))
-    else:
+    elif args.operation == 'run-job':
         run_job(args.root.resolve(), args.name, args.model)
+    else:
+        run = case_dir(args.root.resolve(), args.name, args.model)
+        if args.operation == 'locate':
+            print(json.dumps({'directory': str(run)}))
+        else:
+            print((run / 'status.json').read_text())
 
 
 if __name__ == '__main__':
