@@ -390,3 +390,24 @@ IC 根目录的 24 个历史检查/分析工具迁入 `local_tools/isolation_ana
 历史统计表格和演示文件集中在 `reports/historical/`；包含粒子文件的旧性能测试目录保存在
 `archive/benchmark_results/`。观测输入仍保留原路径，避免旧检查程序失去输入。
 逐项清理记录在分析工作区 `workspace/catalog/ic-cleanup-20261012.json`。
+
+## 服务器历史 isolation 的公共 Python 脚本
+
+有效历史模型的 14 个 Python 文件集中于 `data/isoFornax/python/`，源码对应
+GitHub 的 `workflow/isolation_python/`。各模型保留同名 `.py` 符号链接，所以
+原有 `.sh` 的内容、位置和运行命令保持不变。仍应在模型目录内提交，例如：
+
+```bash
+cd data/isoFornax/Fornax7001
+sbatch subchecdensity.sh
+```
+
+这次只合并逐字节相同的历史版本，不改变分析精度或科学算法。公共目录与模型
+目录处于同一层，保留密度检查程序推导 `isoFornax` 和 `data` 路径的行为。
+原始副本在 `observer_review_delete_20261006/isolation-python-20261013/`；
+核对后删除这些备份不会破坏公共脚本。审计清单和验证结果存于
+`workspace/review/isolation-python-20261013/`。
+
+现有用户 `.sh` 未经明确要求不得改写、移动或替换。新 isolation 继续使用前述
+`workflow.py isolation ... --submit` 自动流程，不需要手动向每个模型复制检查脚本。
+历史公共代码不覆盖已冻结运行内的代码或启动文件。

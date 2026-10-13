@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-13",
+  "models": 84,
+  "python_links": 1176,
+  "unique_python_files": 14,
+  "protected_shell_files": 502,
+  "shell_checks": [
+    "same paths",
+    "same sha256",
+    "same mtime_ns"
+  ],
+  "validation": {
+    "workflow_tests": 32,
+    "all_model_links_and_archived_sources_verified": true,
+    "density_help_import_hashes_and_path_resolution_before_after_equal": true,
+    "full_scientific_run_repeated": false
+  },
+  "shared_directory": "isoFornax/python",
+  "archive": "observer_review_delete_20261006/isolation-python-20261013",
+  "historical_shell_audit": {
+    "rewritten_production_model_shells": "No rewrite found in available records; complete pre-reorganization hashes unavailable",
+    "central_analysis_launchers": "Unchanged from previous branch and server synchronization baseline",
+    "archived_obsolete_batch_scripts": [
+      "isoFornax/run_ic_pipeline.sh",
+      "isoFornax/submit_density.sh"
+    ],
+    "whole_archived_unevolved_isolation_models": [
+      "Fornax2049",
+      "Fornax2050",
+      "Fornax2051",
+      "Fornax3004",
+      "Fornax4006"
+    ],
+    "shells_in_whole_archived_models": 27
+  },
+  "sources": {
+    "StabilityCheck.py": "7c682ee90f8c201e2b6c8af51d514603b918ce7312290edd297e152fa60bddb5",
+    "analysis_core.py": "5589379ca65a51668e3d059fe1c4540aa45e93f26a91f70c9679d35fa64ee16b",
+    "basefunc.py": "df52d1639d15017ade652ef17b8cffe1e07d84750c4cd0e35fc199fb0aacfbc5",
+    "check_density_profile.py": "1bcbe2e5534b959e0cbd97a2bb052d109ca486ffe4236478bb8ef422bbed4bcb",
+    "coordinate_transform.py": "063df979f750452a26c1cae93f4d02fd8f3226417ccaa5c17f42bf2cb54fed04",
+    "data_processing.py": "52b4174023341c0d3569fa193c3cf8f49ba24e82e9ddb25e2cb984e4312c7de3",
+    "mysubs.py": "3aed724904e864f416040c9822cb437caa104943bdc39d988bb4506657cba427",
+    "particle_selection.py": "f470de9ff3d1c6ff04ec7b27fc8cd5dad8731f219552472e8de9fddcf22fa06c",
+    "readsnap.py": "bfd6c8748c04d904168dc9304a6c3ac6c5f6e947f8655569d6347828b4d7b491",
+    "snapshot_context.py": "81dc29b670cd4012a76b6407b00ed5140b57f3546a6f6e3e68a0fbdd38b0efee",
+    "snapshot_io.py": "5064ee7f3e5c7d37fcfaf5a6a4d082a53635d493f482d708aa4948ab7cc17658",
+    "snapshot_metrics.py": "bc05b02f5112cacbfdee99ccf5ed266543d494718fedbfd1828ba9fd41ccab79",
+    "variable.py": "396dc9fad43f513d8a3c3180e7a42a3e95aeb5f257f0ea0be9ebea728d24312d",
+    "zim.py": "1b663a47ac882b81d099bf8dcaa9bff42a0f177674aa9b73e28485e0bf358bc8"
+  }
+}
