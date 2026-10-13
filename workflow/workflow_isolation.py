@@ -144,6 +144,8 @@ def receive(root, stage, submit=False):
                 command = [settings.get('python', 'python3'), str(run / 'workflow_isolation.py'),
                            'run-job', '--root', str(root), '--name', run.name, '--model', request['model']]
                 script = '#!/bin/bash\nset -euo pipefail\n'
+                script += 'cd ' + shlex.quote(str(run)) + '\n'
+                script += 'export TMPDIR="$PWD/.tmp"\nmkdir -p "$TMPDIR"\n'
                 script += settings.get('setup', '') + '\n'
                 script += 'exec ' + shlex.join(command) + '\n'
                 (prepared / 'run.sh').write_text(script)
@@ -163,7 +165,7 @@ def receive(root, stage, submit=False):
             raise ValueError('Run already contains simulation data; new submission refused')
         settings = json.loads((run / 'profile.json').read_text())
         options = settings.get('sbatch', {})
-        allowed = {'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem', 'constraint'}
+        allowed = {'clusters', 'qos', 'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem', 'constraint'}
         if set(options) - allowed:
             raise ValueError('Unsupported Slurm profile option')
         command = ['sbatch', '--parsable', '--chdir', str(run), '--job-name', 'iso-' + run.name,

@@ -27,7 +27,7 @@ class IsolationTests(unittest.TestCase):
         config = {'isolation_profiles': {'default': {'template': 'template',
                   'converter': [sys.executable, '-c', 'from pathlib import Path; Path("{binary}").write_bytes(b"binary")'],
                   'solver': [sys.executable, '-c', 'print("solver fixture")'],
-                  'sbatch': {'ntasks': 2, 'time': '00:10:00'}}}}
+                  'sbatch': {'clusters': 'test_cluster', 'qos': 'test_qos', 'ntasks': 2, 'time': '00:10:00'}}}}
         runtime.write_json(self.root / 'workflow.json', config)
         for name in ('Fornax.ini', 'parameters.ini'):
             (self.stage / name).write_text('fixture ' + name)
@@ -48,6 +48,9 @@ class IsolationTests(unittest.TestCase):
         result, sbatch = self.receive()
         self.assertEqual(result['state'], 'prepared')
         self.assertIn('--test-only', sbatch.call_args.args[0])
+        self.assertIn('--clusters', sbatch.call_args.args[0])
+        self.assertIn('--qos', sbatch.call_args.args[0])
+        self.assertIn('export TMPDIR="$PWD/.tmp"', (self.run / 'run.sh').read_text())
         params = (self.run / 'GZWJL.PARAM').read_text()
         self.assertIn('TimeMax 1\nSofteningGas 0.1', params)
         self.assertIn('ResubmitOn 0', params)
