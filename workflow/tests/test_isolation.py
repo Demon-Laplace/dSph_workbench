@@ -37,7 +37,7 @@ class IsolationTests(unittest.TestCase):
                         'build_id': 'fixture', 'files': {n: isolation.sha(self.stage / n)
                         for n in ('Fornax.ini', 'parameters.ini')}}
         runtime.write_json(self.stage / 'request.json', self.request)
-        self.run = isolation.case_dir(self.root, self.request['name'])
+        self.run = isolation.case_dir(self.root, self.request['name'], self.request['model'])
 
     def receive(self, submit=False):
         with patch.object(isolation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '12345\n', '')) as sbatch:
@@ -106,9 +106,9 @@ class IsolationTests(unittest.TestCase):
         outside.mkdir()
         data = self.root / 'data'
         data.mkdir()
-        (data / 'workspace').symlink_to(outside, target_is_directory=True)
+        (data / 'Fornax7003').symlink_to(outside, target_is_directory=True)
         with self.assertRaises(ValueError):
-            isolation.case_dir(data, self.request['name'])
+            isolation.case_dir(data, self.request['name'], self.request['model'])
         self.assertFalse((outside / 'models').exists())
 
     def test_local_transfer_and_remote_receiver_end_to_end_without_network(self):
@@ -144,9 +144,9 @@ class IsolationTests(unittest.TestCase):
             self.assertEqual(isolation.pipeline(args), 0)
         self.assertEqual((self.root / 'sbatch-count').read_text(), '1')
         self.assertEqual(len(list((self.root / 'workspace/transfers/isolation').iterdir())), 1)
-        receipt = json.loads((local / 'jobs/transport/server.json').read_text())
+        receipt = json.loads((local / 'Fornax7003/isolation/transport/client/server.json').read_text())
         self.assertEqual(receipt['job_id'], '45678')
-        self.assertEqual((self.root / 'workspace/models/isolation/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
+        self.assertEqual((self.root / 'Fornax7003/isolation/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
 
 
 if __name__ == '__main__':

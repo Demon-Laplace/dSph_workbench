@@ -1,3 +1,39 @@
+## 当前统一模型目录（2026-10-13）
+
+新 IC、隔离运行和正式模拟按同一模型 ID 归属。以下布局取代旧 generated/ 和
+workspace/models/isolation/ 的新建路径；正式模拟原有文件位置保持可用：
+
+```text
+Fornax/Fornax7003/
+  ic/<运行名>/            # AGAMA 结果、冻结参数、回执
+  isolation/<运行名>/     # 隔离模拟；本地 client/ 保存上传回执
+  isolation/legacy/      # 历史 isolation，来源核实后才迁入
+  GZWJL.PARAM             # 正式模拟参数
+  output/                 # 正式模拟输出
+```
+
+服务器对应 `data/Fornax7003/isolation/<运行名>/`，同名参数、快照和图片不平铺混合。
+分析工作区配置 `models_root: "."`，IC 工具工作区配置 `models_root: "../../Fornax"`。
+参数库、总表和 Git 代码仍在 IC 工具工作区。此配置不自动搬移旧数据；旧 generated/ 结果仍可复用。
+
+```bash
+python3 workflow.py build-ic --model Fornax7003 --name ic-v2
+python3 workflow.py isolation Fornax7003 --ic-run ic-v2 --name isolation-v2 --submit
+python3 workflow.py isolation-status --model Fornax7003 --name isolation-v2
+python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
+```
+
+`new-case` 可在已含 ic/、isolation/ 的模型目录准备正式输入，已有正式文件时拒绝覆盖。
+同一运行名可在不同模型中使用，查询时用 --model 消除歧义。
+
+旧编号对应关系需要在服务器核对 IC 来源及参数，不能只按编号相同判断。本地 298 个 isolation
+目录中，40 个与正式模拟同名，4 对有同名文件；清单为
+`workspace/catalog/unified-model-review-20261013.json`，这些历史目录尚未搬迁。
+核实后再移至对应模型的 isolation/legacy/，保留旧路径兼容链接并检查相对引用；活动作业目录不迁移。
+
+工作流支持 `remote.proxy_jump` 显式配置跳板。公钥授权并解锁到 ssh-agent 后，可不依赖临时共享
+连接。远端认证配置由用户处理，数据迁移继续限于 data/。
+
 # Fornax 本地、服务器与 GitHub 工作流
 
 日常入口是本目录的 `workflow.py` 和 `workspace/`。服务器保存完整模拟数据并执行 Slurm 任务，本地维护参数、检查版本、运行交互式分析和查看回传成果。服务器写入范围固定为 `workflow.json` 中的远程数据根，即 `~/data`。

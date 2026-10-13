@@ -18,5 +18,6 @@
     "root": "../IsolationModel/Fornax",
     "repository": "../IsolationModel/Fornax"
   },
-  "ic_python": "python3"
+  "ic_python": "python3",
+  "models_root": "."
 }

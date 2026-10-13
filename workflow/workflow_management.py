@@ -91,6 +91,8 @@ def ssh_config(args):
     remote = runtime.config(args.root)['remote']
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
                '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
+    if remote.get('proxy_jump'):
+        command += ['-J', remote['proxy_jump']]
     socket = remote.get('control_socket')
     if socket and Path(socket).is_socket():
         command += ['-S', socket]

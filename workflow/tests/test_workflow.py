@@ -94,13 +94,16 @@ class WorkflowTests(unittest.TestCase):
         (template / 'subgetinfo.sh').write_text('obsolete relative paths')
         args = SimpleNamespace(root=self.root, model='Fornax2', template='Fornax1',
                                dwarf_ic='Fornax1/Fornax.ini', mw_ic=None)
+        (self.root / 'Fornax2/isolation/legacy').mkdir(parents=True)
+        (self.root / 'Fornax2/isolation/legacy/snapshot_001.hdf5').write_bytes(b'isolation')
         with contextlib.redirect_stdout(io.StringIO()):
             models.new_case(args)
-        case = self.root / 'workspace/models/production/Fornax2'
+        case = self.root / 'Fornax2'
         self.assertEqual((self.root / 'Fornax2').resolve(), case)
         self.assertEqual((template / 'mergegalaxy.par').read_text(), 'MW.ini Fornax.ini\n')
         self.assertFalse((case / 'subgetinfo.sh').exists())
         self.assertFalse((case / 'output').exists())
+        self.assertEqual((case / 'isolation/legacy/snapshot_001.hdf5').read_bytes(), b'isolation')
         with contextlib.redirect_stdout(io.StringIO()):
             management.organize(SimpleNamespace(root=self.root, repo=self.root / 'missing-checkout'))
         self.assertTrue(case.is_dir())

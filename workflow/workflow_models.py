@@ -25,7 +25,8 @@ def ic_paths(args):
 def build_ic(args):
     root, repo = ic_paths(args)
     source = resolve_input(args.root, args.ini) if args.ini else resolve_input(root, f'IniFile/IC_{model_name(args.model)}.ini')
-    destination = runtime.confined(root, root / 'generated' / runtime.label(args.name))
+    model = model_name(args.model or source.stem.removeprefix('IC_'))
+    destination = initial_directory(args, model, args.name)
     if destination.exists() or destination.is_symlink():
         raise ValueError('Initial-condition run already exists; refusing to overwrite')
     builder = args.repo / 'local_tools/ic_generation/build_ic.py'
@@ -37,11 +38,33 @@ def build_ic(args):
                            '--catalog-repo', str(repo)]).returncode
 
 
+def initial_directory(args, model, name):
+    directory = runtime.model_directory(args.root, model)
+    return runtime.confined(directory, directory / 'ic' / runtime.label(name))
+
+
+def find_initial(args, name, model=None):
+    runtime.label(name)
+    if model:
+        current = initial_directory(args, model, name)
+        if current.exists():
+            return current
+    else:
+        base = (args.root / runtime.config(args.root).get('models_root', '.')).resolve()
+        matches = [p for p in base.glob('*/ic/' + name) if p.is_dir()]
+        if len(matches) > 1:
+            raise ValueError('Multiple models have this run name; specify --model')
+        if matches:
+            return runtime.confined(base, matches[0])
+    root, _ = ic_paths(args)
+    return runtime.confined(root, root / 'generated' / name)
+
+
 def ic_catalog(args):
     root, repo = ic_paths(args)
     command = [sys.executable, str(args.repo / 'local_tools/ic_generation/catalog.py'), '--repo', str(repo)]
     if args.run:
-        command += ['--run', str(runtime.confined(root, root / 'generated' / runtime.label(args.run)))]
+        command += ['--run', str(find_initial(args, args.run, getattr(args, 'model', None)))]
     else:
         command += ['--history-root', str(root)]
     return subprocess.run(command).returncode
@@ -76,13 +99,12 @@ def new_case(args):
     name = model_name(args.model)
     if not name.startswith('Fornax'):
         raise ValueError('New-case preparation currently supports Fornax production models')
-    template = (args.root / model_name(args.template)).resolve()
+    template = runtime.model_directory(args.root, model_name(args.template)).resolve()
     dwarf = resolve_input(args.root, args.dwarf_ic)
     if any(c.isspace() for c in str(dwarf)):
         raise ValueError('Legacy IC merger requires paths without whitespace')
-    destination = runtime.confined(args.root, args.root / 'workspace/models/production' / name)
-    alias = args.root / name
-    if destination.exists() or alias.exists() or alias.is_symlink():
+    destination = runtime.model_directory(args.root, name)
+    if destination.exists() and (not destination.is_dir() or any(p.name not in {'ic', 'isolation'} for p in destination.iterdir())):
         raise ValueError('Model already exists; refusing to overwrite')
     required = [template / n for n in ('GZWJL.PARAM', 'mergegalaxy.par', 'mergecube.par')]
     if not all(p.is_file() for p in required):
@@ -94,7 +116,7 @@ def new_case(args):
     mw = resolve_input(args.root, args.mw_ic) if args.mw_ic else resolve_input(template, first[0])
     cube_tokens = next(shlex.split(line, comments=True) for line in required[2].read_text().splitlines() if shlex.split(line, comments=True))
     cube = resolve_input(template, cube_tokens[0])
-    destination.mkdir(parents=True)
+    destination.mkdir(parents=True, exist_ok=True)
     for path in required:
         shutil.copy2(path, destination / path.name)
     rewrite_first_line(destination / 'mergegalaxy.par', lambda tokens: [str(mw), str(dwarf), *tokens[2:]])
@@ -109,13 +131,12 @@ def new_case(args):
     runtime.write_json(destination / 'case.json', {'created_utc': runtime.now(), 'template': str(template),
                       'dwarf_ic': str(dwarf), 'mw_ic': str(mw), 'cube': str(cube),
                       'state': 'inputs_prepared', 'note': 'Orbit, orientation and physics copied from template. IC merging and simulation have not run.'})
-    alias.symlink_to(os.path.relpath(destination, args.root), target_is_directory=True)
-    print(f'Created {destination}; legacy path {alias} is compatible.')
+    print(f'Prepared production inputs in {destination}; IC and isolation stages are preserved.')
     return 0
 
 
 def simulate(args):
-    model = runtime.confined(args.root, args.root / model_name(args.model)).resolve()
+    model = runtime.model_directory(args.root, model_name(args.model)).resolve()
     launcher = model / args.launcher
     if args.launcher not in ('subastrothin.sh', 'subastrofat.sh', 'submeso1.sh') or not launcher.is_file():
         raise ValueError('Select an existing supported simulation launcher')

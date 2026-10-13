@@ -68,8 +68,19 @@ def verify_bundle(stage, request):
             raise ValueError(f'IC transfer checksum mismatch: {name}')
 
 
-def case_dir(root, name):
-    return runtime.confined(root, root / 'workspace/models/isolation' / runtime.label(name))
+def case_dir(root, name, model=None):
+    runtime.label(name)
+    if model:
+        # Receiver is confined to data even when local IC tools use models_root.
+        return runtime.confined(root, runtime.model_directory(root, model) / 'isolation' / name)
+    legacy = runtime.confined(root, root / 'workspace/models/isolation' / name)
+    matches = [p for p in root.glob('*/isolation/' + name) if p.is_dir()]
+    if legacy.is_dir():
+        matches.append(legacy)
+    unique = {p.resolve() for p in matches}
+    if len(unique) != 1:
+        raise ValueError('Specify --model for an absent or ambiguous isolation run')
+    return runtime.confined(root, unique.pop())
 
 
 def verify_case(run):
@@ -101,7 +112,7 @@ def receive(root, stage, submit=False):
     stage = runtime.confined(root, stage).resolve()
     request = json.loads((stage / 'request.json').read_text())
     verify_bundle(stage, request)
-    run = case_dir(root, request['name'])
+    run = case_dir(root, request['name'], request['model'])
     run.parent.mkdir(parents=True, exist_ok=True)
     lock = runtime.confined(root, run.parent / (run.name + '.lock'))
     with lock.open('a') as stream:
@@ -131,7 +142,7 @@ def receive(root, stage, submit=False):
                     shutil.copy2(cooling, prepared / 'TREECOOL')
                 (prepared / 'output').mkdir()
                 command = [settings.get('python', 'python3'), str(run / 'workflow_isolation.py'),
-                           'run-job', '--root', str(root), '--name', run.name]
+                           'run-job', '--root', str(root), '--name', run.name, '--model', request['model']]
                 script = '#!/bin/bash\nset -euo pipefail\n'
                 script += settings.get('setup', '') + '\n'
                 script += 'exec ' + shlex.join(command) + '\n'
@@ -184,8 +195,8 @@ def receive(root, stage, submit=False):
         return dict(status, directory=str(run))
 
 
-def run_job(root, name):
-    run = case_dir(root, name)
+def run_job(root, name, model=None):
+    run = case_dir(root, name, model)
     # Same lock as submitter: a fast-starting job must not lose its status update.
     with (run.parent / (run.name + '.lock')).open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
@@ -231,11 +242,12 @@ def pipeline(args):
     runtime.label(args.name)
     remote = runtime.config(args.root)['remote']
     if args.dry_run:
-        print(f'IC: {root}/generated/{args.ic_run or args.name}\n'
-              f'Server: {remote["root"]}/workspace/models/isolation/{args.name}\n'
+        print(f'IC: {models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)}\n'
+              f'Server: {remote["root"]}/{args.model}/isolation/{args.name}\n'
               f'Profile: {args.profile}; submit={args.submit}')
         return 0
-    local = runtime.confined(root, root / 'jobs' / args.name)
+    model_root = runtime.model_directory(args.root, args.model)
+    local = runtime.confined(model_root, model_root / 'isolation' / args.name / 'client')
     local.mkdir(parents=True, exist_ok=True)
     with (local / 'pipeline.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
@@ -244,7 +256,7 @@ def pipeline(args):
                  's=json.loads((p/"workflow.json").read_text()); '
                  'assert ' + repr(args.profile) + ' in s.get("isolation_profiles",{}), "Configure the server isolation profile first"')
         remote_exec(args, ['python3', '-c', probe])
-        run = runtime.confined(root, root / 'generated' / runtime.label(args.ic_run or args.name))
+        run = models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)
         if not run.exists():
             if args.ic_run:
                 raise ValueError('Requested existing IC run does not exist')
@@ -271,7 +283,7 @@ def pipeline(args):
         if saved.exists() and json.loads(saved.read_text()) != request:
             raise ValueError('Local run name is bound to different ICs or settings')
         runtime.write_json(saved, request)
-        remote_case = remote['root'] + '/workspace/models/isolation/' + args.name
+        remote_case = remote['root'] + '/' + args.model + '/isolation/' + args.name
         existing = ('import json; from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
                     'p=Path(' + repr(remote_case) + '); assert p.resolve().is_relative_to(r); '
                     'expected=json.loads(' + repr(json.dumps(request)) + '); '
@@ -317,9 +329,15 @@ def pipeline(args):
 def status(args):
     remote = runtime.config(args.root)['remote']
     runtime.label(args.name)
+    model = getattr(args, 'model', None)
+    if model:
+        runtime.model_directory(args.root, model)
+    relative = (model + '/isolation/' + args.name) if model else None
     script = ('from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
-              'p=r/"workspace/models/isolation"/' + repr(args.name) + '/"status.json"; '
-              'assert p.resolve().is_relative_to(r); print(p.read_text())')
+              'items=[r/' + repr(relative) + '] if ' + repr(relative) + ' else list(r.glob("*/isolation/' + args.name + '"))+list(r.glob("workspace/models/isolation/' + args.name + '")); '
+              'items=list({p.resolve() for p in items if p.is_dir()}); '
+              'assert len(items)==1, "Specify --model for an absent or ambiguous run"; '
+              'p=items[0]/"status.json"; assert p.resolve().is_relative_to(r); print(p.read_text())')
     return remote_exec(args, ['python3', '-c', script]).returncode
 
 
@@ -329,12 +347,13 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path)
     parser.add_argument('--name')
+    parser.add_argument('--model')
     parser.add_argument('--submit', action='store_true')
     args = parser.parse_args()
     if args.operation == 'receive':
         print(json.dumps(receive(args.root.resolve(), args.stage, args.submit)))
     else:
-        run_job(args.root.resolve(), args.name)
+        run_job(args.root.resolve(), args.name, args.model)
 
 
 if __name__ == '__main__':

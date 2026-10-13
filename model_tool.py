@@ -31,7 +31,7 @@ that has such a constraint is copied from the referenced ``Density_*``
 section. Section and option names are matched case-insensitively. Before builds,
 changed ``Fornax2047+`` parameter files are synchronized to ``origin/main``.
 Successful builds automatically update and push ``IC_MODELS.csv``. Configure
-``ic.root`` and ``ic_python`` in workflow.json; outputs use unique generated/ runs.
+``ic.root`` and ``ic_python`` in workflow.json; outputs use unique per-model ic/ runs.
 """
 
 import argparse
@@ -443,7 +443,7 @@ def build_one(task):
 
 def command_build(args):
     if args.overwrite:
-        raise IniError("--overwrite is retired; each build now creates a separate generated/ run")
+        raise IniError("--overwrite is retired; each build now creates a separate per-model ic/ run")
     paths = existing_ini_paths(args.models)
     models = []
     for path in paths:

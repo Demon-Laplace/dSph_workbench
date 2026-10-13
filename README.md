@@ -28,6 +28,6 @@ images, video, and result collection. AGAMA construction and a new full GIZMO
 simulation still require the existing scientific environment and validation.
 
 [IC model catalogue](IC_MODELS.csv) lists historical parameter summaries and
-verified new builds. New ICs live in the separately configured IC workspace;
+verified new builds. New ICs live under each model’s `ic/` directory alongside its `isolation/` runs;
 every successful build automatically records and pushes its catalogue row.
 See the workflow guide for layout, batch commands and synchronization retries.

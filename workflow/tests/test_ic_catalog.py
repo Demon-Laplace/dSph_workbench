@@ -138,7 +138,7 @@ class ICCatalogTests(unittest.TestCase):
             catalog.register(run, self.repo)
         self.assertFalse((self.repo / catalog.TABLE).exists())
 
-    def test_workflow_uses_configured_sibling_and_refuses_escape(self):
+    def test_workflow_unifies_model_outputs_and_refuses_escape(self):
         analysis = self.root / 'analysis'
         analysis.mkdir()
         ic = self.root / 'ic'
@@ -150,8 +150,9 @@ class ICCatalogTests(unittest.TestCase):
         with patch.object(models.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
             self.assertEqual(models.build_ic(args), 0)
             command = run.call_args.args[0]
-            self.assertEqual(command[command.index('--output') + 1], str(ic / 'generated/new-run'))
-        (ic / 'generated').symlink_to(analysis, target_is_directory=True)
+            self.assertEqual(command[command.index('--output') + 1], str(analysis / 'Fornax7003/ic/new-run'))
+        (analysis / 'Fornax7003').mkdir()
+        (analysis / 'Fornax7003/ic').symlink_to(ic, target_is_directory=True)
         with self.assertRaises(ValueError):
             models.build_ic(args)
 

@@ -41,6 +41,13 @@ def config(root):
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def model_directory(root, model):
+    if not re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model):
+        raise ValueError('Use a full model ID, e.g. Fornax7003')
+    base = (root / config(root).get('models_root', '.')).resolve()
+    return confined(base, base / model)
+
+
 def code_dir(args):
     setting = getattr(args, 'code', None) or config(args.root).get('analysis_code', 'tools/server-analysis')
     return (args.root / setting).resolve()
@@ -58,8 +65,8 @@ def prepare(args):
     label(args.model)
     if not re.fullmatch(r'Fornax\d+(?:_.+)?', args.model):
         raise ValueError('Analysis currently supports Fornax production models')
-    source = (args.root / args.model).resolve()
-    if not source.is_dir() or not source.is_relative_to(args.root):
+    source = model_directory(args.root, args.model).resolve()
+    if not source.is_dir():
         raise ValueError(f'Model missing or outside workspace: {source}')
     candidates = [p for p in (source, source / 'output') if list(p.glob('snapshot_*.hdf5'))]
     if args.snapshots:
