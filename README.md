@@ -23,9 +23,9 @@ cd workflow
 python3 -m unittest discover -s tests -v
 ```
 
-The tested workflow covers existing-model analysis through validated tables,
-images, video, and result collection. AGAMA construction and a new full GIZMO
-simulation still require the existing scientific environment and validation.
+The tested workflow covers existing-model analysis and local AGAMA generation
+through catalogue synchronization, verified transfer and a real short Slurm
+isolation run. Full-scale, long-duration stability still needs scientific validation.
 
 [IC model catalogue](IC_MODELS.csv) lists historical parameter summaries and
 verified new builds. New ICs live under each model’s `ic/` directory alongside its `isolation/` runs;

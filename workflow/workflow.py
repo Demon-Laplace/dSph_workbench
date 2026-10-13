@@ -168,7 +168,7 @@ def main():
     p = commands.add_parser('isolation', help='generate/reuse IC, verify transfer, prepare and optionally submit isolation')
     p.add_argument('model', help='e.g. Fornax7003')
     p.add_argument('--name', required=True, help='unique run name, reused for retries')
-    p.add_argument('--ic-run', help='reuse a completed run under IC generated/')
+    p.add_argument('--ic-run', help='reuse a completed model ic/ run (legacy generated/ is also supported)')
     p.add_argument('--profile', default='default', help='server isolation profile')
     p.add_argument('--threads', type=int, default=2)
     p.add_argument('--seed', type=int, default=42)

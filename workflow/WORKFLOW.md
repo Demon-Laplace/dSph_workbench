@@ -7,14 +7,16 @@ workspace/models/isolation/ 的新建路径；正式模拟原有文件位置保�
 Fornax/Fornax7003/
   ic/<运行名>/            # AGAMA 结果、冻结参数、回执
   isolation/<运行名>/     # 隔离模拟；本地 client/ 保存上传回执
-  isolation/legacy/      # 历史 isolation，来源核实后才迁入
+  isolation/legacy/Fornax7003/ # 历史文件；保留末级模型名供旧脚本识别
+  isolation/source       # 正式模拟实际引用的隔离模型（有依据时创建）
+  isolation/source.json  # 来源与编号复用记录
   GZWJL.PARAM             # 正式模拟参数
   output/                 # 正式模拟输出
 ```
 
 服务器对应 `data/Fornax7003/isolation/<运行名>/`，同名参数、快照和图片不平铺混合。
 分析工作区配置 `models_root: "."`，IC 工具工作区配置 `models_root: "../../Fornax"`。
-参数库、总表和 Git 代码仍在 IC 工具工作区。此配置不自动搬移旧数据；旧 generated/ 结果仍可复用。
+参数库、总表和 Git 代码仍在 IC 工具工作区。旧 generated/ 结果仍可复用，已迁移目录的旧位置保留兼容链接。
 
 ```bash
 python3 workflow.py build-ic --model Fornax7003 --name ic-v2
@@ -26,10 +28,18 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 `new-case` 可在已含 ic/、isolation/ 的模型目录准备正式输入，已有正式文件时拒绝覆盖。
 同一运行名可在不同模型中使用，查询时用 --model 消除歧义。
 
-旧编号对应关系需要在服务器核对 IC 来源及参数，不能只按编号相同判断。本地 298 个 isolation
-目录中，40 个与正式模拟同名，4 对有同名文件；清单为
-`workspace/catalog/unified-model-review-20261013.json`，这些历史目录尚未搬迁。
-核实后再移至对应模型的 isolation/legacy/，保留旧路径兼容链接并检查相对引用；活动作业目录不迁移。
+2026-10-13 已按服务器 `mergegalaxy.par` 和 IC 链接盘点 101 个正式模拟、89 个隔离模型。
+没有一个可靠的统一编号起点：2028 已使用同号 IC，但 2037 引用 2035、2042 引用 158，
+2052/2053/2055 引用 2047。[MODEL_SOURCES.csv](MODEL_SOURCES.csv) 记录声明的来源，
+未能从参数和链接确定的 10 个条目明确保留 unknown，不推测对应关系。
+
+已迁移服务器 89 个历史隔离目录，以及本地 Fornax2047+ 的 91 个目录（含 7002、7003）。
+这是当前参数管理范围，不表示 2047 是编号统一的起点。每个目录归入同号模型的
+`isolation/legacy/<模型名>/`；`source` 链接另指向正式模拟实际使用的隔离模型，
+所以 2052 自己的历史 IC 和它正式使用的 2047 IC 不会混淆。未确认关系的较早本地目录仍保留。
+迁移使用同文件系统重命名，校验 inode、文件大小并保留旧路径链接；没有重写粒子数据。
+回执在 `workspace/review/unified-models-20261013/`，服务器迁移逐次检查活动 Slurm 作业。
+旧共享输入的相对引用通过兼容链接保留。旧 mkic5.sh 中的样例命令不作为新流程入口。
 
 工作流支持 `remote.proxy_jump` 显式配置跳板。公钥授权并解锁到 ssh-agent 后，可不依赖临时共享
 连接。远端认证配置由用户处理，数据迁移继续限于 data/。
@@ -44,8 +54,9 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 
 | 目录 | 用途 |
 | --- | --- |
-| `workspace/models/production/` | 生产模拟，历史模型索引及新案例 |
-| `workspace/models/isolation/` | 服务器隔离模拟索引，原始存储为 `isoFornax` |
+| `<模型名>/` | 模型实际目录：ic/、isolation/ 和正式模拟 |
+| `workspace/models/production/` | 正式模拟兼容索引 |
+| `workspace/models/isolation/` | 历史隔离模型兼容索引；实际数据位于各模型 isolation/ 内 |
 | `workspace/models/milky-way/` | 银河系模型索引 |
 | `workspace/code/production/` | 当前生产分析代码；本地为服务器源码镜像 |
 | `workspace/code/github/` | 独立 GitHub 工作副本 |
@@ -67,13 +78,10 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 
 ## 连接与配置
 
-配置集中在 `workflow.json`，不保存密码。当前 SSH 连接复用 `/tmp/fornax-mesopsl-v2.sock`。若连接过期，在本机终端执行并在终端内输入密码：
-
-```bash
-ssh -M -S /tmp/fornax-mesopsl-v2.sock -o ControlPersist=1h -o ProxyJump=xhuang@rubicon.obspm.fr xhuang@mesopsl
-```
-
-保持该终端连接，另一个终端执行工作流命令。服务器侧 Python 和 ffmpeg 使用已有 module 环境；没有修改服务器 home、系统安装或调度器配置。
+配置集中在 `workflow.json`，不保存密码。`remote.proxy_jump` 指定跳板，公钥授权并
+在 ssh-agent 中解锁后，工作流可直接连接；已验证无需保留 Tabby 或临时共享连接。
+现有 `control_socket` 仅在对应 socket 可用时复用，失效时使用正常公钥连接。
+服务器使用既有 module 环境。服务器修改范围限定为配置的 data 根目录。
 
 ## GitHub、源码同步与发布
 
@@ -173,7 +181,8 @@ python3 workflow.py remote simulate Fornax9001 --name sim9001-run --launcher sub
 
 本机 `simulation` Conda 环境已有 AGAMA，当前默认 Python 未安装该模块。`workflow.json` 的 `ic_python` 指定建模解释器，也可用 `--python` 显式覆盖。统一建模入口会拒绝已有输出目录，冻结输入参数、记录随机种子和求解器 SHA256，生成独立粒子 IC；不会把粒子数据推入 GitHub：
 
-IC 在独立的 `model/IsolationModel/Fornax/` 工作区生成，不再放在分析目录内。
+参数与生成工具在 `model/IsolationModel/Fornax/`；粒子 IC 统一生成到
+`model/Fornax/<模型名>/ic/<运行名>/`，与同模型的 isolation 和正式模拟归在一起。
 在分析目录的 `workflow.json` 配置 `ic.root` 和 `ic.repository`，二者均为
 `../IsolationModel/Fornax`；在 IC 工作区配置为 `.`，`github.checkout` 为 `.`。
 `ic_python` 指向安装了 AGAMA 的 Python。路径相对于各自工作区，服务器需要单独配置到 data/ 内。
@@ -182,8 +191,8 @@ IC 在独立的 `model/IsolationModel/Fornax/` 工作区生成，不再放在分
 IsolationModel/Fornax/
   IniFile/              # 已确认的参数；原有文件保留
   drafts/               # new-ini 产生的参数草稿
-  generated/<运行名>/   # 新生成的 IC、冻结参数、日志和回执
-  Fornax*/              # 原来的模型及图像，不移动、不覆盖
+  generated/<旧运行名>/ # 兼容旧 IC 运行，新任务写入模型目录
+  Fornax2047+/          # 指向统一模型内历史目录的兼容链接
   IC_MODELS.csv         # 自动维护并同步 GitHub 的参数总表
   local_tools/ic_generation/  # 版本化生成程序
 ```
@@ -320,7 +329,10 @@ python3 ~/data/workflow_archive.py --root ~/data --plan ~/data/observer_review_d
 新入口把本地 AGAMA 生成、总表同步、粒子与参数校验上传、服务器 case 准备、IC 格式转换、
 Slurm 提交和结束时间检查串起来。服务器首次需要配置 `isolation_profiles.default`；
 配置必须从实际可用的隔离模板和启动脚本核对，不能猜测转换器参数或复制周期边界求解器。
-当前实现的本地集成测试通过；本次会话 SSH 连接失效，服务器配置与真实 Slurm 实测尚未完成。
+服务器已配置 default 和 smoke 两套 profile。default 沿用隔离模板与 astro_thin 的
+24 进程、99 小时配置。smoke 使用 mesopsl1 的 4 进程、8 分钟上限及短积分参数。
+真实端到端测试作业 236569 已完成：1536 粒子、3 个快照、最终时间 1e-5，重复命令仍返回
+原 JobID。总表自动提交为 ae63a71；这验证传输、转换和短时积分，不替代长期稳定性检查。
 
 在分析工作区或 IC 工作区使用：
 
@@ -329,7 +341,7 @@ Slurm 提交和结束时间检查串起来。服务器首次需要配置 `isolat
 python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --dry-run
 # 一条命令：生成 -> 登记总表 -> 校验上传 -> 提交隔离模拟
 python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --submit
-# 使用 generated/ 中已完成的 IC，不重复计算
+# 复用模型 ic/ 中已完成的 IC（兼容旧 generated/），不重复计算
 python3 workflow.py isolation Fornax7003 --ic-run Fornax7003-v1 --name Fornax7003-iso-v2 --submit
 python3 workflow.py isolation-status --name Fornax7003-iso-v1
 ```
@@ -341,8 +353,8 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 提交响应不确定时停止盲目重试，需要先核对 Slurm，防止产生两个同时写入同一目录的作业。
 失败/取消任务的重启不是这个命令的隐式行为，需要检查后使用新的运行名或既有重启流程。
 
-本地回执在 IC 工作区的 `jobs/<name>/`，服务器输出在
-`data/workspace/models/isolation/<name>/`。`isolation-status` 读取服务器保存的状态；
+本地回执在 `<模型名>/isolation/<name>/client/`，服务器输出在
+`data/<模型名>/isolation/<name>/`。`isolation-status` 读取服务器保存的状态；
 如果 Slurm 在启动前取消作业或强制杀死进程，应根据回执中的 JobID 查 `sacct`，因为进程可能
 没有机会更新状态。生成、转换、求解日志分别保留。最后快照必须达到 `TimeMax` 才标记完成；
 这不代替平衡性、收敛性或科学结果检查。服务器执行验证的 Python 需要 h5py。
@@ -353,7 +365,7 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 - `converter` / `solver`：根据既有可运行脚本填写的命令参数数组。占位符有 `{ascii}`、
   `{binary}`（预期 `Fornax.IC_000`）、`{prefix}`（Fornax 路径前缀）、`{parameters}`。
 - `setup`：既有模块加载命令，写入作业脚本；`python` 指定支持 h5py 的 Python。
-- `sbatch`：资源配置，可用 partition、account、nodes、ntasks、cpus-per-task、time、mem、constraint。
+- `sbatch`：资源配置，可用 clusters、qos、partition、account、nodes、ntasks、cpus-per-task、time、mem、constraint。
 - `parameter_overrides`：明确指定的参数覆盖；默认保留模板物理参数。输入和输出路径自动重写，
   `ResubmitOn` 置零，由本流程负责记录提交，避免旧脚本自动重提绕开防重复保护。
 
