@@ -34,7 +34,7 @@ def build_ic(args):
         raise ValueError(f'Missing versioned IC builder: {builder}')
     python = args.python or runtime.config(args.root).get('ic_python') or sys.executable
     return subprocess.run([python, str(builder), '--ini', str(source), '--output', str(destination),
-                           '--threads', str(args.threads), '--seed', str(args.seed),
+                           '--model', model, '--threads', str(args.threads), '--seed', str(args.seed),
                            '--catalog-repo', str(repo)]).returncode
 
 

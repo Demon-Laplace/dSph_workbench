@@ -411,3 +411,51 @@ sbatch subchecdensity.sh
 现有用户 `.sh` 未经明确要求不得改写、移动或替换。新 isolation 继续使用前述
 `workflow.py isolation ... --submit` 自动流程，不需要手动向每个模型复制检查脚本。
 历史公共代码不覆盖已冻结运行内的代码或启动文件。
+
+## 带编号 IC、批量上传和精简的手动模板
+
+新 `build-ic` 导出的粒子文件为 `<模型>/ic/<运行名>/<模型>.ini`，例如
+`Fornax7003/ic/ic-v2/Fornax7003.ini`；同目录 `Fornax.ini` 是兼容链接，不占一份
+重复粒子数据。`parameters.ini` 是 AGAMA 参数，与粒子 INI 不同。旧 IC 不改名。
+
+推荐从本地分析工作区使用以下命令；一次可列出多个模型：
+
+```bash
+# 只读预览
+python3 workflow.py isolation Fornax7003 Fornax7004 --name iso-v2 --dry-run
+# 自动生成、合并成分、登记总表、校验上传、转换 IC、准备 TREECOOL 和提交
+python3 workflow.py isolation Fornax7003 Fornax7004 --name iso-v2 --submit
+# 两个模型各自复用 ic/ic-v2 中的 IC
+python3 workflow.py isolation Fornax7003 Fornax7004 --ic-run ic-v2 --name iso-v2 --submit
+```
+
+模型逐个处理，遇到失败停止；重复命令会复用已成功的模型，不重复提交。
+每个模型有自己的目录和请求清单，编号、源参数及粒子哈希同时检查，不靠拖拽同名
+文件选择目标。服务器内部仍使用 `Fornax.ini`、`Fornax.IC_000`，转换器无需改名。
+默认与 smoke profile 要求 `TREECOOL` 存在，并复制为实际文件、纳入输入校验。
+
+如果保留手动上传习惯，服务器 `isoFornax/Fornax/` 是精简模板：14 个 `.py` 已归档。
+**仍需复制 `GZWJL.PARAM`**，另按需选择模拟或检查的 `.sh`；不用复制 Python、
+`mkic5.sh` 或 cooling 链接。以新编号为例，在服务器上：
+
+```bash
+cd ~/data/isoFornax
+mkdir Fornax9001
+cp Fornax/GZWJL.PARAM Fornax/subastrothin.sh Fornax/subchecdensity.sh Fornax9001/
+# 从本地上传对应的 Fornax9001.ini 到这个目录后：
+cd Fornax9001
+sbatch subastrothin.sh
+# 模拟完成后按需检查：
+sbatch subchecdensity.sh
+```
+
+模板的 `subastrothin.sh` / `submeso1.sh` 在计算节点先执行公共 `prepare-legacy`
+入口，再执行原求解器。它检查编号、自动建立 `Fornax.ini` 兼容入口，复制 `TREECOOL`，
+转换到 `Fornax.IC_000`，记录哈希；重复准备不重复转换。有快照、已有无回执二进制 IC、
+混入其他模型 INI 或输入改变时停止，避免覆盖。此入口用于新建模型，不是旧模拟重启命令。
+三个检查模板直接调用 `isoFornax/python/check_density_profile.py`。
+
+此次仅修改无编号模板中的 `subastrothin.sh`、`submeso1.sh`、`subCheckIC.sh`、
+`subCheckIC_hi.sh`、`subchecdensity.sh`，保留原 Slurm 资源和求解器命令。
+已有编号模型及冻结运行的 `.sh` 不改动；旧模板和 Python 备份位于
+`observer_review_delete_20261006/isolation-template-20261013/`。

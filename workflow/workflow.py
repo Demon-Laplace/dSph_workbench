@@ -166,7 +166,7 @@ def main():
     parser.add_argument("--repo", type=Path, help="dSph_workbench checkout (default: ROOT/tools/dSph_workbench)")
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser('isolation', help='generate/reuse IC, verify transfer, prepare and optionally submit isolation')
-    p.add_argument('model', help='e.g. Fornax7003')
+    p.add_argument('model', nargs='+', help='one or more model IDs, e.g. Fornax7003 Fornax7004')
     p.add_argument('--name', required=True, help='unique run name, reused for retries')
     p.add_argument('--ic-run', help='reuse a completed model ic/ run (legacy generated/ is also supported)')
     p.add_argument('--profile', default='default', help='server isolation profile')

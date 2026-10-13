@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-13",
+  "scope": "new isolation workflow and unnumbered server template",
+  "new_export": "<model>/ic/<run>/<model>.ini",
+  "compatibility_link": "Fornax.ini",
+  "batch_models": true,
+  "manual_template_python_archived": 14,
+  "modified_shells": [
+    "isoFornax/Fornax/subastrothin.sh",
+    "isoFornax/Fornax/submeso1.sh",
+    "isoFornax/Fornax/subCheckIC.sh",
+    "isoFornax/Fornax/subCheckIC_hi.sh",
+    "isoFornax/Fornax/subchecdensity.sh"
+  ],
+  "shell_resources_and_solver_commands_preserved": true,
+  "numbered_model_shells_modified": false,
+  "validation": {
+    "tests_passed": 37,
+    "actual_converter_particle_counts": [
+      512,
+      0,
+      1024,
+      0,
+      0,
+      0
+    ],
+    "binary_matches_previous_validated_ic": true,
+    "binary_sha256": "7e3bfd391a3dd5b5363644619dbabd91cbb93b0bf00b82443ec374bd4abedeb1",
+    "conversion_repeat_preserves_binary": true,
+    "broken_cooling_link_replaced_with_regular_file": true,
+    "real_upload_and_slurm_preflight": "passed",
+    "new_simulation_submitted": false
+  },
+  "archive": "observer_review_delete_20261006/isolation-template-20261013",
+  "receipts": "workspace/review/isolation-template-20261013"
+}

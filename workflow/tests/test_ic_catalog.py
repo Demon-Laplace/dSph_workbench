@@ -156,6 +156,35 @@ class ICCatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             models.build_ic(args)
 
+    @unittest.skipUnless(importlib.util.find_spec('numpy'), 'numpy required for particle export fixture')
+    def test_numbered_particle_export_retains_legacy_name(self):
+        import numpy as np
+        import sys
+        builder_spec = importlib.util.spec_from_file_location('ic_builder', SOURCE.with_name('build_ic.py'))
+        builder = importlib.util.module_from_spec(builder_spec)
+        with patch.dict(sys.modules, catalog=catalog):
+            builder_spec.loader.exec_module(builder)
+        source = self.root / 'IC_Fornax9001.ini'
+        source.write_text(INI)
+        output = self.root / 'numbered-export'
+        def worker(*args, **kwargs):
+            for group, count in [('gas', 2), ('stellar', 3)]:
+                data = np.zeros((count, 7))
+                data[:, 6] = 0.01
+                np.savetxt(Path(kwargs['cwd']) / ('model_component_' + group + '.nbody'), data)
+        argv = ['build_ic.py', '--ini', str(source), '--output', str(output)]
+        original_find = importlib.util.find_spec
+        with patch.object(sys, 'argv', argv), patch.object(builder.subprocess, 'run', side_effect=worker), \
+             patch.object(builder.catalog, 'register'), \
+             patch.object(builder.importlib.util, 'find_spec', side_effect=lambda name: True if name == 'agama' else original_find(name)):
+            self.assertEqual(builder.main(), 0)
+        self.assertTrue((output / 'Fornax.ini').is_symlink())
+        self.assertEqual((output / 'Fornax.ini').resolve(), output / 'Fornax9001.ini')
+        manifest = json.loads((output / 'build.json').read_text())
+        self.assertEqual(manifest['particle_ic'], 'Fornax9001.ini')
+        self.assertEqual(manifest['particle_sha256'], catalog.sha(output / 'Fornax.ini'))
+        self.assertEqual(np.loadtxt(output / 'Fornax9001.ini', skiprows=1).shape, (5, 10))
+
 
 if __name__ == '__main__':
     unittest.main()

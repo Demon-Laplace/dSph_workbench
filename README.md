@@ -29,6 +29,8 @@ isolation run. Full-scale, long-duration stability still needs scientific valida
 
 [IC model catalogue](IC_MODELS.csv) lists historical parameter summaries and
 verified new builds. Local ICs live under each model’s `ic/` directory alongside isolation receipts.
+New particle exports use the model ID (e.g. `Fornax7003.ini`) with a local
+`Fornax.ini` compatibility link. Isolation accepts multiple model IDs per command.
 Server isolation stays separate under `isoFornax/<model>/runs/<run>/`;
 every successful build automatically records and pushes its catalogue row.
 See the workflow guide for layout, batch commands and synchronization retries.

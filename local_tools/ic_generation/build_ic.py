@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -30,11 +31,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ini', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--model', help='model ID used for the exported particle filename')
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     source, output = args.ini.resolve(), args.output.absolute()
+    model = args.model or source.stem.removeprefix('IC_')
+    if not re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model):
+        parser.error('Use --model with a full model ID')
     if not source.is_file() or output.exists() or output.is_symlink():
         parser.error('INI must exist and output must be a new directory; overwriting is forbidden')
     if args.threads < 1 or not 0 <= args.seed < 2**31:
@@ -85,11 +90,13 @@ def main():
             # Match the existing funcini exporter: DM temp=1, gas/stars temp=0.
             arrays.append(np.column_stack((data, np.full(len(data), int(kind == 1)), np.full(len(data), kind))))
         data = np.vstack(arrays)
-        destination = output / 'Fornax.ini'
+        destination = output / (model + '.ini')
         with destination.open('w') as stream:
             stream.write(' '.join(map(str, counts)) + '\n')
             np.savetxt(stream, np.column_stack((np.arange(len(data)), data)),
                        fmt=['%d'] + ['%.17g'] * 7 + ['%d', '%d'])
+        # Keep the historical converter input name without duplicating particle data.
+        (output / 'Fornax.ini').symlink_to(destination.name)
         manifest.update(state='complete', generated_utc=datetime.now(timezone.utc).isoformat(),
                         counts=counts, component_masses=masses,
                         particle_ic=destination.name,

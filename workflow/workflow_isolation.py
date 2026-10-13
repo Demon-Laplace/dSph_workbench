@@ -148,6 +148,8 @@ def receive(root, stage, submit=False):
                 values.update(InitCondFile=str(run / 'Fornax.IC_000'), OutputDir=str(run / 'output'), ResubmitOn='0')
                 rewrite_parameters(template / 'GZWJL.PARAM', prepared / 'GZWJL.PARAM', values)
                 cooling = template / 'TREECOOL'
+                if settings.get('cooling_required') and not cooling.is_file():
+                    raise ValueError('Missing required TREECOOL in isolation template')
                 if cooling.is_file():
                     shutil.copy2(cooling, prepared / 'TREECOOL')
                 (prepared / 'output').mkdir()
@@ -238,6 +240,80 @@ def run_job(root, name, model=None):
     runtime.write_json(run / 'status.json', status)
 
 
+def prepare_legacy(root, directory, profile_name='default'):
+    """Prepare a new, manually created flat isolation model; never overwrite data."""
+    root = root.resolve()
+    run = runtime.confined(root, directory.resolve())
+    base = runtime.confined(root, root / runtime.config(root).get('isolation_root', 'isoFornax'))
+    if run.parent != base or not re.fullmatch(r'Fornax\d+[A-Za-z0-9_.-]*', run.name):
+        raise ValueError('Manual preparation requires isoFornax/FornaxNUMBER as working directory')
+    settings = profile(root, profile_name)
+    cooling = Path(settings['template']) / 'TREECOOL'
+    if not cooling.is_file():
+        raise ValueError('Missing TREECOOL in configured isolation template')
+    source = run / (run.name + '.ini')
+    if not source.is_file() or source.resolve().parent != run:
+        raise ValueError(f'Upload the numbered particle file {source.name} into {run.name}')
+    other = [p.name for p in run.glob('Fornax*.ini') if p.name not in (source.name, 'Fornax.ini')]
+    if other:
+        raise ValueError('Other model ICs found; reconcile before conversion: ' + ', '.join(other))
+    parameters = {}
+    for line in (run / 'GZWJL.PARAM').read_text().splitlines():
+        fields = line.split('%', 1)[0].split()
+        if len(fields) >= 2:
+            parameters[fields[0]] = fields[1]
+    if (run / parameters.get('InitCondFile', '')).resolve() != run / 'Fornax.IC_000':
+        raise ValueError('GZWJL.PARAM must use Fornax.IC_000 for this workflow')
+    output = runtime.confined(run, run / parameters['OutputDir'])
+    if (output.exists() and any(output.iterdir())) or any(run.glob('snapshot*.hdf5')):
+        raise ValueError('Model already has simulation output; preparation refused')
+    lock = runtime.confined(run, run / '.prepare-ic.lock')
+    with lock.open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        identity = {'model': run.name, 'input': source.name, 'input_sha256': sha(source),
+                    'converter': settings['converter'], 'cooling_sha256': sha(cooling)}
+        record = run / 'ic-prepared.json'
+        binary = run / 'Fornax.IC_000'
+        alias = run / 'Fornax.ini'
+        tree = run / 'TREECOOL'
+        for path in (record, binary):
+            if path.is_symlink():
+                raise ValueError(f'Refusing symlink: {path.name}')
+        if record.exists():
+            saved = json.loads(record.read_text())
+            if any(saved.get(k) != v for k, v in identity.items()) or not binary.is_file() or sha(binary) != saved['binary_sha256']:
+                raise ValueError('Prepared IC/configuration changed; use a new model/run')
+        elif binary.exists():
+            raise ValueError('Existing binary IC has no preparation receipt; refusing to overwrite')
+        if alias.exists() or alias.is_symlink():
+            if not alias.is_file() or alias.resolve().parent != run or sha(alias) != identity['input_sha256']:
+                raise ValueError('Fornax.ini disagrees with numbered model input')
+        if tree.exists() and (not tree.is_file() or sha(tree) != identity['cooling_sha256']):
+            raise ValueError('Existing TREECOOL differs from configured template')
+        if not alias.exists():
+            alias.symlink_to(source.name)
+        if not tree.exists() or tree.is_symlink():
+            # Resolve the original table into a real file; copied models need no relinking.
+            temporary_tree = run / '.TREECOOL.preparing'
+            with temporary_tree.open('xb') as target, cooling.open('rb') as src:
+                shutil.copyfileobj(src, target)
+            os.replace(temporary_tree, tree)
+        if not record.exists():
+            with tempfile.TemporaryDirectory(prefix='.ic-convert-', dir=run) as temporary:
+                converted = Path(temporary) / 'Fornax.IC_000'
+                substitutions = {'ascii': str(source), 'binary': str(converted),
+                                 'prefix': str(Path(temporary) / 'Fornax'), 'parameters': str(run / 'GZWJL.PARAM')}
+                command = [arg.format(**substitutions) for arg in settings['converter']]
+                with (run / 'converter.log').open('w') as log:
+                    subprocess.run(command, cwd=run, check=True, stdout=log, stderr=subprocess.STDOUT)
+                if not converted.is_file() or not converted.stat().st_size:
+                    raise ValueError('Converter did not produce a nonempty IC')
+                converted.rename(binary)
+            runtime.write_json(record, {**identity, 'binary_sha256': sha(binary), 'created_utc': runtime.now()})
+        output.mkdir(exist_ok=True)
+        return {'state': 'prepared', 'model': run.name, 'directory': str(run), 'input': source.name}
+
+
 def remote_exec(args, command, capture=False):
     import workflow_management as management
     settings, ssh = management.ssh_config(args)
@@ -247,6 +323,20 @@ def remote_exec(args, command, capture=False):
 
 
 def pipeline(args):
+    import workflow_models as models
+    selected = [args.model] if isinstance(args.model, str) else args.model
+    if len(set(selected)) != len(selected):
+        raise ValueError('Duplicate models in isolation batch')
+    for model in selected:
+        models.model_name(model)
+    for model in selected:
+        result = pipeline_one(SimpleNamespace(**{**vars(args), 'model': model}))
+        if result:
+            return result
+    return 0
+
+
+def pipeline_one(args):
     import workflow_models as models
     import workflow_management as management
     root, _ = models.ic_paths(args)
@@ -315,7 +405,7 @@ def pipeline(args):
             print(json.dumps(status, indent=2))
             return 0
         # Unique staging avoids modifying a previously submitted run on retries.
-        remote_stage = remote['root'] + '/workspace/transfers/isolation/' + args.name + '-' + uuid.uuid4().hex[:12]
+        remote_stage = remote['root'] + '/workspace/transfers/isolation/' + args.model + '-' + args.name + '-' + uuid.uuid4().hex[:12]
         create = ('from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
                   'p=Path(' + repr(remote_stage) + '); assert p.resolve().is_relative_to(r); '
                   'p.mkdir(parents=True,exist_ok=False)')
@@ -356,14 +446,18 @@ def status(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'status'))
+    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'status', 'prepare-legacy'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path)
+    parser.add_argument('--directory', type=Path, default=Path.cwd())
+    parser.add_argument('--profile', default='default')
     parser.add_argument('--name')
     parser.add_argument('--model')
     parser.add_argument('--submit', action='store_true')
     args = parser.parse_args()
-    if args.operation == 'receive':
+    if args.operation == 'prepare-legacy':
+        print(json.dumps(prepare_legacy(args.root.resolve(), args.directory, args.profile)))
+    elif args.operation == 'receive':
         print(json.dumps(receive(args.root.resolve(), args.stage, args.submit)))
     elif args.operation == 'run-job':
         run_job(args.root.resolve(), args.name, args.model)

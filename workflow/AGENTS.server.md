@@ -35,3 +35,11 @@ workflow/isolation_python/. Model .py compatibility links preserve existing .sh
 commands. Preserve isoFornax/python/ at this depth: the density script derives
 its workspace paths from __file__. Do not mix these with a different analysis
 version or edit scientific behavior as part of file organization.
+
+The user explicitly authorized adapting the unnumbered isolation template on
+2026-10-13. Its five versioned sub*.sh launchers now call shared Python and
+prepare-legacy. This exception does not authorize changing existing numbered
+models' shells or frozen run.sh files. Future template changes still require
+explicit user authorization. Template Python duplicates are archived; do not
+reintroduce per-model copies. TREECOOL is materialized from the configured
+template, and new manual inputs must be named after their model directory.

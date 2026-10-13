@@ -162,6 +162,70 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(receipt['job_id'], '45678')
         self.assertEqual((self.root / 'isoFornax/Fornax7003/runs/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
 
+    def test_cooling_is_materialized_and_required_table_cannot_disappear(self):
+        table = self.root / 'table'
+        table.write_text('cooling data')
+        (self.root / 'template/TREECOOL').symlink_to(table)
+        self.receive()
+        self.assertFalse((self.run / 'TREECOOL').is_symlink())
+        self.assertEqual((self.run / 'TREECOOL').read_text(), 'cooling data')
+        isolation.verify_case(self.run)
+        shutil.rmtree(self.run)
+        table.unlink()
+        config = json.loads((self.root / 'workflow.json').read_text())
+        config['isolation_profiles']['default']['cooling_required'] = True
+        runtime.write_json(self.root / 'workflow.json', config)
+        with self.assertRaisesRegex(ValueError, 'TREECOOL'):
+            self.receive()
+        self.assertFalse(self.run.exists())
+
+    def manual_model(self, name='Fornax9001'):
+        model = self.root / 'isoFornax' / name
+        model.mkdir(parents=True)
+        (model / (name + '.ini')).write_text('numbered particle fixture ' + name)
+        (model / 'GZWJL.PARAM').write_text('InitCondFile ./Fornax.IC_000\nOutputDir ./output\n')
+        (self.root / 'template/TREECOOL').write_text('cooling table')
+        return model
+
+    def test_manual_numbered_ic_conversion_and_cooling_are_idempotent(self):
+        model = self.manual_model()
+        (model / 'TREECOOL').symlink_to('broken-old-link')
+        result = isolation.prepare_legacy(self.root, model)
+        binary = model / 'Fornax.IC_000'
+        original = binary.stat().st_mtime_ns
+        self.assertEqual(result['state'], 'prepared')
+        self.assertEqual((model / 'Fornax.ini').resolve(), model / 'Fornax9001.ini')
+        self.assertFalse((model / 'TREECOOL').is_symlink())
+        isolation.prepare_legacy(self.root, model)
+        self.assertEqual(binary.stat().st_mtime_ns, original)
+        (model / 'Fornax9001.ini').write_text('changed input')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            isolation.prepare_legacy(self.root, model)
+        self.assertEqual(binary.stat().st_mtime_ns, original)
+
+    def test_manual_wrong_model_and_existing_binary_are_refused(self):
+        model = self.manual_model()
+        (model / 'Fornax9001.ini').rename(model / 'Fornax9002.ini')
+        with self.assertRaisesRegex(ValueError, 'numbered'):
+            isolation.prepare_legacy(self.root, model)
+        self.assertFalse((model / 'Fornax.IC_000').exists())
+        (model / 'Fornax9002.ini').rename(model / 'Fornax9001.ini')
+        (model / 'Fornax.IC_000').write_bytes(b'keep original')
+        with self.assertRaisesRegex(ValueError, 'refusing to overwrite'):
+            isolation.prepare_legacy(self.root, model)
+        self.assertEqual((model / 'Fornax.IC_000').read_bytes(), b'keep original')
+
+    def test_batch_keeps_model_identity_and_stops_at_first_failure(self):
+        args = SimpleNamespace(model=['Fornax9001', 'Fornax9002', 'Fornax9003'])
+        with patch.object(isolation, 'pipeline_one', side_effect=[0, 3]) as one:
+            self.assertEqual(isolation.pipeline(args), 3)
+            self.assertEqual([c.args[0].model for c in one.call_args_list], ['Fornax9001', 'Fornax9002'])
+        args.model = ['Fornax9001', 'Fornax9001']
+        with patch.object(isolation, 'pipeline_one') as one:
+            with self.assertRaisesRegex(ValueError, 'Duplicate'):
+                isolation.pipeline(args)
+            one.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
