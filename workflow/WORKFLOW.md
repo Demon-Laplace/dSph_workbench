@@ -461,3 +461,23 @@ sbatch subchecdensity.sh
 `subCheckIC_hi.sh`、`subchecdensity.sh`，保留原 Slurm 资源和求解器命令。
 已有编号模型及冻结运行的 `.sh` 不改动；旧模板和 Python 备份位于
 `observer_review_delete_20261006/isolation-template-20261013/`。
+
+### Reuse an IC generated before the workflow receipts existed
+
+From the local model workspace, validate and upload existing particle files without
+regenerating AGAMA models:
+
+```bash
+python3 workflow.py isolation Fornax7002 Fornax7003 --existing --name fd25-20261013 --profile fd25-paf35
+# After inspecting the prepared server cases, repeat with --submit.
+```
+
+`--existing` reads each model's `isolation/Fornax.ini` and frozen
+`isolation/IC_<model>.ini`. It checks every particle row, finite values, unique IDs,
+counts and component masses, pins the SHA256 values, and syncs the validated entry
+to the GitHub IC catalogue. Historical generation time and seed remain unknown.
+Receipts are kept in `workspace/receipts/isolation/<model>/<run>/`.
+The named profile must exist in the server configuration; this example uses
+`timescale_fd=24.9`, `PartAllocFactor=3.5`, and `BufferSize=120`.
+Changed inputs or parameters require a new run name; repeating a submitted run
+returns its original job ID instead of submitting a duplicate.

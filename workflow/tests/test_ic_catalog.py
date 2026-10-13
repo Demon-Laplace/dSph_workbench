@@ -138,6 +138,27 @@ class ICCatalogTests(unittest.TestCase):
             catalog.register(run, self.repo)
         self.assertFalse((self.repo / catalog.TABLE).exists())
 
+    def test_existing_ic_validates_full_data_and_rejects_corruption(self):
+        directory = self.root / 'existing'
+        directory.mkdir()
+        (directory / 'IC_Fornax7003.ini').write_text(INI)
+        particle = directory / 'Fornax.ini'
+        lines = ['2 0 3 0'] + [f'{i} 0 0 0 0 0 0 {mass} 0 {kind}'
+                 for i, (mass, kind) in enumerate([(0.0065, 0)] * 2 + [(0.002, 2)] * 3)]
+        particle.write_text('\n'.join(lines) + '\n')
+        row, checked = catalog.validated_existing_row(directory, 'Fornax7003')
+        self.assertEqual(checked['counts'], [2, 0, 3, 0])
+        self.assertEqual(row['particle_sha256'], catalog.sha(particle))
+        self.assertEqual(row['status'], 'validated_existing_ic')
+        self.assertEqual(row['seed'], '')
+        for bad in (lines[:-1], lines[:2] + [lines[1]] + lines[3:],
+                    [line.replace('0.0065', 'nan') for line in lines],
+                    [line.replace('0.0065', '0.009') for line in lines]):
+            with self.subTest(bad=bad):
+                particle.write_text('\n'.join(bad) + '\n')
+                with self.assertRaises(ValueError):
+                    catalog.validated_existing_row(directory, 'Fornax7003')
+
     def test_workflow_unifies_model_outputs_and_refuses_escape(self):
         analysis = self.root / 'analysis'
         analysis.mkdir()

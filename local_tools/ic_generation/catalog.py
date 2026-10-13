@@ -1,4 +1,5 @@
 """Small, versioned IC parameter catalogue. Particle data never enter Git."""
+from datetime import datetime, timezone
 import configparser
 import csv
 import fcntl
@@ -94,6 +95,41 @@ def historical_rows(root):
         current.update(status='parameters_only', record_id='parameters:' + model)
         rows.append(current)
     return rows
+
+
+def validated_existing_row(directory, model):
+    """Validate a pre-workflow ASCII IC without claiming it was newly generated."""
+    directory = Path(directory)
+    params, particle = directory / ('IC_' + model + '.ini'), directory / 'Fornax.ini'
+    row = parameters(params, model)
+    counts, masses, ids = [0] * 4, [0.] * 4, set()
+    digest = hashlib.sha256()
+    with particle.open('rb') as stream:
+        header = stream.readline(); digest.update(header)
+        expected = [int(n) for n in header.split()]
+        if len(expected) != 4 or min(expected) < 0 or not sum(expected):
+            raise ValueError('Invalid particle-count header')
+        for number, line in enumerate(stream, 2):
+            digest.update(line)
+            fields = line.split()
+            if len(fields) != 10:
+                raise ValueError(f'Invalid particle row {number}')
+            ident, kind = int(fields[0]), int(fields[9])
+            values = [float(x) for x in fields[1:9]]
+            if ident < 0 or ident in ids or not 0 <= kind < 4 or not all(map(math.isfinite, values)) or values[6] <= 0:
+                raise ValueError(f'Invalid particle values/ID/type at row {number}')
+            ids.add(ident); counts[kind] += 1; masses[kind] += values[6]
+    if counts != expected:
+        raise ValueError('Particle counts disagree with header')
+    for kind, group in [(0, 'gas'), (2, 'stellar')]:
+        if counts[kind] != int(row[group + '_particles']):
+            raise ValueError('Particle counts disagree with frozen model parameters')
+        if not math.isclose(masses[kind] * 1e10, float(row[group + '_mass_Msun']), rel_tol=1e-3, abs_tol=1e-6):
+            raise ValueError('Particle masses disagree with frozen model parameters')
+    row.update(status='validated_existing_ic', run='existing', particle_sha256=digest.hexdigest(),
+               record_id='existing:' + model + ':' + row['parameter_sha256'] + ':' + digest.hexdigest())
+    return row, {'counts': counts, 'component_masses_Msun': [value * 1e10 for value in masses],
+                 'finite_values': True, 'unique_ids': True, 'validation_utc': datetime.now(timezone.utc).isoformat()}
 
 
 def generated_row(directory):

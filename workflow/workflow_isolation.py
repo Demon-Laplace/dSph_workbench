@@ -345,10 +345,14 @@ def client_directory(root, model, name):
 def pipeline_one(args):
     import workflow_models as models
     import workflow_management as management
-    root, _ = models.ic_paths(args)
+    root, catalog_repo = models.ic_paths(args)
     models.model_name(args.model)
     runtime.label(args.name)
     remote = runtime.config(args.root)['remote']
+    if getattr(args, 'existing', False) and args.dry_run:
+        print(f'Existing IC: {runtime.model_directory(args.root, args.model) / "isolation/Fornax.ini"} (validate; do not generate)\n'
+              f'Server: {remote["root"]}/{remote.get("isolation_root", "isoFornax")}/{args.model}/runs/{args.name}; submit={args.submit}')
+        return 0
     if args.dry_run:
         print(f'IC: {models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)}\n'
               f'Server: {remote["root"]}/{remote.get("isolation_root", "isoFornax")}/{args.model}/runs/{args.name}\n'
@@ -366,26 +370,46 @@ def pipeline_one(args):
                  's=json.loads((p/"workflow.json").read_text()); '
                  'assert ' + repr(args.profile) + ' in s.get("isolation_profiles",{}), "Configure the server isolation profile first"')
         remote_exec(args, ['python3', '-c', probe])
-        run = models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)
-        if not run.exists():
-            if args.ic_run:
-                raise ValueError('Requested existing IC run does not exist')
-            result = models.build_ic(SimpleNamespace(**{**vars(args), 'ini': None}))
-            if result:
-                return result
-        receipt = json.loads((run / 'build.json').read_text())
-        if receipt['state'] != 'complete' or Path(receipt['source_ini']).stem != 'IC_' + args.model:
-            raise ValueError('Existing run is incomplete or belongs to a different model')
-        if sha(run / 'parameters.ini') != receipt['ini_sha256'] or sha(run / 'Fornax.ini') != receipt['particle_sha256']:
-            raise ValueError('IC data changed after generation')
-        if not args.ic_run:
-            current = root / 'IniFile' / ('IC_' + args.model + '.ini')
-            if sha(current) != receipt['ini_sha256'] or receipt['seed'] != args.seed:
-                raise ValueError('Parameters or seed changed; choose a new run name')
-        if receipt.get('catalog_sync', {}).get('state') != 'pushed':
-            result = models.ic_catalog(SimpleNamespace(**{**vars(args), 'run': run.name}))
-            if result:
-                return result
+        if getattr(args, 'existing', False):
+            import importlib.util
+            module_path = args.repo / 'local_tools/ic_generation/catalog.py'
+            spec = importlib.util.spec_from_file_location('existing_ic_catalog', module_path)
+            catalog = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(catalog)
+            run = model_root / 'isolation'
+            row, validation = catalog.validated_existing_row(run, args.model)
+            saved_input = local / 'existing-ic.json'
+            receipt = {'state': 'validated_existing', 'build_id': row['record_id'],
+                       'ini_sha256': row['parameter_sha256'], 'particle_sha256': row['particle_sha256']}
+            if saved_input.exists() and json.loads(saved_input.read_text())['identity'] != receipt:
+                raise ValueError('Existing IC changed since this run was prepared; choose a new run name')
+            catalog.update(catalog_repo, [row])
+            runtime.write_json(saved_input, {'identity': receipt, 'validation': validation,
+                               'catalog_commit': catalog.git(catalog_repo, 'rev-parse', 'HEAD')})
+            input_paths = {'Fornax.ini': run / 'Fornax.ini', 'parameters.ini': run / ('IC_' + args.model + '.ini')}
+            print(f"{args.model}: existing IC validated ({sum(validation['counts'])} particles); SHA256 {receipt['particle_sha256']}", flush=True)
+        else:
+            run = models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)
+            if not run.exists():
+                if args.ic_run:
+                    raise ValueError('Requested existing IC run does not exist')
+                result = models.build_ic(SimpleNamespace(**{**vars(args), 'ini': None}))
+                if result:
+                    return result
+            receipt = json.loads((run / 'build.json').read_text())
+            if receipt['state'] != 'complete' or Path(receipt['source_ini']).stem != 'IC_' + args.model:
+                raise ValueError('Existing run is incomplete or belongs to a different model')
+            if sha(run / 'parameters.ini') != receipt['ini_sha256'] or sha(run / 'Fornax.ini') != receipt['particle_sha256']:
+                raise ValueError('IC data changed after generation')
+            if not args.ic_run:
+                current = root / 'IniFile' / ('IC_' + args.model + '.ini')
+                if sha(current) != receipt['ini_sha256'] or receipt['seed'] != args.seed:
+                    raise ValueError('Parameters or seed changed; choose a new run name')
+            if receipt.get('catalog_sync', {}).get('state') != 'pushed':
+                result = models.ic_catalog(SimpleNamespace(**{**vars(args), 'run': run.name}))
+                if result:
+                    return result
+            input_paths = {name: run / name for name in ('Fornax.ini', 'parameters.ini')}
         request = {'name': args.name, 'model': args.model, 'profile': args.profile,
                    'build_id': receipt.get('build_id', run.name),
                    'files': {'Fornax.ini': receipt['particle_sha256'], 'parameters.ini': receipt['ini_sha256']}}
@@ -422,7 +446,7 @@ def pipeline_one(args):
             stage = Path(temporary)
             shutil.copy2(saved, stage / 'request.json')
             for name in request['files']:
-                shutil.copy2(run / name, stage / name)
+                shutil.copy2(input_paths[name], stage / name)
             for name in ('workflow_isolation.py', 'workflow_runtime.py'):
                 shutil.copy2(Path(__file__).with_name(name), stage / name)
             _, ssh = management.ssh_config(args)
