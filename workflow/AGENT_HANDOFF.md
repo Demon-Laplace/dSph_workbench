@@ -20,7 +20,8 @@
 本地 <model>/
   ic/<build>/                 新生成且冻结的 IC
   isolation/                  旧 IC、孤立模型结果；保留一级
-    density_output/           下载的检查结果
+    IC_density_<model>_*.mp4 检查视频，直接放在 isolation/
+    density_evolution.csv     密度统计表
 本地 workspace/receipts/isolation/<model>/<run>/  上传与运行回执
 服务器 data/isoFornax/<model>/runs/<run>/
   output/                     HDF5 快照
@@ -90,7 +91,7 @@ python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf
 # 默认处理全部快照并生成视频；与历史密度检查流程一致
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013
 # 相同命令不会重复提交，返回原检查 JobID 和当前调度状态
-# 检查结束后取回图和统计表，不搬运全部快照
+# 检查结束后取回视频和统计表，不搬运全部快照
 python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013
 # 可选：显式 quick 只抽查首、中、末帧，不生成视频
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range quick
@@ -148,7 +149,7 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --video-only
 ```
 
-这不重新计算密度。检查完成后仍使用 isolation-fetch 取回图片、视频和统计结果。
+这不重新计算密度。检查完成后仍使用 isolation-fetch 取回视频和统计结果。
 
 ### 正式轨道 IC 一次合并（2026-10-16）
 
@@ -164,7 +165,7 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 ### 检查完成后自动下载到对应本地模型（2026-10-16）
 
 在本地分析工作区运行以下命令，批量检查仍只提交一个 Slurm 作业；完成后自动下载
-每个模型的图、视频和统计表到 `<model>/isolation/density_output/`：
+每个模型的视频和统计表到 `<model>/isolation/`：
 
 ```bash
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --fetch
@@ -176,5 +177,10 @@ python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-2026
 秒数，默认 7200；本地命令需保持运行。终端断开或超时不会取消服务器任务，之后用
 `isolation-fetch --wait` 继续取回。失败作业直接报错，不把旧视频当作本次成功结果下载。
 全量检查在下载前再次验证视频帧数等于快照数，下载后比对视频大小和 SHA256；校验
-通过才写入本地 `density-result.json` 完成回执。图片/CSV 随同同步，不搬运快照。
+通过才写入本地 `density-result.json` 完成回执。CSV 随同同步；逐帧 PNG 留在服务器用于生成视频，不回传，也不搬运快照。
 7002、7003 的视频作业 236610 已完成；各 602 帧、25 fps、24.08 秒，已同步至本地。
+
+本地回传仅允许当前已验证的视频文件名及 `density_evolution.csv`，直接写入 isolation/。
+IC 文件及原建模诊断图保留；回执仍集中存放在 workspace/receipts/。
+2026-10-16 已将 7002/7003 的视频和 CSV 上移，旧 density_output/ 中的逐帧图片移入本地回收站。
+服务器 density_output/ 结构与检查程序保持原样。

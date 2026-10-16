@@ -489,14 +489,14 @@ returns its original job ID instead of submitting a duplicate.
 ```bash
 # 默认：全部快照的密度检查，并生成视频
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013
-# 检查作业结束后，只下载图与统计结果
+# 检查作业结束后，只下载视频与统计表
 python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013
 # 可选：只想快速抽查首、中、末帧时，明确指定 quick
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range quick
 ```
 
 检查结果在服务器 `isoFornax/<model>/runs/<run>/density_output/`，下载到本地
-`<model>/isolation/density_output/`，不下载 HDF5、不增加 isolation 嵌套层级。
+`<model>/isolation/`，不下载逐帧 PNG 或 HDF5，也不单建视频文件夹。
 重复相同检查返回原作业号；已有作业正在该目录运行时，不提交冲突任务。
 `--range 0,300,601` 指定离散快照，`--range 0-601` 指定区间。
 运行记录中的模型编号用于图题和视频名，避免把运行名末尾的日期识别为模型编号。
@@ -549,12 +549,12 @@ python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --video-only
 ```
 
-这不重新计算密度。检查完成后仍使用 isolation-fetch 取回图片、视频和统计结果。
+这不重新计算密度。检查完成后仍使用 isolation-fetch 取回视频和统计结果。
 
 ### 检查完成后自动下载到对应本地模型（2026-10-16）
 
 在本地分析工作区运行以下命令，批量检查仍只提交一个 Slurm 作业；完成后自动下载
-每个模型的图、视频和统计表到 `<model>/isolation/density_output/`：
+每个模型的视频和统计表到 `<model>/isolation/`：
 
 ```bash
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --fetch
@@ -566,5 +566,10 @@ python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-2026
 秒数，默认 7200；本地命令需保持运行。终端断开或超时不会取消服务器任务，之后用
 `isolation-fetch --wait` 继续取回。失败作业直接报错，不把旧视频当作本次成功结果下载。
 全量检查在下载前再次验证视频帧数等于快照数，下载后比对视频大小和 SHA256；校验
-通过才写入本地 `density-result.json` 完成回执。图片/CSV 随同同步，不搬运快照。
+通过才写入本地 `density-result.json` 完成回执。CSV 随同同步；逐帧 PNG 留在服务器用于生成视频，不回传，也不搬运快照。
 7002、7003 的视频作业 236610 已完成；各 602 帧、25 fps、24.08 秒，已同步至本地。
+
+本地回传仅允许当前已验证的视频文件名及 `density_evolution.csv`，直接写入 isolation/。
+IC 文件及原建模诊断图保留；回执仍集中存放在 workspace/receipts/。
+2026-10-16 已将 7002/7003 的视频和 CSV 上移，旧 density_output/ 中的逐帧图片移入本地回收站。
+服务器 density_output/ 结构与检查程序保持原样。

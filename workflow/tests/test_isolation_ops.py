@@ -313,9 +313,43 @@ class IsolationOpsTests(unittest.TestCase):
         self.assertIn('check-batch', remote.call_args_list[0].args[1])
         self.assertEqual(rsync.call_count, 2)
         for model in args.model:
-            self.assertTrue((self.root/model/'isolation/density_output').is_dir())
+            self.assertTrue((self.root/model/'isolation').is_dir())
+            self.assertFalse((self.root/model/'isolation/density_output').exists())
             saved = isolation.client_directory(self.root, model, 'success')/'density-result.json'
             self.assertIn('download_verified_utc', json.loads(saved.read_text()))
+
+    @unittest.skipUnless(__import__('shutil').which('rsync'), 'rsync required')
+    def test_fetch_only_video_and_summary_preserves_existing_ic(self):
+        from types import SimpleNamespace
+        import workflow_management as management
+        source = self.root/'remote-output'; source.mkdir()
+        (source/'video.mp4').write_bytes(b'verified video')
+        (source/'density_evolution.csv').write_text('snapshot,density\n0,1\n')
+        (source/'snapshot_000_density_profile.png').write_bytes(b'image')
+        (source/'Fornax.ini').write_text('must not replace IC')
+        (source/'other.csv').write_text('unrelated table')
+        (source/'nested').mkdir(); (source/'nested/other.mp4').write_bytes(b'nested video')
+        destination = self.root/'Fornax7002/isolation'; destination.mkdir(parents=True)
+        (destination/'Fornax.ini').write_text('original IC')
+        (destination/'components.png').write_bytes(b'original diagnostic')
+        result = {'ready': True, 'directory':'/remote/output', 'analysis':{'selection':'all'},
+                  'videos':[{'name':'video.mp4', 'sha256':isolation.sha(source/'video.mp4'), 'bytes':14}]}
+        args = SimpleNamespace(root=self.root, model=['Fornax7002'], name='success', command='isolation-fetch')
+        real_run = subprocess.run
+        def transfer(command, **kwargs):
+            command = list(command); command[-2] = str(source)+'/'
+            return real_run(command, **kwargs)
+        with patch.object(management, 'ssh_config', return_value=({'root':'/data', 'host':'server'}, ['ssh'])), \
+             patch.object(isolation, 'remote_exec', return_value=subprocess.CompletedProcess([], 0, json.dumps(result), '')), \
+             patch.object(ops.subprocess, 'run', side_effect=transfer):
+            self.assertEqual(ops.client(args), 0)
+            self.assertEqual(set(p.name for p in destination.iterdir()),
+                             {'video.mp4','density_evolution.csv','Fornax.ini','components.png'})
+            self.assertEqual((destination/'Fornax.ini').read_text(),'original IC')
+            source_receipt = isolation.client_directory(self.root, 'Fornax7002', 'success').parent/'density-source.json'
+            source_receipt.unlink()
+            with self.assertRaisesRegex(ValueError, 'unknown provenance'): ops.client(args)
+            self.assertEqual((destination/'video.mp4').read_bytes(), b'verified video')
 
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()

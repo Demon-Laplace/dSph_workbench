@@ -348,22 +348,31 @@ def client(args):
         print(model + ': ' + json.dumps(summary, indent=2), flush=True)
         if operation == 'results':
             model_root = runtime.model_directory(args.root, model)
-            destination = runtime.confined(model_root, model_root / 'isolation/density_output')
+            destination = runtime.confined(model_root, model_root / 'isolation')
+            names = ['density_evolution.csv']
+            for video in result.get('videos', []):
+                if not re.fullmatch(r'[A-Za-z0-9_.-]+\.mp4', video['name']):
+                    raise ValueError('Invalid video filename in server result')
+                names.append(video['name'])
+            targets = [runtime.confined(destination, destination / name) for name in names]
+            if any(p.is_symlink() or (p.exists() and not p.is_file()) for p in targets):
+                raise ValueError('Local density result target is not a regular file')
             source_receipt = isolation.client_directory(args.root, model, args.name).parent / 'density-source.json'
             identity = {'model': model, 'run': args.name, 'directory': result['directory']}
             if source_receipt.exists() and json.loads(source_receipt.read_text()) != identity:
                 raise ValueError('Local density results belong to another run; move them before fetching a different run')
-            if not source_receipt.exists() and destination.exists() and any(destination.iterdir()):
+            if not source_receipt.exists() and any(p.exists() for p in targets):
                 raise ValueError('Local density results have unknown provenance; move them before fetching')
             receipt = isolation.client_directory(args.root, model, args.name) / 'density-result.json'
             receipt.parent.mkdir(parents=True, exist_ok=True)
             destination.mkdir(parents=True, exist_ok=True)
             runtime.write_json(source_receipt, identity)
-            subprocess.run(['rsync', '-rt', '--checksum', '-e', shlex.join(ssh), '--include=*/',
-                            '--include=*.png', '--include=*.mp4', '--include=*.csv', '--include=*.json',
-                            '--include=*.txt', '--exclude=*', remote['host'] + ':' + result['directory'] + '/',
-                            str(destination) + '/'], check=True)
+            # Exact top-level outputs only: never recurse into images or overwrite IC inputs.
+            filters = ['--include=/' + name for name in names] + ['--exclude=*']
+            subprocess.run(['rsync', '-rt', '--checksum', '-e', shlex.join(ssh), *filters,
+                            remote['host'] + ':' + result['directory'] + '/', str(destination) + '/'], check=True)
             verify_download(destination, result)
+            result['local_directory'] = str(destination)
             result['download_verified_utc'] = runtime.now()
             runtime.write_json(receipt, result)
             print('Saved density results: ' + str(destination))
