@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from functools import lru_cache
 from multiprocessing import get_all_start_methods, get_context
@@ -280,50 +281,27 @@ def create_density_video(
     if ffmpeg is None:
         print("Skipped MP4 assembly: ffmpeg was not found on PATH.")
         return None
-
     frame_paths = [get_output_paths(model_dir, snapshot, output_dir) for snapshot in sorted(snapshots)]
     frame_paths = [path for path in frame_paths if path.exists()]
     if not frame_paths:
         print("Skipped MP4 assembly: no density-profile PNG frames were found.")
         return None
-
     output_path = build_video_output_path(output_dir, dwarf_name=dwarf_name, model_dir=model_dir)
-    concat_path = output_dir / f".{output_path.stem}_frames.txt"
-    with concat_path.open("w") as f:
-        for frame_path in frame_paths:
-            escaped = str(frame_path.resolve()).replace("'", r"'\''")
-            f.write(f"file '{escaped}'\n")
-
-    cmd = [
-        ffmpeg,
-        "-loglevel",
-        "error",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_path),
-        "-vf",
-        f"scale={scale}",
-        "-crf",
-        str(crf),
-        "-pix_fmt",
-        "yuv420p",
-        "-y",
-        str(output_path),
-    ]
-    try:
-        subprocess.run(cmd, cwd=output_dir, check=True)
-    except subprocess.CalledProcessError as exc:
-        print(f"Skipped MP4 assembly: ffmpeg failed with exit code {exc.returncode}.")
-        return None
-    finally:
+    # The older server FFmpeg drops most PNGs when concat inputs share timestamps.
+    # A numbered image sequence supplies one timestamp per frame, including gaps
+    # in the original snapshot numbers. Symlinks avoid copying large figures.
+    with tempfile.TemporaryDirectory(prefix=".density-video-", dir=output_dir) as temporary:
+        frames = Path(temporary)
+        for index, frame in enumerate(frame_paths):
+            (frames / f"frame_{index:06d}.png").symlink_to(frame.resolve())
+        cmd = [ffmpeg, "-loglevel", "error", "-framerate", "25", "-i",
+               str(frames / "frame_%06d.png"), "-frames:v", str(len(frame_paths)),
+               "-vf", f"scale={scale}", "-crf", str(crf), "-pix_fmt", "yuv420p", "-y", str(output_path)]
         try:
-            concat_path.unlink()
-        except OSError:
-            pass
-
+            subprocess.run(cmd, cwd=output_dir, check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"Skipped MP4 assembly: ffmpeg failed with exit code {exc.returncode}.")
+            return None
     return output_path
 
 

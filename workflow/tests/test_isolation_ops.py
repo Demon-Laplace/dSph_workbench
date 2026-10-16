@@ -215,6 +215,35 @@ class IsolationOpsTests(unittest.TestCase):
         self.assertIn('check-batch', command)
         self.assertEqual(command[command.index('--models') + 1:command.index('--name')], args.model)
 
+    @unittest.skipUnless(__import__('shutil').which('ffmpeg') and __import__('shutil').which('ffprobe'), 'ffmpeg required')
+    def test_video_sequence_keeps_every_nonconsecutive_snapshot(self):
+        import ast
+        import re
+        import shutil
+        import struct
+        import zlib
+        source = Path(isolation.__file__).parent / 'isolation_python/check_density_profile.py'
+        functions = [n for n in ast.parse(source.read_text()).body if isinstance(n, ast.FunctionDef) and
+                     n.name in ('create_density_video', 'get_output_paths', 'build_video_output_path',
+                                'sanitize_filename_part', 'detect_model_number', 'workflow_model_name')]
+        namespace = dict(Path=Path, json=json, re=re, shutil=shutil, subprocess=subprocess,
+                         tempfile=tempfile, CODE_VERSION='test')
+        exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), namespace)
+        output = self.keep / 'density_output'
+        output.mkdir()
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+        for number, color in zip([0, 301, 601], [(255, 0, 0), (0, 255, 0), (0, 0, 255)]):
+            raw = (b'\0' + bytes(color) * 16) * 16
+            png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 16, 16, 8, 2, 0, 0, 0))
+            png += chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+            (output / f'snapshot_{number:03d}_density_profile.png').write_bytes(png)
+        video = namespace['create_density_video'](output, self.keep / 'output', 'Fornax', [601, 0, 301], '16:16', 18)
+        metadata = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                              '-show_entries', 'stream=nb_frames', '-of', 'json', str(video)]))
+        self.assertEqual(metadata['streams'][0]['nb_frames'], '3')
+        self.assertEqual(list(output.glob('.density-video-*')), [])
+
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[self.keep]):

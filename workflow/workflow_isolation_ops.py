@@ -118,7 +118,7 @@ def cleanup(root, model, keep, dry_run=False):
     return report
 
 
-def density_plan(root, model, name, selection):
+def density_plan(root, model, name, selection, video_only=False):
     run = isolation.case_dir(root, name, model)
     if json.loads((run / 'status.json').read_text())['state'] != 'complete':
         raise ValueError('Density checks require a completed isolation run')
@@ -133,11 +133,15 @@ def density_plan(root, model, name, selection):
     directory = runtime.confined(root, root / 'workspace/receipts/isolation-check' / model / name)
     directory.mkdir(parents=True, exist_ok=True)
     identity = {'selection': selection, 'script_sha256': isolation.sha(script)}
+    if video_only:
+        if selection != 'all': raise ValueError('--video-only requires --range all')
+        identity['video_only'] = True
     token = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
     output = runtime.confined(run, run / 'density_output')
     command = ['python3', str(script), '--model-dir', str(run / 'output'),
                '--output-dir', str(output), '--processes', str(settings.get('processes', 16))]
     if selection != 'all': command += ['--range', selection, '--no-video']
+    if video_only: command += ['--video-only']
     shell = 'set -eu\ncd ' + shlex.quote(str(run)) + '\n' + settings['setup'] + '\n'
     shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
     shell += shlex.join(command)
@@ -162,11 +166,11 @@ def batch_time(value, count):
     return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'
 
 
-def check_many(root, models, name, selection='all'):
+def check_many(root, models, name, selection='all', video_only=False):
     from contextlib import ExitStack
     if not models or len(models) != len(set(models)):
         raise ValueError('Provide distinct model IDs')
-    plans = [density_plan(root, model, name, selection) for model in models]
+    plans = [density_plan(root, model, name, selection, video_only) for model in models]
     settings = runtime.config(root)['isolation_check']
     cluster = settings['sbatch']['clusters']
     existing, pending = [], []
@@ -236,8 +240,8 @@ def check_many(root, models, name, selection='all'):
         return {'job_id': job, 'submitted_models': [p['model'] for p in pending], 'runs': records, 'existing': existing}
 
 
-def check(root, model, name, selection='all'):
-    result = check_many(root, [model], name, selection)
+def check(root, model, name, selection='all', video_only=False):
+    result = check_many(root, [model], name, selection, video_only)
     return (result.get('runs') or result['existing'])[0]
 
 
@@ -269,6 +273,7 @@ def client(args):
             model_name(model)
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', 'check-batch',
                    '--root', remote['root'], '--models', *args.model, '--name', args.name, '--range', args.range]
+        if getattr(args, 'video_only', False): command += ['--video-only']
         response = isolation.remote_exec(args, command, capture=True)
         result = json.loads(response.stdout)
         summary = {key: result[key] for key in ('job_id', 'submitted_models')}
@@ -315,14 +320,15 @@ def main():
     parser.add_argument('--models', nargs='+')
     parser.add_argument('--name', required=True)
     parser.add_argument('--range', default='all')
+    parser.add_argument('--video-only', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
     if args.operation == 'check-batch' and not args.models: parser.error('--models is required')
     if args.operation != 'check-batch' and not args.model: parser.error('--model is required')
-    if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range)
+    if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range, args.video_only)
     elif args.operation == 'cleanup': value = cleanup(root, args.model, args.name, args.dry_run)
-    elif args.operation == 'check': value = check(root, args.model, args.name, args.range)
+    elif args.operation == 'check': value = check(root, args.model, args.name, args.range, args.video_only)
     else: value = results(root, args.model, args.name)
     print(json.dumps(value))
 

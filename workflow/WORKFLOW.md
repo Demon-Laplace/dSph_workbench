@@ -537,3 +537,16 @@ python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf
 已有独立任务不撤回、不重提；只把尚未提交的模型合并为一个新任务。
 同模型不同检查范围也会检查已有批任务回执，避免共用输出目录的任务并发写入。
 本次 7002/7003 的全量检查已分别开始，保留原作业 236608、236609；批量合并用于后续提交。
+
+### 视频完整性与仅重建视频
+
+服务器原 FFmpeg 对未指定时间戳的 PNG concat 输入会丢帧：602 张图曾只编码出 4 帧。
+现改用临时的连续编号图片链接序列，25 fps，每张检查图保留一帧，不复制图片数据。
+完成后用 ffprobe 验证视频帧数等于所选快照数，不能只凭 MP4 存在或作业退出码判断成功。
+已有完整检查图时可以只重建视频，多个模型仍只提交一个 Slurm 作业：
+
+```bash
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --video-only
+```
+
+这不重新计算密度。检查完成后仍使用 isolation-fetch 取回图片、视频和统计结果。

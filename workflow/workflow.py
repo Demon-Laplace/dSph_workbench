@@ -187,6 +187,7 @@ def main():
             p.add_argument('--dry-run', action='store_true')
         if operation == 'isolation-check':
             p.add_argument('--range', default='all', help='all snapshots and video (default); quick, 0-600 or 0,300,600')
+            p.add_argument('--video-only', action='store_true', help='rebuild video from existing figures without repeating density analysis')
         p.set_defaults(func=isolation_ops.client)
     p = commands.add_parser('isolation-status', help='read the recorded server isolation job state')
     p.add_argument('--model', help='model ID; required if a run name is ambiguous')
