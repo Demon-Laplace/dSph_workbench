@@ -41,6 +41,7 @@ ELINFO_COLUMNS = [
     'tsigma_xyz',
     'sigma_x', 'sigma_y', 'sigma_z',
     'pmra', 'pmdec', 'cold_gas_center_ra', 'cold_gas_center_dec',
+    'hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction', 'gas_mass', 'gas_half_mass',
     'numsp',
 ]
 NUMSP_COLUMN = 'numsp'
@@ -338,7 +339,8 @@ class GetInfo:
                 summary['tsigma_xyz'],
                 summary['sigma_x'], summary['sigma_y'], summary['sigma_z'],
                 summary['pmra'], summary['pmdec'], summary['cold_gas_center_ra'], summary['cold_gas_center_dec'],
-                summary['numsp']]
+                summary['hi_mass'], summary['hi_half_mass'], summary['hi_fraction'], summary['hi_half_fraction'],
+                summary['gas_mass'], summary['gas_half_mass'], summary['numsp']]
 
     def get_info_block(self, numsp_block):
         return [self.get_info(numsp) for numsp in numsp_block]
@@ -482,6 +484,8 @@ class GetInfo:
         output_comments = [
             f"# Orbit Data: {','.join(map(str, orbit_data))}\n",
             f"# Timescale_fd: {fd_value}\n",
+            "# HI: M_HI=0.76*sum(M_gas*NeutralHydrogenAbundance), both temperature phases; coldgas_* are legacy HI aliases\n",
+            "# hi_fraction=M_HI/M_star in the same aperture; gas_mass/gas_half_mass include all gas\n",
             "# star_mass and star_half_mass include old and newly formed dwarf stars within their existing apertures\n",
             "# rhalf: projected elliptical half-light semi-major axis of old stars\n",
             "# rhalf_circularized: equal-area value rhalf*sqrt(1-eps)\n",

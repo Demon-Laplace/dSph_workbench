@@ -27,7 +27,7 @@ import argparse
 # from multiprocessing import Pool
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
-from snapshot_metrics import old_star_projected_kinematics
+from snapshot_metrics import old_star_projected_kinematics, hi_particle_masses, hi_fraction
 
 from matplotlib.patches import Ellipse
 from variable import (
@@ -450,6 +450,9 @@ def _load_surface_brightness_observation(dwarf_name, factor):
 
 def _normalize_elinfo_schema(dw_elinfo):
     """Supply plotting-only defaults for elinfo files made by older GetInfo versions."""
+    required_hi = {'hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction'}
+    if not required_hi.issubset(dw_elinfo.columns):
+        raise ValueError("Re-run GetInfo: this elinfo predates corrected H I mass statistics")
     legacy_fallbacks = []
 
     if 'rhalf_circularized' not in dw_elinfo.columns:
@@ -1043,11 +1046,11 @@ def _plot_surface_brightness_profile(
 
 def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_stellar_region, t_peri):
     gas_half_series = np.asarray(
-        dw_elinfo.coldgas_half_mass.to_numpy() / dw_elinfo.star_half_mass.to_numpy(),
+        dw_elinfo.hi_half_fraction.to_numpy(),
         dtype=float,
     )
     gas_full_series = np.asarray(
-        dw_elinfo.coldgas_mass.to_numpy() / dw_elinfo.star_mass.to_numpy(),
+        dw_elinfo.hi_fraction.to_numpy(),
         dtype=float,
     )
     ax.plot(
@@ -1074,7 +1077,7 @@ def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_ste
         zorder=5,
     )
     ax.vlines(tsnap, 0, 12, color='gray', lw=2, ls='--', zorder=0)
-    _style_axis(ax, 'Simulation Time (Gyr)', r'$M_{\mathrm{HI}} / M_{stars}$', xlim=(0, t_peri), ylim=(1e-4, 10.8))
+    _style_axis(ax, 'Simulation Time (Gyr)', r'$f_{\mathrm{HI}} = M_{\mathrm{HI}}/M_\star$', xlim=(0, t_peri), ylim=(1e-4, 10.8))
     ax.set_yscale('log')
     ax.legend(loc='lower left', fontsize=15)
 
@@ -1124,8 +1127,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     row = context['elinfo_by_numsp'].loc[numsp]
     star_mass = row['star_mass']
     star_half_mass = row['star_half_mass']
-    coldgas_mass = row['coldgas_mass']
-    coldgas_half_mass = row['coldgas_half_mass']
+    coldgas_mass = row['hi_mass']
+    coldgas_half_mass = row['hi_half_mass']
     vr = row['vr']
     vtheta = row['vtheta']
     vphi = row['vphi']
@@ -1143,7 +1146,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     vy_star = star_df['vy'].to_numpy()
     vz_star = star_df['vz'].to_numpy()
     cold_gas_df = df.loc[dw_cold_gas_mask, ['y', 'z', 'nh', 'm']]
-    hot_gas_df = df.loc[snapshot['dw_hot_gas_mask'], ['y', 'z']]
+    hot_gas_df = df.loc[snapshot['dw_hot_gas_mask'], ['y', 'z', 'nh', 'm']]
     cold_gas_y = cold_gas_df['y'].to_numpy()
     cold_gas_z = cold_gas_df['z'].to_numpy()
     hot_gas_y = hot_gas_df['y'].to_numpy()
@@ -1151,8 +1154,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
 
     gas_ratio_stellar_region = np.nan if star_mass == 0 else coldgas_mass / star_mass
     gas_half_ratio = np.nan if star_half_mass == 0 else coldgas_half_mass / star_half_mass
-    gas_frac_stellar_region = np.nan if (coldgas_mass + star_mass) == 0 else coldgas_mass / (coldgas_mass + star_mass)
-    gas_half_frac = np.nan if (coldgas_half_mass + star_half_mass) == 0 else coldgas_half_mass / (coldgas_half_mass + star_half_mass)
+    gas_frac_stellar_region = hi_fraction(coldgas_mass, star_mass)
+    gas_half_frac = hi_fraction(coldgas_half_mass, star_half_mass)
 
     eps = row['eps']
     pa = row['pa']
@@ -1268,14 +1271,16 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
 
     vgsr = np.sqrt(vr**2 + vtheta**2 + vphi**2)
 
-    cold_gas_mass_nh = cold_gas_df['nh'].to_numpy() * cold_gas_df['m'].to_numpy()
+    cold_gas_mass_nh = hi_particle_masses(
+        np.concatenate((cold_gas_df['m'].to_numpy(), hot_gas_df['m'].to_numpy())),
+        np.concatenate((cold_gas_df['nh'].to_numpy(), hot_gas_df['nh'].to_numpy())))
     contour_range_kpc = [
         [-sky_field_half_width_kpc, sky_field_half_width_kpc],
         [-sky_field_half_width_kpc, sky_field_half_width_kpc],
     ]
     cold_gas_mass_contour, x_contour_kpc, y_contour_kpc, cd_smooth = Analysis.est_gas_contour(
-        cold_gas_x_kpc,
-        cold_gas_y_kpc,
+        np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc'])),
+        np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc'])),
         cold_gas_mass_nh,
         box=None,
         nbins=GAS_CONTOUR_NBINS,
@@ -1285,6 +1290,9 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         unit="kpc",
         d_mean=d_mean,
     )
+    star_hist, _, _ = np.histogram2d(snapshot['x_kpc'], snapshot['y_kpc'], bins=GAS_CONTOUR_NBINS,
+        range=contour_range_kpc, weights=df.loc[total_dw_star_mask, 'm'].to_numpy())
+    star_mass_contour = star_hist[cd_smooth > cd_threshold].sum(dtype=np.float64)
     x_contour = np.degrees(x_contour_kpc / d_mean)
     y_contour = np.degrees(y_contour_kpc / d_mean)
 
@@ -1340,6 +1348,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'vphi': vphi,
         'vgsr': vgsr,
         'cold_gas_mass_contour': cold_gas_mass_contour,
+        'hi_fraction_contour': hi_fraction(cold_gas_mass_contour, star_mass_contour),
         'x_contour_kpc': x_contour_kpc,
         'y_contour_kpc': y_contour_kpc,
         'x_contour': x_contour,
@@ -1622,8 +1631,8 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         axes[1, 2],
         dw_elinfo,
         tsnap,
-        gas_half_ratio,
-        gas_ratio_stellar_region,
+        gas_half_frac,
+        gas_frac_stellar_region,
         t_peri,
     )
 
@@ -1723,7 +1732,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # info_mass_text = (
     #     f"Star Mass: {sm_str}\n"
     #     f"Star Half-Mass: {shm_str}\n"
-    #     f"Cold Gas Mass: {cg_str}\n"
+    #     f"HI Mass: {cg_str}\n"
     #     f"Cold Gas Half-Mass: {cghm_str}"
     # )
 
@@ -1735,7 +1744,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         horizontalalignment='right'
     )
 
-    gas_frac_contour = metrics['cold_gas_mass_contour'] / (metrics['cold_gas_mass_contour'] + star_mass)
+    gas_frac_contour = metrics['hi_fraction_contour']
 
     fig.text(
         0.74, 0.32,               
@@ -1744,11 +1753,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         f'$D_{{peri}}$: {d_peri:.2f} kpc \n'
         f'Stellar Mass within ${stellar_region_tex_label}$: {sm_str} $M_{{\\odot}}$ \n'
         f'Stellar Mass within $R_{{half}}$: {shm_str} $M_{{\\odot}}$ \n'
-        f'$Cold Gas Mass_{{{stellar_region_subscript_label}}}$: {cg_str} $M_{{\\odot}}$ \n'
-        f'$Cold Gas Mass_{{Rhalf}}$: {cghm_str} $M_{{\\odot}}$ \n'
-        f'Gas Fraction in Contour: {gas_frac_contour:.3f} \n'
-        f'Gas Fraction in ${stellar_region_tex_label}$: {gas_frac_stellar_region:.3f} \n'
-        f'Gas Fraction in $R_{{half}}$: {gas_half_frac:.3f} \n'
+        f'$HI Mass_{{{stellar_region_subscript_label}}}$: {cg_str} $M_{{\\odot}}$ \n'
+        f'$HI Mass_{{Rhalf}}$: {cghm_str} $M_{{\\odot}}$ \n'
+        f'HI Fraction in Contour: {gas_frac_contour:.3f} \n'
+        f'HI Fraction in ${stellar_region_tex_label}$: {gas_frac_stellar_region:.3f} \n'
+        f'HI Fraction in $R_{{half}}$: {gas_half_frac:.3f} \n'
         f'Feedback: {fd_factor_str} median feedback \n',
         fontsize=20,
         ha='left', va='top'

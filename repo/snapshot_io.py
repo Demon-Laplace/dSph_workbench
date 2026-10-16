@@ -179,12 +179,15 @@ class SnapshotLoaderMixin:
 
                         need_ne = ('temp' in gas_columns)
                         need_nh = ('nh' in gas_columns)
-                        if (need_ne or need_nh) and flag_cooling > 0 and 'ElectronAbundance' in group:
-                            ne = group['ElectronAbundance'][:] if need_ne else None
-                            nh = group['NeutralHydrogenAbundance'][:] if need_nh else None
+                        ne = (group['ElectronAbundance'][:] if flag_cooling > 0 and 'ElectronAbundance' in group
+                              else np.zeros(npart, dtype=np.float32)) if need_ne else None
+                        if need_nh:
+                            if flag_cooling > 0 and 'NeutralHydrogenAbundance' not in group:
+                                raise ValueError("Snapshot lacks NeutralHydrogenAbundance required for H I statistics")
+                            nh = (group['NeutralHydrogenAbundance'][:] if 'NeutralHydrogenAbundance' in group
+                                  else np.zeros(npart, dtype=np.float32))
                         else:
-                            ne = np.zeros(npart, dtype=np.float32) if need_ne else None
-                            nh = np.zeros(npart, dtype=np.float32) if need_nh else None
+                            nh = None
 
                         if 'ugas' in gas_columns:
                             df_data['ugas'][slice_idx] = ugas

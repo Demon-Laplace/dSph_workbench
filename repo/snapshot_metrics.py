@@ -6,8 +6,28 @@ from basefunc import Analysis
 from variable import r_3d_cut, stellar_region_rhalf_multiplier
 
 
-def _sum_cold_gas_mass(mass, nh, radial_mask):
-    return (nh[radial_mask] * mass[radial_mask]).sum()
+HYDROGEN_MASS_FRACTION = np.float32(0.76)
+
+
+def hi_particle_masses(mass, neutral_fraction):
+    """Atomic-H mass: NeutralHydrogenAbundance is n_HI/n_H, not a gas mass fraction."""
+    mass = np.asarray(mass, dtype=np.float32)
+    neutral = np.asarray(neutral_fraction, dtype=np.float32)
+    if mass.shape != neutral.shape:
+        raise ValueError("Gas mass and neutral abundance arrays must have identical shapes")
+    if (not np.isfinite(mass).all() or not np.isfinite(neutral).all() or
+            np.any(mass < 0) or np.any(neutral < 0) or np.any(neutral > 1)):
+        raise ValueError("Invalid gas mass or NeutralHydrogenAbundance")
+    return HYDROGEN_MASS_FRACTION * mass * neutral
+
+
+def hi_fraction(hi_mass, stellar_mass):
+    """M_HI/M_star, with both masses measured in the same aperture (user definition)."""
+    return float(hi_mass / stellar_mass) if np.isfinite(stellar_mass) and stellar_mass > 0 else np.nan
+
+
+def _sum_hi_mass(mass, nh, radial_mask):
+    return hi_particle_masses(mass[radial_mask], nh[radial_mask]).sum(dtype=np.float64)
 
 
 def _sum_hot_gas_mass(mass, nh, radial_mask):
@@ -359,7 +379,11 @@ def compute_snapshot_summary(snapshot, numsp):
     star_half_mass = star_m[dw_total_star_rhalf_mask].sum()
     star_half_mass_old_tracer = half_mass_components["old_tracer"]
     hotgas_half_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_rhalf_mask)
-    coldgas_half_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask)
+    # H I includes the neutral fraction of both temperature phases.
+    coldgas_half_mass = (_sum_hi_mass(cold_m, cold_nh, dw_cold_gas_rhalf_mask) +
+                         _sum_hi_mass(hot_m, hot_nh, dw_hot_gas_rhalf_mask))
+    gas_half_mass = (cold_m[dw_cold_gas_rhalf_mask].sum(dtype=np.float64) +
+                     hot_m[dw_hot_gas_rhalf_mask].sum(dtype=np.float64))
 
     sigma_re_circular_result = detrended_dispersion_in_aperture(
         old_kinematics["x_kpc"],
@@ -480,12 +504,15 @@ def compute_snapshot_summary(snapshot, numsp):
     star_mass = star_m[dw_total_star_stellar_region_mask].sum()
     star_mass_old_tracer = aperture_mass_components["old_tracer"]
     star_mass_new = aperture_mass_components["new"]
-    coldgas_mass = _sum_cold_gas_mass(cold_m, cold_nh, dw_cold_gas_stellar_region_mask)
+    coldgas_mass = (_sum_hi_mass(cold_m, cold_nh, dw_cold_gas_stellar_region_mask) +
+                    _sum_hi_mass(hot_m, hot_nh, dw_hot_gas_stellar_region_mask))
+    gas_mass = (cold_m[dw_cold_gas_stellar_region_mask].sum(dtype=np.float64) +
+                hot_m[dw_hot_gas_stellar_region_mask].sum(dtype=np.float64))
     hotgas_mass = _sum_hot_gas_mass(hot_m, hot_nh, dw_hot_gas_stellar_region_mask)
     gas_density = Analysis.GetGasdensity(
-        cold_gas_x_kpc,
-        cold_gas_y_kpc,
-        cold_m * cold_nh,
+        np.concatenate((cold_gas_x_kpc, hot_gas_x_kpc)),
+        np.concatenate((cold_gas_y_kpc, hot_gas_y_kpc)),
+        hi_particle_masses(np.concatenate((cold_m, hot_m)), np.concatenate((cold_nh, hot_nh))),
         r_half,
         ep=eps,
         pa=pa,
@@ -497,7 +524,7 @@ def compute_snapshot_summary(snapshot, numsp):
     sigma_z = _safe_std(obs_star_vz[dw_star_500pc_mask])
     sigma_xyz = np.sqrt((sigma_x**2 + sigma_y**2 + sigma_z**2) / 3)
 
-    baryon_half_mass = star_half_mass + hotgas_half_mass + coldgas_half_mass
+    baryon_half_mass = star_half_mass + gas_half_mass
     if not np.isfinite(r_half_3d) or r_half_3d <= 0 or baryon_half_mass < 0:
         theoretical_sigma = np.nan
     else:
@@ -516,6 +543,12 @@ def compute_snapshot_summary(snapshot, numsp):
         "hotgas_half_mass": hotgas_half_mass,
         "coldgas_mass": coldgas_mass,
         "coldgas_half_mass": coldgas_half_mass,
+        "hi_mass": coldgas_mass,
+        "hi_half_mass": coldgas_half_mass,
+        "hi_fraction": hi_fraction(coldgas_mass, star_mass),
+        "hi_half_fraction": hi_fraction(coldgas_half_mass, star_half_mass),
+        "gas_mass": gas_mass,
+        "gas_half_mass": gas_half_mass,
         "mw_mass_r": mw_mass_r,
         "eps": eps,
         "pa": pa,

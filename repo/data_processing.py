@@ -9,6 +9,7 @@ import pandas as pd
 from variable import gizmo_config, orbit_file
 
 ELINFO_DTYPE_MAP = {
+    **{name: np.float32 for name in ('hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction', 'gas_mass', 'gas_half_mass')},
     'star_mass': np.float32,
     'star_mass_old_tracer': np.float32,
     'star_mass_new': np.float32,

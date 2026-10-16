@@ -82,7 +82,7 @@ def make_output_path(numsp, modelname, output_dir, output_path=None):
 
 def draw_info_panel(ax, context, metrics):
     star_mass = metrics["star_mass"]
-    gas_frac_contour = metrics["cold_gas_mass_contour"] / (metrics["cold_gas_mass_contour"] + star_mass)
+    gas_frac_contour = metrics["hi_fraction_contour"]
 
     info_orbit_text = (
         f"Orbit : {context['ini_x']:.2f}, {context['ini_y']:.2f}, {context['ini_z']:.2f}\n"
@@ -106,11 +106,11 @@ def draw_info_panel(ax, context, metrics):
         f"$D_{{peri}}$: {context['d_peri']:.2f} kpc\n"
         f"$Stellar\\ Mass$: {PlotFig.DataProcessor.sci_notation(metrics['star_mass'])} $M_{{\\odot}}$\n"
         f"$Stellar\\ Mass_{{Rhalf}}$: {PlotFig.DataProcessor.sci_notation(metrics['star_half_mass'])} $M_{{\\odot}}$\n"
-        f"$Cold\\ Gas\\ Mass$: {PlotFig.DataProcessor.sci_notation(metrics['coldgas_mass'])} $M_{{\\odot}}$\n"
-        f"$Cold\\ Gas\\ Mass_{{Rhalf}}$: {PlotFig.DataProcessor.sci_notation(metrics['coldgas_half_mass'])} $M_{{\\odot}}$\n"
-        f"Gas Fraction in Contour: {gas_frac_contour:.3f}\n"
-        f"Gas Fraction in {PlotFig.stellar_region_description}: {metrics['gas_frac_stellar_region']:.3f}\n"
-        f"Gas Fraction in $R_{{half}}$: {metrics['gas_half_frac']:.3f}\n"
+        f"$HI\\ Mass$: {PlotFig.DataProcessor.sci_notation(metrics['coldgas_mass'])} $M_{{\\odot}}$\n"
+        f"$HI\\ Mass_{{Rhalf}}$: {PlotFig.DataProcessor.sci_notation(metrics['coldgas_half_mass'])} $M_{{\\odot}}$\n"
+        f"HI Fraction in Contour: {gas_frac_contour:.3f}\n"
+        f"HI Fraction in {PlotFig.stellar_region_description}: {metrics['gas_frac_stellar_region']:.3f}\n"
+        f"HI Fraction in $R_{{half}}$: {metrics['gas_half_frac']:.3f}\n"
         f"Feedback: {context['fd_factor_str']} median feedback",
         fontsize=14,
         ha="left",
@@ -243,8 +243,8 @@ def draw_panel(fig, ax, panel_index, context, snapshot, metrics, row, numsp):
             ax,
             context["dw_elinfo"],
             tsnap,
-            metrics["gas_half_ratio"],
-            metrics["gas_ratio_stellar_region"],
+            metrics["gas_half_frac"],
+            metrics["gas_frac_stellar_region"],
             context["t_peri"],
         )
     elif coord == (1, 3):
