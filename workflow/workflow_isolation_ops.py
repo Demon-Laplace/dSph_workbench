@@ -108,7 +108,7 @@ def cleanup(root, model, keep, dry_run=False):
             # Never remove a stage for a different pending/prepared attempt.
             target = isolation.case_dir(root, old['name'], model)
             tombstone = root / 'workspace/receipts/isolation-cleaned' / model / (old['name'] + '.json')
-            if target != survivor and not tombstone.is_file():
+            if target != survivor and str(target) not in report['removed'] and not tombstone.is_file():
                 continue
             isolation.verify_bundle(stage, old)
             size = tree_bytes(stage)
