@@ -145,7 +145,8 @@ def production_results(root, model=None, name=None):
 def fetch_production(args, model=None, name=None):
     import workflow_isolation as isolation
     settings, ssh = ssh_config(args)
-    command = ('from pathlib import Path; import json,workflow_management as m; '
+    command = ('import sys; sys.path.insert(0, ' + repr(settings['root']) + '); '
+               'from pathlib import Path; import json,workflow_management as m; '
                'print(json.dumps(m.production_results(Path(' + repr(settings['root']) + '), '
                'model=' + repr(model) + ',name=' + repr(name) + ')))')
     response = isolation.remote_exec(args, ['python3', '-c', command], capture=True)
