@@ -19,5 +19,26 @@
     "repository": "../IsolationModel/Fornax"
   },
   "ic_python": "python3",
-  "models_root": "."
+  "models_root": ".",
+  "ic_merge": {
+    "converter": [
+      "/absolute/path/to/IC_ascii2snap",
+      "{ascii}",
+      "{binary}"
+    ],
+    "compiler": "gcc",
+    "python": "python3",
+    "setup": ". /etc/profile.d/z00_lmod.sh\nmodule load python/3.9.1",
+    "sbatch": {
+      "clusters": "configured-cluster",
+      "partition": "configured-partition",
+      "qos": "configured-qos",
+      "account": "configured-account",
+      "nodes": 1,
+      "ntasks": 1,
+      "cpus-per-task": 1,
+      "mem": "8G",
+      "time": "01:00:00"
+    }
+  }
 }

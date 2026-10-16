@@ -149,3 +149,14 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 ```
 
 这不重新计算密度。检查完成后仍使用 isolation-fetch 取回图片、视频和统计结果。
+
+### 正式轨道 IC 一次合并（2026-10-16）
+
+使用 `workflow.py remote merge-ic MODEL --name NAME --submit`，完成后再 `remote simulate`。
+读 [MERGE_IC.md](MERGE_IC.md)：它记录原程序的实际旋转/舍入/ID 规则与验证方法。
+不要恢复两次手动合并，也不要合并矩阵后跳过旧中间舍入。保留原 .par 与 .sh。
+源码新增 workflow_merge.py 和 ic_merge.c，两者必须一起安装到本地/服务器工作区根目录。
+新作业冻结两者及配置；仅在逐粒子二进制校验、原子发布成功后删除自己生成的 merged.dat。
+现存 IC 与有快照的模型不重建；合并作业不是新的模拟作业。
+历史合并 .dat 已移入两端 observer_review_delete_20261006/merge-dat-20261016/，
+恢复清单在 workspace/receipts/merge-dat-20261016/moved.jsonl。其他 .dat 保留。

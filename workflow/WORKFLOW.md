@@ -246,7 +246,7 @@ python3 workflow.py ic-catalog --refresh  # 扫描历史 IniFile/ 和原模型�
 该命令保留原 Schwarzschild 求解器及计算精度。每次输出包含 `Fornax.ini`、`parameters.ini`、
 `build.json`、`build.log` 和分量文件。失败目录保留供排查；下一次使用新名称。
 
-两级粒子 IC 合并工具仍使用服务器已有 `zimpack` 安装。2026-10-12 已在独立测试目录实测合并与短时模拟；`new-case` 仍只准备输入，未自动执行合并。`simulate` 会检查合并后的 `InitCondFile` 是否存在。完整规模及长时间稳定性不在本次验证范围内。
+正式轨道 IC 已改用 `merge-ic MODEL --name NAME --submit`：一次读取三份粒子输入，调用原转换器，逐粒子验证二进制后自动删除中间 `.dat`。`new-case` 准备输入，`simulate` 在 IC 完成后沿用既有 launcher。具体操作与兼容精度说明见 [MERGE_IC.md](MERGE_IC.md)。
 
 ## 整理与清理记录
 

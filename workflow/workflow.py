@@ -15,6 +15,7 @@ import sys
 import workflow_runtime as runtime
 import workflow_management as management
 import workflow_models as models
+import workflow_merge as merge
 import workflow_release as release
 import workflow_github as github
 import workflow_isolation as isolation
@@ -266,6 +267,11 @@ def main():
     p.add_argument("--dwarf-ic", required=True, help="particle IC path, relative to workspace or absolute")
     p.add_argument("--mw-ic", help="override template Milky Way particle IC")
     p.set_defaults(func=models.new_case)
+    p = commands.add_parser("merge-ic", help="one-pass production merge and validated binary conversion on a compute node")
+    p.add_argument("model")
+    p.add_argument("--name", required=True, help="unique preparation name")
+    p.add_argument("--submit", action="store_true", help="submit; otherwise Slurm preflight only")
+    p.set_defaults(func=merge.command)
     p = commands.add_parser("simulate", help="preflight or explicitly submit a prepared simulation; refuses existing data")
     p.add_argument("model")
     p.add_argument("--name", required=True)

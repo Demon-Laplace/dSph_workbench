@@ -148,7 +148,7 @@ def simulate(args):
     initial = (model / parameters['InitCondFile']).resolve()
     output = runtime.confined(args.root, model / parameters['OutputDir'])
     if not initial.is_file():
-        raise ValueError(f'IC merging must finish first: {initial}')
+        raise ValueError(f'IC missing: {initial}; run merge-ic {args.model} --name NAME --submit first')
     if list(output.glob('snapshot*')) or list(output.glob('restart*')):
         raise ValueError('Simulation already contains data; use its established restart procedure')
     if args.submit:
