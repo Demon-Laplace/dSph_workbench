@@ -550,3 +550,21 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 ```
 
 这不重新计算密度。检查完成后仍使用 isolation-fetch 取回图片、视频和统计结果。
+
+### 检查完成后自动下载到对应本地模型（2026-10-16）
+
+在本地分析工作区运行以下命令，批量检查仍只提交一个 Slurm 作业；完成后自动下载
+每个模型的图、视频和统计表到 `<model>/isolation/density_output/`：
+
+```bash
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --fetch
+# 已经提交了检查或视频任务：只等待并取回，不重新提交
+python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013 --wait
+```
+
+`--video-only --fetch` 可用于仅重建视频后自动下载。`--timeout` 设置每个模型最多等待
+秒数，默认 7200；本地命令需保持运行。终端断开或超时不会取消服务器任务，之后用
+`isolation-fetch --wait` 继续取回。失败作业直接报错，不把旧视频当作本次成功结果下载。
+全量检查在下载前再次验证视频帧数等于快照数，下载后比对视频大小和 SHA256；校验
+通过才写入本地 `density-result.json` 完成回执。图片/CSV 随同同步，不搬运快照。
+7002、7003 的视频作业 236610 已完成；各 602 帧、25 fps、24.08 秒，已同步至本地。

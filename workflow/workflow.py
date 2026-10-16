@@ -189,6 +189,12 @@ def main():
         if operation == 'isolation-check':
             p.add_argument('--range', default='all', help='all snapshots and video (default); quick, 0-600 or 0,300,600')
             p.add_argument('--video-only', action='store_true', help='rebuild video from existing figures without repeating density analysis')
+        if operation == 'isolation-check':
+            p.add_argument('--fetch', action='store_true', help='wait for checks/video and download verified results to each local model')
+        if operation == 'isolation-fetch':
+            p.add_argument('--wait', action='store_true', help='wait for pending density jobs before downloading')
+        if operation in ('isolation-check', 'isolation-fetch'):
+            p.add_argument('--timeout', type=int, default=7200, help='maximum wait per model in seconds (default: 7200)')
         p.set_defaults(func=isolation_ops.client)
     p = commands.add_parser('isolation-status', help='read the recorded server isolation job state')
     p.add_argument('--model', help='model ID; required if a run name is ambiguous')

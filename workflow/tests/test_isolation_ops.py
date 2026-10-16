@@ -244,6 +244,79 @@ class IsolationOpsTests(unittest.TestCase):
         self.assertEqual(metadata['streams'][0]['nb_frames'], '3')
         self.assertEqual(list(output.glob('.density-video-*')), [])
 
+    def density_receipt(self):
+        directory = self.root / 'workspace/receipts/isolation-check/Fornax7002/success'
+        directory.mkdir(parents=True)
+        runtime.write_json(directory / 'check.json', {'job_id': '125', 'selection': 'all'})
+        return directory
+
+    def test_pending_results_can_be_polled_but_failures_abort(self):
+        self.density_receipt()
+        with patch.object(ops, 'accounting', return_value={'state': 'RUNNING', 'exit_code': '0:0'}):
+            self.assertFalse(ops.results(self.root, 'Fornax7002', 'success', True)['ready'])
+            with self.assertRaises(ValueError): ops.results(self.root, 'Fornax7002', 'success')
+        for state, code in [('FAILED', '1:0'), ('COMPLETED', '1:0')]:
+            with patch.object(ops, 'accounting', return_value={'state': state, 'exit_code': code}):
+                with self.assertRaises(ValueError): ops.results(self.root, 'Fornax7002', 'success', True)
+
+    def test_results_verify_full_video_frames_and_hash(self):
+        self.density_receipt()
+        out = self.keep / 'density_output'; out.mkdir()
+        (out/'snapshot_000_density_profile.png').touch()
+        (out/'video.mp4').write_bytes(b'video')
+        for n in (0, 1, 2): (self.keep/'output'/f'snapshot_{n:03d}.hdf5').touch()
+        with patch.object(ops, 'accounting', return_value={'state':'COMPLETED', 'exit_code':'0:0'}), \
+             patch.object(ops, 'active_directories', return_value=[]), \
+             patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0,
+                 json.dumps({'streams':[{'nb_frames':'3', 'duration':'0.12'}]}), '')) as probe:
+            result = ops.results(self.root, 'Fornax7002', 'success')
+            self.assertEqual(result['videos'][0]['frames'], 3)
+            ops.verify_download(out, result)
+            (out/'video.mp4').write_bytes(b'corrupt')
+            with self.assertRaisesRegex(ValueError, 'checksum'): ops.verify_download(out, result)
+            probe.return_value.stdout = json.dumps({'streams':[{'nb_frames':'2', 'duration':'0.08'}]})
+            with self.assertRaisesRegex(ValueError, 'frame count'): ops.results(self.root, 'Fornax7002', 'success')
+
+    def test_full_download_requires_server_video_verification(self):
+        with self.assertRaisesRegex(ValueError, 'Missing verified video metadata'):
+            ops.verify_download(self.root, {'analysis': {'selection': 'all'}})
+
+    def test_wait_download_polls_until_ready_and_obeys_timeout(self):
+        from types import SimpleNamespace
+        args = SimpleNamespace(timeout=60)
+        pending = {'ready':False, 'analysis':{'job_id':'125', 'scheduler':{'state':'RUNNING'}}}
+        ready = {'ready':True}
+        replies = [subprocess.CompletedProcess([], 0, json.dumps(x), '') for x in (pending, ready)]
+        with patch.object(isolation, 'remote_exec', side_effect=replies) as remote, patch.object(ops.time, 'sleep') as sleep:
+            self.assertEqual(ops.await_results(args, ['results'], True), ready)
+            self.assertEqual(remote.call_count, 2)
+            self.assertIn('--allow-pending', remote.call_args.args[1])
+            sleep.assert_called_once()
+        with patch.object(isolation, 'remote_exec', return_value=replies[0]), \
+             patch.object(ops.time, 'monotonic', side_effect=[0, 61]), patch.object(ops.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, 'Timed out'): ops.await_results(args, ['results'], True)
+            sleep.assert_not_called()
+
+    def test_check_fetch_downloads_both_models_after_single_batch_request(self):
+        from types import SimpleNamespace
+        import workflow_management as management
+        args = SimpleNamespace(root=self.root, model=['Fornax7002', 'Fornax7003'], name='success',
+                               command='isolation-check', range='all', fetch=True, timeout=60)
+        batch = {'job_id':'125', 'submitted_models':args.model, 'existing':[]}
+        replies = [batch] + [{'ready':True, 'directory':'/data/'+model+'/density_output',
+                              'analysis':{'job_id':'125'}, 'videos':[]} for model in args.model]
+        with patch.object(management, 'ssh_config', return_value=({'root':'/data', 'host':'server'}, ['ssh'])), \
+             patch.object(isolation, 'remote_exec', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(r), '') for r in replies]) as remote, \
+             patch.object(ops.subprocess, 'run') as rsync:
+            self.assertEqual(ops.client(args), 0)
+        self.assertEqual(remote.call_count, 3)
+        self.assertIn('check-batch', remote.call_args_list[0].args[1])
+        self.assertEqual(rsync.call_count, 2)
+        for model in args.model:
+            self.assertTrue((self.root/model/'isolation/density_output').is_dir())
+            saved = isolation.client_directory(self.root, model, 'success')/'density-result.json'
+            self.assertIn('download_verified_utc', json.loads(saved.read_text()))
+
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[self.keep]):

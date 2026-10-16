@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 
 import workflow_runtime as runtime
 import workflow_isolation as isolation
@@ -245,28 +246,80 @@ def check(root, model, name, selection='all', video_only=False):
     return (result.get('runs') or result['existing'])[0]
 
 
-def results(root, model, name):
+def results(root, model, name, allow_pending=False):
     run = isolation.case_dir(root, name, model)
-    if any(p == run.resolve() or run.resolve() in p.parents for p in active_directories()):
-        raise ValueError('Run still has an active job; wait before fetching density results')
     output = runtime.confined(run, run / 'density_output')
-    if not list(output.glob('snapshot_*_density_profile.png')):
-        raise ValueError('No density figures available; run isolation-check first')
     directory = root / 'workspace/receipts/isolation-check' / model / name
     receipts = sorted(directory.glob('*.json'), key=lambda p: p.stat().st_mtime)
     if not receipts: raise ValueError('No density job receipt')
     latest = json.loads(receipts[-1].read_text())
     settings = runtime.config(root)['isolation_check']
     latest['scheduler'] = accounting(latest['job_id'], settings['sbatch']['clusters'])
-    if latest['scheduler']['state'] != 'COMPLETED':
+    state = latest['scheduler']['state']
+    pending = {'PENDING', 'RUNNING', 'CONFIGURING', 'COMPLETING', 'SUSPENDED',
+               'REQUEUED', 'REQUEUE_FED', 'REQUEUE_HOLD', 'RESIZING', 'SIGNALING', 'STAGE_OUT'}
+    if state in pending:
+        if allow_pending:
+            return {'ready': False, 'directory': str(output), 'analysis': latest}
+        raise ValueError('Density analysis is still pending/running: ' + state)
+    if state != 'COMPLETED' or latest['scheduler']['exit_code'] != '0:0':
         raise ValueError('Density analysis has not completed successfully: ' + str(latest['scheduler']))
-    return {'directory': str(output), 'analysis': latest}
+    if any(p == run.resolve() or run.resolve() in p.parents for p in active_directories()):
+        raise ValueError('Run has another active job; wait before fetching density results')
+    if not list(output.glob('snapshot_*_density_profile.png')):
+        raise ValueError('No density figures available; run isolation-check first')
+    videos = []
+    if latest['selection'] == 'all':
+        candidates = list(output.glob('*.mp4'))
+        if not candidates: raise ValueError('Completed full check has no video')
+        video = runtime.confined(output, max(candidates, key=lambda p: p.stat().st_mtime))
+        probe = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                 'stream=nb_frames,duration', '-of', 'json', str(video)]
+        shell = 'set -eu\n' + settings['setup'] + '\n' + shlex.join(probe)
+        info = json.loads(subprocess.run(['bash', '-c', shell], capture_output=True, text=True, check=True).stdout)
+        streams = info.get('streams', [])
+        expected = len(list((run / 'output').glob('snapshot_*.hdf5')))
+        if len(streams) != 1 or not expected or int(streams[0].get('nb_frames', 0)) != expected:
+            raise ValueError('Density video frame count disagrees with snapshots')
+        videos.append({'name': video.name, 'sha256': isolation.sha(video), 'bytes': video.stat().st_size,
+                       'frames': expected, 'duration_seconds': float(streams[0]['duration'])})
+    return {'ready': True, 'directory': str(output), 'analysis': latest, 'videos': videos}
+
+
+def await_results(args, command, wait=False):
+    timeout = getattr(args, 'timeout', 7200)
+    if timeout <= 0: raise ValueError('--timeout must be positive')
+    deadline = time.monotonic() + timeout
+    while True:
+        response = isolation.remote_exec(args, command + (['--allow-pending'] if wait else []), capture=True)
+        result = json.loads(response.stdout)
+        if result.get('ready', True): return result
+        if not wait: raise ValueError('Density results are not ready')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Timed out waiting for density results; resume with isolation-fetch --wait')
+        record = result['analysis']
+        print(f"Waiting for density job {record['job_id']}: {record['scheduler']['state']}", flush=True)
+        time.sleep(min(15, remaining))
+
+
+def verify_download(destination, result):
+    if result.get('analysis', {}).get('selection') == 'all' and not result.get('videos'):
+        raise ValueError('Missing verified video metadata; update the server workflow before fetching')
+    for video in result.get('videos', []):
+        if Path(video['name']).name != video['name']:
+            raise ValueError('Invalid video filename in server result')
+        path = runtime.confined(destination, destination / video['name'])
+        if not path.is_file() or path.stat().st_size != video['bytes'] or isolation.sha(path) != video['sha256']:
+            raise ValueError('Downloaded video checksum mismatch; retry isolation-fetch')
 
 
 def client(args):
     import workflow_management as management
     from workflow_models import model_name
     runtime.label(args.name)
+    if (getattr(args, 'fetch', False) or getattr(args, 'wait', False)) and getattr(args, 'timeout', 7200) <= 0:
+        raise ValueError('--timeout must be positive')
     remote, ssh = management.ssh_config(args)
     if args.command == 'isolation-check':
         for model in args.model:
@@ -279,17 +332,20 @@ def client(args):
         summary = {key: result[key] for key in ('job_id', 'submitted_models')}
         summary['existing'] = [{key: row.get(key) for key in ('model', 'job_id', 'scheduler')} for row in result['existing']]
         print(json.dumps(summary, indent=2), flush=True)
-        return 0
+        if not getattr(args, 'fetch', False): return 0
     for model in args.model:
         model_name(model)
-        operation = {'isolation-clean-failed': 'cleanup', 'isolation-check': 'check', 'isolation-fetch': 'results'}[args.command]
+        operation = {'isolation-clean-failed': 'cleanup', 'isolation-check': 'results', 'isolation-fetch': 'results'}[args.command]
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', operation,
                    '--root', remote['root'], '--model', model, '--name', args.name]
         if operation == 'cleanup' and args.dry_run: command += ['--dry-run']
-        if operation == 'check': command += ['--range', args.range]
-        response = isolation.remote_exec(args, command, capture=True)
-        result = json.loads(response.stdout)
-        print(model + ': ' + json.dumps(result, indent=2), flush=True)
+        wait = getattr(args, 'wait', False) or (args.command == 'isolation-check' and getattr(args, 'fetch', False))
+        result = await_results(args, command, wait) if operation == 'results' else json.loads(
+            isolation.remote_exec(args, command, capture=True).stdout)
+        summary = {key: value for key, value in result.items() if key != 'analysis'}
+        if 'analysis' in result:
+            summary['analysis'] = {key: result['analysis'].get(key) for key in ('job_id', 'scheduler', 'selection')}
+        print(model + ': ' + json.dumps(summary, indent=2), flush=True)
         if operation == 'results':
             model_root = runtime.model_directory(args.root, model)
             destination = runtime.confined(model_root, model_root / 'isolation/density_output')
@@ -307,6 +363,8 @@ def client(args):
                             '--include=*.png', '--include=*.mp4', '--include=*.csv', '--include=*.json',
                             '--include=*.txt', '--exclude=*', remote['host'] + ':' + result['directory'] + '/',
                             str(destination) + '/'], check=True)
+            verify_download(destination, result)
+            result['download_verified_utc'] = runtime.now()
             runtime.write_json(receipt, result)
             print('Saved density results: ' + str(destination))
     return 0
@@ -322,6 +380,7 @@ def main():
     parser.add_argument('--range', default='all')
     parser.add_argument('--video-only', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--allow-pending', action='store_true', help='results: return pending state for client polling')
     args = parser.parse_args()
     root = args.root.resolve()
     if args.operation == 'check-batch' and not args.models: parser.error('--models is required')
@@ -329,7 +388,7 @@ def main():
     if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range, args.video_only)
     elif args.operation == 'cleanup': value = cleanup(root, args.model, args.name, args.dry_run)
     elif args.operation == 'check': value = check(root, args.model, args.name, args.range, args.video_only)
-    else: value = results(root, args.model, args.name)
+    else: value = results(root, args.model, args.name, args.allow_pending)
     print(json.dumps(value))
 
 
