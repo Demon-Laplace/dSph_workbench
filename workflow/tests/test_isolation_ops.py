@@ -168,7 +168,7 @@ class IsolationOpsTests(unittest.TestCase):
         (self.root / 'density.py').write_text(
             'import argparse\nfrom pathlib import Path\n'
             'p=argparse.ArgumentParser();p.add_argument("--model-dir");p.add_argument("--output-dir");'
-            'p.add_argument("--processes");a=p.parse_args();out=Path(a.output_dir);out.mkdir();'
+            'p.add_argument("--processes");a=p.parse_args();out=Path(a.output_dir);out.mkdir(exist_ok=True);'
             '(out/"snapshot_000_density_profile.png").write_text(str(Path.cwd()));'
             '(out/"density.mp4").write_bytes(b"video fixture");print(Path.cwd())\n')
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[]), \
@@ -183,11 +183,37 @@ class IsolationOpsTests(unittest.TestCase):
         self.assertEqual(command[command.index('--time') + 1], '02:00:00')
         self.assertEqual(first['job_id'], '125')
         self.assertEqual([r['job_id'] for r in again['existing']], ['125', '125'])
-        subprocess.run(['bash', '-c', command[-1]], env={**os.environ, 'SLURM_JOB_ID': '125'}, check=True)
+        import sys
+        probe = self.root / 'ffprobe'
+        probe.write_text('#!' + sys.executable + '\nprint(\'{"streams":[{"nb_frames":"3"}]}\')\n')
+        probe.chmod(0o755)
+        environment = {**os.environ, 'SLURM_JOB_ID': '125', 'PATH': str(self.root) + os.pathsep + os.environ['PATH']}
+        subprocess.run(['bash', '-c', command[-1]], env=environment, check=True)
         for run in [self.keep, second]:
             self.assertEqual((run / 'density_output/snapshot_000_density_profile.png').read_text(), str(run))
             self.assertTrue((run / 'density_output/density.mp4').exists())
             self.assertIn(str(run), (run / 'density-125.log').read_text())
+        probe.write_text('#!' + sys.executable + '\nprint(\'{"streams":[{"nb_frames":"2"}]}\')\n')
+        with self.assertRaises(subprocess.CalledProcessError):
+            subprocess.run(['bash', '-c', command[-1]], env=environment, check=True)
+
+    def test_client_sends_one_batch_request_from_either_local_workspace(self):
+        from types import SimpleNamespace
+        import workflow_management as management
+        args = SimpleNamespace(root=self.root, model=['Fornax7002', 'Fornax7003'],
+                               name='success', command='isolation-check', range='all')
+        # An IC checkout can link model data outside its own root; client validation
+        # must not treat it as a server filesystem layout.
+        (self.root / 'Fornax7002').symlink_to(self.root.parent)
+        response = subprocess.CompletedProcess([], 0, json.dumps({'job_id': '125',
+            'submitted_models': args.model, 'existing': []}), '')
+        with patch.object(management, 'ssh_config', return_value=({'root': '/data'}, [])), \
+             patch.object(isolation, 'remote_exec', return_value=response) as remote:
+            self.assertEqual(ops.client(args), 0)
+        remote.assert_called_once()
+        command = remote.call_args.args[1]
+        self.assertIn('check-batch', command)
+        self.assertEqual(command[command.index('--models') + 1:command.index('--name')], args.model)
 
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()

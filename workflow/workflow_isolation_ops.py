@@ -142,7 +142,13 @@ def density_plan(root, model, name, selection):
     shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
     shell += shlex.join(command)
     if selection == 'all':
-        verify_video = 'from pathlib import Path; p=Path(' + repr(str(output)) + '); assert any(v.stat().st_size > 0 for v in p.glob("*.mp4")), "Density video was not generated"'
+        verify_video = ('from pathlib import Path; import json,subprocess; p=Path(' + repr(str(output)) +
+            '); videos=list(p.glob("*.mp4")); assert videos, "Density video was not generated"; '
+            'v=max(videos,key=lambda v:v.stat().st_mtime); '
+            'info=json.loads(subprocess.check_output(["ffprobe","-v","error","-select_streams","v:0",'
+            '"-show_entries","stream=nb_frames","-of","json",str(v)])); '
+            'assert any(int(s.get("nb_frames",0)) == ' + str(len(snapshots)) +
+            ' for s in info["streams"]), "Density video frame count disagrees with snapshots"')
         shell += '\n' + shlex.join(['python3', '-c', verify_video])
     return {'model': model, 'run': run, 'directory': directory, 'receipt': directory / (token + '.json'),
             'identity': identity, 'shell': shell}
@@ -255,10 +261,12 @@ def results(root, model, name):
 
 def client(args):
     import workflow_management as management
+    from workflow_models import model_name
+    runtime.label(args.name)
     remote, ssh = management.ssh_config(args)
     if args.command == 'isolation-check':
         for model in args.model:
-            isolation.case_dir(args.root, args.name, model)
+            model_name(model)
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', 'check-batch',
                    '--root', remote['root'], '--models', *args.model, '--name', args.name, '--range', args.range]
         response = isolation.remote_exec(args, command, capture=True)
@@ -268,7 +276,7 @@ def client(args):
         print(json.dumps(summary, indent=2), flush=True)
         return 0
     for model in args.model:
-        isolation.case_dir(args.root, args.name, model)  # Validate model and run labels.
+        model_name(model)
         operation = {'isolation-clean-failed': 'cleanup', 'isolation-check': 'check', 'isolation-fetch': 'results'}[args.command]
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', operation,
                    '--root', remote['root'], '--model', model, '--name', args.name]
