@@ -18,6 +18,7 @@ import workflow_models as models
 import workflow_release as release
 import workflow_github as github
 import workflow_isolation as isolation
+import workflow_isolation_ops as isolation_ops
 
 ROOT = Path(__file__).resolve().parent
 if ROOT.name == 'workflow' and (ROOT.parent / 'model_tool.py').is_file():
@@ -178,6 +179,15 @@ def main():
     p.add_argument('--submit', action='store_true', help='submit; otherwise only Slurm preflight')
     p.add_argument('--dry-run', action='store_true', help='show plan without building or connecting')
     p.set_defaults(func=isolation.pipeline)
+    for operation in ('isolation-clean-failed', 'isolation-check', 'isolation-fetch'):
+        p = commands.add_parser(operation)
+        p.add_argument('model', nargs='+')
+        p.add_argument('--name', required=True, help='retained/successful isolation run name')
+        if operation == 'isolation-clean-failed':
+            p.add_argument('--dry-run', action='store_true')
+        if operation == 'isolation-check':
+            p.add_argument('--range', default='quick', help='quick (first/middle/last), all, 0-600 or 0,300,600')
+        p.set_defaults(func=isolation_ops.client)
     p = commands.add_parser('isolation-status', help='read the recorded server isolation job state')
     p.add_argument('--model', help='model ID; required if a run name is ambiguous')
     p.add_argument('--name', required=True)

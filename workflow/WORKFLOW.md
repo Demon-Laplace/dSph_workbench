@@ -351,7 +351,7 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 不传 `--submit` 会完成生成/上传/准备，然后仅运行 `sbatch --test-only`。随后加 `--submit`
 重复同一命令即可提交。相同运行名绑定固定 IC、参数与 profile：已生成的 IC 校验后复用，
 已接收的 case 不重复上传，已提交的作业返回原 JobID，不再提交。参数或种子改变需要新运行名。
-上传中断时重试使用新的 staging 目录，完整接收的 case 原子发布；未完成的 staging 保留供检查。
+上传中断时重试使用新的 staging 目录，完整接收的 case 原子发布。启用下述清理策略后，已核验接收的重复上传副本自动删除。
 提交响应不确定时停止盲目重试，需要先核对 Slurm，防止产生两个同时写入同一目录的作业。
 失败/取消任务的重启不是这个命令的隐式行为，需要检查后使用新的运行名或既有重启流程。
 
@@ -481,3 +481,48 @@ The named profile must exist in the server configuration; this example uses
 `timescale_fd=24.9`, `PartAllocFactor=3.5`, and `BufferSize=120`.
 Changed inputs or parameters require a new run name; repeating a submitted run
 returns its original job ID instead of submitting a duplicate.
+
+## Isolation 完成后的检查、下载和失败清理
+
+本地工作区统一入口（服务器执行计算，快照留在服务器）：
+
+```bash
+# 默认 quick：首、中、末三个快照，先检查演化是否正常
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013
+# 检查作业结束后，只下载图与统计结果
+python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013
+# 确实需要完整时间序列时，再分析全部快照并生成视频
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range all
+```
+
+检查结果在服务器 `isoFornax/<model>/runs/<run>/density_output/`，下载到本地
+`<model>/isolation/density_output/`，不下载 HDF5、不增加 isolation 嵌套层级。
+重复相同检查返回原作业号；已有作业正在该目录运行时，不提交冲突任务。
+`--range 0,300,601` 指定离散快照，`--range 0-601` 指定区间。
+运行记录中的模型编号用于图题和视频名，避免把运行名末尾的日期识别为模型编号。
+
+原密度检查模板仍为服务器 `isoFornax/Fornax/subchecdensity.sh`（拼写保留历史名称）。
+无需复制脚本，也可在服务器成功运行目录执行
+`sbatch /travail/xhuang/isoFornax/Fornax/subchecdensity.sh`，按模板原资源处理全部快照。
+统一入口的资源由服务器 `workflow.json` 的 `isolation_check` 显式配置，包含共享
+`script`、模块 `setup`、`processes` 和 `sbatch` 参数；不改用户已有 .sh。
+
+本地 `workflow.json` 的 `cleanup_failed_isolation: true` 启用重试后的自动清理：
+新运行正常运行至少 140 秒且已进入积分、IC/冻结文件核验通过后，检查同模型、同 IC 的旧失败尝试。
+服务器作业内的监视器自动执行清理；本地断开连接不影响此步骤。已完成的新运行也可触发清理。
+本地与服务器 workflow.json 均启用 cleanup_failed_isolation。
+只有 Slurm 确认 FAILED/OUT_OF_MEMORY、运行不超过 140 秒、且具有内存错误或
+退出码 11 证据的尝试才会删除；任何仍在使用该目录的 Slurm 作业都会阻止删除。
+段错误只作为用户授权的启动失败清理类别，不等于证明物理内存不足。
+长时间运行后中断的模拟仍保留，避免误删可续跑结果。
+
+```bash
+# --name 指定保留的成功/已提交运行，清理其同 IC 的启动失败尝试
+python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013 --dry-run
+python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013
+```
+
+失败目录内的 IC、初始快照、日志和自动生成的 run.sh 一并直接删除；不移入回收目录。
+仅在 `workspace/receipts/isolation-cleaned/` 记录小型删除回执，禁止意外重提已删除的旧运行名。
+已接收且可由保留运行验证的重复上传副本也删除；参数有变化时仍使用新运行名。
+成功启动标准为正常运行超过 2 分 20 秒；完整完成仍要求最终快照达到 TimeMax。

@@ -48,3 +48,18 @@ Local model results use a single <model>/isolation/ directory. Do not recreate
 isolation/legacy/<model>/ or isolation/<run>/client/ locally. Local transport
 receipts belong in workspace/receipts/isolation/<model>/<run>/. Server isolation
 paths and frozen cases remain separate and are not flattened by this convention.
+
+The user authorized permanent removal of memory/segfault startup failures on
+2026-10-16. Use workflow_isolation_ops cleanup: require a verified replacement
+with identical IC hashes that has completed or run normally for at least 140
+seconds with integration progress, terminal failed Slurm accounting within 140
+seconds, and no
+active job using the failed directory. This narrow exception permits deleting
+its generated run.sh, initial snapshots, logs and IC copies together. Keep only
+a small centralized deletion receipt, not an archived failed run. Never apply
+this policy to successful cases or long-running interrupted simulations.
+Density checks use the shared isoFornax/python/check_density_profile.py and
+central workflow_isolation_ops; preserve existing user shell launchers.
+
+New agents should first read workspace/code/github-sync/workflow/AGENT_HANDOFF.md
+for the complete local/server/GitHub workflow and the user-approved boundaries.

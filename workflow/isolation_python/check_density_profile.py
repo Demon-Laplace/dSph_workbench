@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import gc
 import io
+import json
 import os
 import re
 import shutil
@@ -248,6 +249,9 @@ def sanitize_filename_part(text: str):
 
 
 def detect_model_number(model_dir: Path):
+    metadata_name = workflow_model_name(model_dir)
+    if metadata_name:
+        return re.search(r'(\d+)$', metadata_name).group(1) if re.search(r'(\d+)$', metadata_name) else ''
     candidates = [model_dir.name, model_dir.parent.name]
     if model_dir.name == "output":
         candidates.insert(0, model_dir.parent.name)
@@ -1085,7 +1089,21 @@ def compute_summary(dwarf_df: pd.DataFrame, radius_max: float, nbin: int, sigma_
     }
 
 
+def workflow_model_name(model_dir: Path):
+    # New runs are named independently of their model; the transfer receipt is authoritative.
+    for directory in (model_dir, model_dir.parent):
+        receipt = directory / 'request.json'
+        if receipt.is_file():
+            model = json.loads(receipt.read_text()).get('model', '')
+            if re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model):
+                return model
+    return None
+
+
 def detect_model_name(model_dir: Path):
+    recorded = workflow_model_name(model_dir)
+    if recorded:
+        return recorded
     if model_dir.name == "output":
         return model_dir.parent.name
     return model_dir.name
