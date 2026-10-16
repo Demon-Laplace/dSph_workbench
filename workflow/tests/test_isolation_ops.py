@@ -155,6 +155,40 @@ class IsolationOpsTests(unittest.TestCase):
         self.assertNotIn('--range', submit.call_args.args[0][-1])
         self.assertNotIn('--no-video', submit.call_args.args[0][-1])
 
+    def test_batch_submits_once_runs_sequentially_and_preserves_model_outputs(self):
+        import os
+        import shutil
+        second = isolation.case_dir(self.root, 'success', 'Fornax7003')
+        shutil.copytree(self.keep, second)
+        for run in [self.keep, second]:
+            for n in (0, 300, 600): (run / 'output' / f'snapshot_{n:03d}.hdf5').touch()
+        config = json.loads((self.root / 'workflow.json').read_text())
+        config['isolation_check']['sbatch']['time'] = '01:00:00'
+        runtime.write_json(self.root / 'workflow.json', config)
+        (self.root / 'density.py').write_text(
+            'import argparse\nfrom pathlib import Path\n'
+            'p=argparse.ArgumentParser();p.add_argument("--model-dir");p.add_argument("--output-dir");'
+            'p.add_argument("--processes");a=p.parse_args();out=Path(a.output_dir);out.mkdir();'
+            '(out/"snapshot_000_density_profile.png").write_text(str(Path.cwd()));'
+            '(out/"density.mp4").write_bytes(b"video fixture");print(Path.cwd())\n')
+        with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[]), \
+             patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '125;test\n', '')) as submit, \
+             patch.object(ops, 'accounting', return_value={'state': 'RUNNING'}):
+            first = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success')
+            again = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success')
+            with self.assertRaisesRegex(ValueError, 'active batch'):
+                ops.check(self.root, 'Fornax7003', 'success', 'quick')
+        submit.assert_called_once()
+        command = submit.call_args.args[0]
+        self.assertEqual(command[command.index('--time') + 1], '02:00:00')
+        self.assertEqual(first['job_id'], '125')
+        self.assertEqual([r['job_id'] for r in again['existing']], ['125', '125'])
+        subprocess.run(['bash', '-c', command[-1]], env={**os.environ, 'SLURM_JOB_ID': '125'}, check=True)
+        for run in [self.keep, second]:
+            self.assertEqual((run / 'density_output/snapshot_000_density_profile.png').read_text(), str(run))
+            self.assertTrue((run / 'density_output/density.mp4').exists())
+            self.assertIn(str(run), (run / 'density-125.log').read_text())
+
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[self.keep]):

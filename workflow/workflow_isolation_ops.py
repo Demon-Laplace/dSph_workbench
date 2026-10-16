@@ -118,7 +118,7 @@ def cleanup(root, model, keep, dry_run=False):
     return report
 
 
-def check(root, model, name, selection='all'):
+def density_plan(root, model, name, selection):
     run = isolation.case_dir(root, name, model)
     if json.loads((run / 'status.json').read_text())['state'] != 'complete':
         raise ValueError('Density checks require a completed isolation run')
@@ -134,46 +134,105 @@ def check(root, model, name, selection='all'):
     directory.mkdir(parents=True, exist_ok=True)
     identity = {'selection': selection, 'script_sha256': isolation.sha(script)}
     token = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
-    receipt = directory / (token + '.json')
-    with (directory / 'check.lock').open('a') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        if receipt.exists():
-            previous = json.loads(receipt.read_text())
-            if not previous.get('job_id'):
-                raise ValueError('Uncertain density submission; reconcile Slurm before retrying')
-            previous['scheduler'] = accounting(previous['job_id'], settings['sbatch']['clusters'])
-            return previous
-        if any(p == run.resolve() or run.resolve() in p.parents for p in active_directories()):
-            raise ValueError('A job is already using this run; wait before density submission')
-        output = runtime.confined(run, run / 'density_output')
-        command = ['python3', str(script), '--model-dir', str(run / 'output'),
-                   '--output-dir', str(output), '--processes', str(settings.get('processes', 4))]
-        if selection != 'all':
-            command += ['--range', selection, '--no-video']
-        shell = 'set -eu\ncd ' + shlex.quote(str(run)) + '\n' + settings['setup'] + '\n'
-        shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
-        shell += shlex.join(command)
-        if selection == 'all':
-            verify_video = 'from pathlib import Path; p=Path(' + repr(str(output)) + '); assert any(v.stat().st_size > 0 for v in p.glob("*.mp4")), "Density video was not generated"'
-            shell += '\n' + shlex.join(['python3', '-c', verify_video])
-        batch = ['sbatch', '--parsable', '--job-name', 'density-' + model, '--chdir', str(run),
-                 '--output', str(run / 'density-%j.log')]
+    output = runtime.confined(run, run / 'density_output')
+    command = ['python3', str(script), '--model-dir', str(run / 'output'),
+               '--output-dir', str(output), '--processes', str(settings.get('processes', 16))]
+    if selection != 'all': command += ['--range', selection, '--no-video']
+    shell = 'set -eu\ncd ' + shlex.quote(str(run)) + '\n' + settings['setup'] + '\n'
+    shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
+    shell += shlex.join(command)
+    if selection == 'all':
+        verify_video = 'from pathlib import Path; p=Path(' + repr(str(output)) + '); assert any(v.stat().st_size > 0 for v in p.glob("*.mp4")), "Density video was not generated"'
+        shell += '\n' + shlex.join(['python3', '-c', verify_video])
+    return {'model': model, 'run': run, 'directory': directory, 'receipt': directory / (token + '.json'),
+            'identity': identity, 'shell': shell}
+
+
+def batch_time(value, count):
+    match = re.fullmatch(r'(?:(\d+)-)?(\d+):(\d+):(\d+)', str(value))
+    if not match: raise ValueError('Density time must use HH:MM:SS or D-HH:MM:SS')
+    days, hours, minutes, seconds = [int(x or 0) for x in match.groups()]
+    seconds = (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * count
+    return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'
+
+
+def check_many(root, models, name, selection='all'):
+    from contextlib import ExitStack
+    if not models or len(models) != len(set(models)):
+        raise ValueError('Provide distinct model IDs')
+    plans = [density_plan(root, model, name, selection) for model in models]
+    settings = runtime.config(root)['isolation_check']
+    cluster = settings['sbatch']['clusters']
+    existing, pending = [], []
+    with ExitStack() as stack:
+        # Lock all models in a stable order, including against single-model requests.
+        for plan in sorted(plans, key=lambda p: p['model']):
+            stream = stack.enter_context((plan['directory'] / 'check.lock').open('a'))
+            fcntl.flock(stream, fcntl.LOCK_EX)
+        active = active_directories()
+        for plan in plans:
+            receipt, run = plan['receipt'], plan['run']
+            if receipt.exists():
+                previous = json.loads(receipt.read_text())
+                if not previous.get('job_id'):
+                    raise ValueError('Uncertain density submission; reconcile Slurm before retrying')
+                previous['scheduler'] = accounting(previous['job_id'], cluster)
+                previous.setdefault('model', plan['model'])
+                existing.append(previous)
+                continue
+            if any(p == run.resolve() or run.resolve() in p.parents for p in active):
+                raise ValueError('A job is already using this run; wait before density submission')
+            # Batched jobs run in a shared directory, so also inspect each model's receipts.
+            for old_receipt in plan['directory'].glob('*.json'):
+                old = json.loads(old_receipt.read_text())
+                if not old.get('job_id'):
+                    raise ValueError('Uncertain density submission; reconcile Slurm before retrying')
+                state = accounting(old['job_id'], cluster)['state']
+                if state not in {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY', 'NODE_FAIL', 'PREEMPTED', 'BOOT_FAIL', 'DEADLINE'}:
+                    raise ValueError('An active batch already includes this model; wait before submitting another selection')
+            pending.append(plan)
+        if not pending:
+            return {'job_id': None, 'submitted_models': [], 'existing': existing}
+        options = dict(settings['sbatch'])
         allowed = {'clusters', 'qos', 'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem'}
-        if set(settings['sbatch']) - allowed:
-            raise ValueError('Unsupported density Slurm option')
-        for key, value in settings['sbatch'].items(): batch += ['--' + key, str(value)]
+        if set(options) - allowed: raise ValueError('Unsupported density Slurm option')
+        if 'time' in options: options['time'] = batch_time(options['time'], len(pending))
+        if len(pending) == 1:
+            work = pending[0]['run']
+            shell = pending[0]['shell']
+        else:
+            token = hashlib.sha256(json.dumps([(p['model'], name, p['identity']) for p in pending], sort_keys=True).encode()).hexdigest()[:16]
+            work = runtime.confined(root, root / 'workspace/receipts/isolation-check/batches' / token)
+            work.mkdir(parents=True, exist_ok=True)
+            shell = 'set -eu\n'
+            for plan in pending:
+                logfile = shlex.quote(str(plan['run'] / 'density-')) + '"${SLURM_JOB_ID}".log'
+                shell += '(\n' + plan['shell'] + '\n) > ' + logfile + ' 2>&1\n'
+        job_name = 'density-' + pending[0]['model'] if len(pending) == 1 else 'density-batch-' + str(len(pending))
+        batch = ['sbatch', '--parsable', '--job-name', job_name, '--chdir', str(work), '--output', str(work / 'density-%j.log')]
+        for key, value in options.items(): batch += ['--' + key, str(value)]
         batch += ['--wrap', shell]
-        result = dict(identity, state='submitting', created_utc=runtime.now(), directory=str(run), command=batch)
-        runtime.write_json(receipt, result)
+        records = []
+        for plan in pending:
+            result = dict(plan['identity'], model=plan['model'], state='submitting', created_utc=runtime.now(),
+                          directory=str(plan['run']), batch_directory=str(work), command=batch)
+            runtime.write_json(plan['receipt'], result)
+            records.append(result)
         submitted = subprocess.run(batch, capture_output=True, text=True)
         if submitted.returncode:
-            receipt.unlink()  # Definitive scheduler rejection allows retry.
+            for plan in pending: plan['receipt'].unlink()
             raise ValueError(submitted.stderr.strip())
         job = submitted.stdout.strip().split(';')[0]
         if not job.isdigit(): raise ValueError('Unrecognized density job ID; reconcile Slurm')
-        result.update(state='submitted', job_id=job)
-        runtime.write_json(receipt, result)
-        return result
+        for plan, result in zip(pending, records):
+            result.update(state='submitted', job_id=job)
+            runtime.write_json(plan['receipt'], result)
+        return {'job_id': job, 'submitted_models': [p['model'] for p in pending], 'runs': records, 'existing': existing}
+
+
+def check(root, model, name, selection='all'):
+    result = check_many(root, [model], name, selection)
+    return (result.get('runs') or result['existing'])[0]
 
 
 def results(root, model, name):
@@ -197,6 +256,17 @@ def results(root, model, name):
 def client(args):
     import workflow_management as management
     remote, ssh = management.ssh_config(args)
+    if args.command == 'isolation-check':
+        for model in args.model:
+            isolation.case_dir(args.root, args.name, model)
+        command = ['python3', remote['root'] + '/workflow_isolation_ops.py', 'check-batch',
+                   '--root', remote['root'], '--models', *args.model, '--name', args.name, '--range', args.range]
+        response = isolation.remote_exec(args, command, capture=True)
+        result = json.loads(response.stdout)
+        summary = {key: result[key] for key in ('job_id', 'submitted_models')}
+        summary['existing'] = [{key: row.get(key) for key in ('model', 'job_id', 'scheduler')} for row in result['existing']]
+        print(json.dumps(summary, indent=2), flush=True)
+        return 0
     for model in args.model:
         isolation.case_dir(args.root, args.name, model)  # Validate model and run labels.
         operation = {'isolation-clean-failed': 'cleanup', 'isolation-check': 'check', 'isolation-fetch': 'results'}[args.command]
@@ -231,15 +301,19 @@ def client(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['cleanup', 'check', 'results'])
+    parser.add_argument('operation', choices=['cleanup', 'check', 'check-batch', 'results'])
     parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--model', required=True)
+    parser.add_argument('--model')
+    parser.add_argument('--models', nargs='+')
     parser.add_argument('--name', required=True)
     parser.add_argument('--range', default='all')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
-    if args.operation == 'cleanup': value = cleanup(root, args.model, args.name, args.dry_run)
+    if args.operation == 'check-batch' and not args.models: parser.error('--models is required')
+    if args.operation != 'check-batch' and not args.model: parser.error('--model is required')
+    if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range)
+    elif args.operation == 'cleanup': value = cleanup(root, args.model, args.name, args.dry_run)
     elif args.operation == 'check': value = check(root, args.model, args.name, args.range)
     else: value = results(root, args.model, args.name)
     print(json.dumps(value))
