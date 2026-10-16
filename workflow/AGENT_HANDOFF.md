@@ -87,15 +87,17 @@ python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf
 ## 5. 完成后处理 isolated 模拟
 
 ```bash
-# 默认首、中、末三个快照；先检查平衡性和演化趋势
+# 默认处理全部快照并生成视频；与历史密度检查流程一致
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013
 # 相同命令不会重复提交，返回原检查 JobID 和当前调度状态
 # 检查结束后取回图和统计表，不搬运全部快照
 python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013
-# 如需完整时间序列和视频，再提交全部快照
-python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range all
+# 可选：显式 quick 只抽查首、中、末帧，不生成视频
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range quick
 ```
 
+默认不传 --range 会处理全部快照并生成视频；服务器按原检查脚本使用 16 个进程。
+`--range quick` 只抽查首、中、末三帧，不生成视频。
 `--range 0,300,601` 只检查列出的快照；`--range 0-601` 检查区间。
 共享程序：服务器 `data/isoFornax/python/check_density_profile.py`。它依赖 `isoFornax/` 下的共享 Python 模块，保持该安装深度。
 历史 shell 实际为 `data/isoFornax/Fornax/subchecdensity.sh`；没有要求每个新运行复制一份。在成功运行目录 `cd` 后，可以直接 `sbatch` 该脚本的绝对路径进行全量检查。

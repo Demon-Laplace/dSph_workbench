@@ -487,12 +487,12 @@ returns its original job ID instead of submitting a duplicate.
 本地工作区统一入口（服务器执行计算，快照留在服务器）：
 
 ```bash
-# 默认 quick：首、中、末三个快照，先检查演化是否正常
+# 默认：全部快照的密度检查，并生成视频
 python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013
 # 检查作业结束后，只下载图与统计结果
 python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-20261013
-# 确实需要完整时间序列时，再分析全部快照并生成视频
-python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range all
+# 可选：只想快速抽查首、中、末帧时，明确指定 quick
+python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-20261013 --range quick
 ```
 
 检查结果在服务器 `isoFornax/<model>/runs/<run>/density_output/`，下载到本地

@@ -139,12 +139,21 @@ class IsolationOpsTests(unittest.TestCase):
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[]), \
              patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '123;test\n', '')) as submit, \
              patch.object(ops, 'accounting', return_value={'state': 'RUNNING'}):
-            first = ops.check(self.root, 'Fornax7002', 'success')
-            second = ops.check(self.root, 'Fornax7002', 'success')
+            first = ops.check(self.root, 'Fornax7002', 'success', 'quick')
+            second = ops.check(self.root, 'Fornax7002', 'success', 'quick')
         self.assertEqual(first['selection'], '0,300,600')
         self.assertEqual(second['job_id'], '123')
         submit.assert_called_once()
         self.assertIn('--no-video', submit.call_args.args[0][-1])
+
+    def test_default_check_uses_all_snapshots_and_enables_video(self):
+        for n in (0, 300, 600): (self.keep / 'output' / f'snapshot_{n:03d}.hdf5').touch()
+        with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[]), \
+             patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '124;test\n', '')) as submit:
+            result = ops.check(self.root, 'Fornax7002', 'success')
+        self.assertEqual(result['selection'], 'all')
+        self.assertNotIn('--range', submit.call_args.args[0][-1])
+        self.assertNotIn('--no-video', submit.call_args.args[0][-1])
 
     def test_check_refuses_active_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()

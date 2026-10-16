@@ -118,7 +118,7 @@ def cleanup(root, model, keep, dry_run=False):
     return report
 
 
-def check(root, model, name, selection='quick'):
+def check(root, model, name, selection='all'):
     run = isolation.case_dir(root, name, model)
     if json.loads((run / 'status.json').read_text())['state'] != 'complete':
         raise ValueError('Density checks require a completed isolation run')
@@ -152,7 +152,10 @@ def check(root, model, name, selection='quick'):
             command += ['--range', selection, '--no-video']
         shell = 'set -eu\ncd ' + shlex.quote(str(run)) + '\n' + settings['setup'] + '\n'
         shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
-        shell += 'exec ' + shlex.join(command)
+        shell += shlex.join(command)
+        if selection == 'all':
+            verify_video = 'from pathlib import Path; p=Path(' + repr(str(output)) + '); assert any(v.stat().st_size > 0 for v in p.glob("*.mp4")), "Density video was not generated"'
+            shell += '\n' + shlex.join(['python3', '-c', verify_video])
         batch = ['sbatch', '--parsable', '--job-name', 'density-' + model, '--chdir', str(run),
                  '--output', str(run / 'density-%j.log')]
         allowed = {'clusters', 'qos', 'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem'}
@@ -232,7 +235,7 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--model', required=True)
     parser.add_argument('--name', required=True)
-    parser.add_argument('--range', default='quick')
+    parser.add_argument('--range', default='all')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     root = args.root.resolve()
