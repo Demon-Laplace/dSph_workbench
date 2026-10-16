@@ -199,3 +199,23 @@ workspace/environments/，计算数据在 workspace/local-isolation/，和服务
 运行时使用短相对参数路径，旧程序 ParameterFile/InitCondFile 缓冲区只有 100 字符。
 本机时间估计读取 progress.json 的实际积分速度；初始化阶段不得给出确定耗时。
 7004、7005 本次用户指定 timescale_fd=16.6；服务器 profile 命名为 fd16p6-pafXX。
+
+### 正式模拟的 HI 定义与旧结果迁移（2026-10-16）
+
+用户明确选择 HI fraction = M_HI / M_star，可大于 1；分子、分母必须使用相同孔径。
+求解器 NeutralHydrogenAbundance 是 n_HI/n_H，所以单粒子 HI 质量为
+0.76 * m_gas * NeutralHydrogenAbundance；冷、热两种温度成分都要统计。
+新 elinfo 包含 hi_mass、hi_half_mass、hi_fraction、hi_half_fraction、gas_mass、
+gas_half_mass。旧 coldgas_* 质量列保留为修正后 HI 质量的兼容别名；hotgas_*
+仍是历史定义，不能与 HI 相加充当总气体质量。重子理论弥散使用恒星加总气体。
+
+GetInfo、PlotFig、CheckFig 和 IC 报告读取相同定义。旧 CSV 缺少新字段时应在
+新的分析目录重算，不能更改列名后继续，也不能混用旧统计与新帧。既有分析和
+release 保持冻结。真实验证为 7001 快照 100–102 的统计和绘图，以及快照 100
+的独立质量/孔径计算：39 项无关统计与旧版完全一致。机器上的验证回执在
+workspace/validation/hi-fix-20261016/，不会上传粒子数据或图片到 GitHub。
+
+7004/7005 此次服务器反馈 16.6；7004 在 PAF=4.0/4.5/5.0 的短时失败已验证
+并清理，PAF=6.0 的替代作业号 305984 保留；7005 为 PAF=4.0，作业号 305981。
+这仅为历史记录，接手时必须重新查询状态，不能重复提交。
+本机耗时估计的实测依据和局限见 LOCAL_ISOLATION.md。
