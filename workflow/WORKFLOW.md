@@ -68,7 +68,7 @@ python3 workflow.py ic-catalog --model Fornax7003 --run ic-v2
 | `workspace/inputs/shared/` | 大型共享输入索引 |
 | `workspace/templates/` | 原有生产与隔离模板索引 |
 | `workspace/analysis/<任务名>/` | 固定代码、输入记录、统计、图片、视频及运行状态 |
-| `workspace/results/remote/<任务名>/` | 本地回传成果，不含原始快照 |
+| `<model>/` | 正式模拟回传的视频及 elinfo 统计表 |
 | `workspace/results/models/<模型名>/` | 从历史模型直接取回的成果 |
 | `workspace/notebooks/` | 旧笔记本索引；运行旧笔记本仍应使用原工作目录 |
 | `workspace/catalog/` | 目录分类与数据放置清单 |
@@ -154,7 +154,7 @@ python3 workflow.py pull --name run7001-example
 python3 workflow.py fetch-model Fornax5026 --dry-run
 ```
 
-`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 可手工下载未完成任务的诊断记录。`fetch-model` 从已有模型获取图片、视频、统计表和小型运行参数，不获取快照。
+`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 从指定分析任务取回视频和 elinfo 统计表；`fetch-model` 从正式模拟目录取回同类成果。两者直接写入本地 `<model>/`，逐帧图片、代码和参数留在服务器。下载后验证 SHA256；视频验证帧数。
 
 同一任务目录有进程锁，提交回执防止误重复提交。失败后或希望补做视频时，可以显式续跑：
 
@@ -573,3 +573,10 @@ python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-2026
 IC 文件及原建模诊断图保留；回执仍集中存放在 workspace/receipts/。
 2026-10-16 已将 7002/7003 的视频和 CSV 上移，旧 density_output/ 中的逐帧图片移入本地回收站。
 服务器 density_output/ 结构与检查程序保持原样。
+
+## 正式视频精简回传与本机 isolation
+
+正式模拟的 fetch-model、pull、collect --wait 现在只回传视频及 elinfo 统计表，直接放在
+本地对应模型目录，下载验证 SHA256 和视频帧数；服务器逐帧图片不回传。
+本机隔离运行见 [LOCAL_ISOLATION.md](LOCAL_ISOLATION.md)，支持后台运行及基于实际
+积分进度的耗时估计。用户本次为 7004、7005 指定 feedback=16.6。

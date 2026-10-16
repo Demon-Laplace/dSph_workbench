@@ -18,6 +18,7 @@ import workflow_models as models
 import workflow_merge as merge
 import workflow_release as release
 import workflow_github as github
+import workflow_local_isolation as local_isolation
 import workflow_isolation as isolation
 import workflow_isolation_ops as isolation_ops
 
@@ -196,6 +197,12 @@ def main():
         if operation in ('isolation-check', 'isolation-fetch'):
             p.add_argument('--timeout', type=int, default=7200, help='maximum wait per model in seconds (default: 7200)')
         p.set_defaults(func=isolation_ops.client)
+    p = commands.add_parser('isolation-local', help='start a native MPI isolation simulation on this computer')
+    p.add_argument('model'); p.add_argument('--name', required=True); p.add_argument('--ic-run', required=True)
+    p.add_argument('--processes', type=int); p.add_argument('--time-max', type=float)
+    p.add_argument('--dry-run', action='store_true'); p.set_defaults(func=local_isolation.start)
+    p = commands.add_parser('isolation-local-status', help='read native simulation progress and measured time estimate')
+    p.add_argument('model'); p.add_argument('--name', required=True); p.set_defaults(func=local_isolation.status)
     p = commands.add_parser('isolation-status', help='read the recorded server isolation job state')
     p.add_argument('--model', help='model ID; required if a run name is ambiguous')
     p.add_argument('--name', required=True)
@@ -263,7 +270,7 @@ def main():
     p = commands.add_parser("verify-params", help="server: verify received parameter batch")
     p.add_argument("--batch", required=True)
     p.set_defaults(func=management.verify_params)
-    p = commands.add_parser("fetch-model", help="retrieve existing model figures/videos/tables without snapshots")
+    p = commands.add_parser("fetch-model", help="retrieve production videos/summary directly into the local model folder")
     p.add_argument("model")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=management.fetch_model)

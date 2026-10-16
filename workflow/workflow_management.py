@@ -115,19 +115,81 @@ def remote_command(args, arguments):
     return command + [settings['host'], setup + 'PYTHONDONTWRITEBYTECODE=1 ' + shlex.join(cmd)]
 
 
-def pull(args):
+def production_results(root, model=None, name=None):
+    """Small verified manifest of top-level production videos/tables, never frames."""
+    import workflow_isolation as isolation
+    expected_frames = None
+    if name:
+        runtime.label(name)
+        run = runtime.confined(root, root / 'workspace/analysis' / name)
+        manifest = json.loads((run / 'manifest.json').read_text())
+        model = manifest['model']
+        source = runtime.confined(run, run / model)
+        state = json.loads((run / 'status.json').read_text()) if (run / 'status.json').exists() else {}
+        if state.get('status') == 'complete' and state.get('range'):
+            expected_frames = len(runtime.selected_snapshots(manifest, state['range']))
+    else:
+        source = runtime.model_directory(root, model)
+    runtime.label(model)
+    files = sorted(source.glob('*.mp4')) + list(source.glob('elinfo_' + model + '.csv'))
+    if not files: raise ValueError('No production videos or summary table available')
+    records = []
+    for path in files:
+        runtime.confined(source, path)
+        if path.is_symlink() or not path.is_file() or not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
+            raise ValueError('Invalid production output: ' + str(path))
+        records.append({'name': path.name, 'bytes': path.stat().st_size, 'sha256': isolation.sha(path)})
+    return {'model': model, 'directory': str(source), 'files': records, 'expected_frames': expected_frames}
+
+
+def fetch_production(args, model=None, name=None):
+    import workflow_isolation as isolation
     settings, ssh = ssh_config(args)
-    runtime.label(args.name)
-    destination = runtime.confined(args.root, args.root / 'workspace/results/remote' / args.name)
-    destination.mkdir(parents=True, exist_ok=True)
-    command = ['rsync', '-rt', '--itemize-changes', '-e', shlex.join(ssh),
-               '--exclude=output/', '--exclude=*.hdf5', '--exclude=*.ini', '--exclude=.tmp/',
-               '--exclude=.mpl/', '--exclude=.cache/', '--exclude=__pycache__/', '--exclude=*.lock',
-               settings['host'] + ':' + settings['root'] + '/workspace/analysis/' + args.name + '/', str(destination) + '/']
-    if args.dry_run:
-        command.insert(1, '--dry-run')
+    command = ('from pathlib import Path; import json,workflow_management as m; '
+               'print(json.dumps(m.production_results(Path(' + repr(settings['root']) + '), '
+               'model=' + repr(model) + ',name=' + repr(name) + ')))')
+    response = isolation.remote_exec(args, ['python3', '-c', command], capture=True)
+    result = json.loads(response.stdout)
+    destination = runtime.model_directory(args.root, result['model'])
+    filters = []
+    for record in result['files']:
+        filename = record['name']
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+', filename) or not filename.endswith(('.mp4', '.csv')):
+            raise ValueError('Invalid production result filename')
+        target = runtime.confined(destination, destination / filename)
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise ValueError('Production result target is not a regular file')
+        filters.append('--include=/' + filename)
+    command = ['rsync', '-rt', '--checksum', '--itemize-changes', '-e', shlex.join(ssh), *filters,
+               '--exclude=*', settings['host'] + ':' + result['directory'] + '/', str(destination) + '/']
+    if args.dry_run: command.insert(1, '--dry-run')
+    else: destination.mkdir(parents=True, exist_ok=True)
     print(shlex.join(command), flush=True)
-    return subprocess.run(command).returncode
+    subprocess.run(command, check=True)
+    if args.dry_run: return 0
+    for record in result['files']:
+        path = destination / record['name']
+        if path.stat().st_size != record['bytes'] or isolation.sha(path) != record['sha256']:
+            raise ValueError('Production output checksum mismatch; retry fetching')
+        if path.suffix == '.mp4':
+            info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=nb_frames,duration', '-of', 'json', str(path)], text=True))
+            streams = info.get('streams', [])
+            frames = int(streams[0].get('nb_frames', 0)) if len(streams) == 1 else 0
+            if frames < 1 or (result['expected_frames'] is not None and frames != result['expected_frames']):
+                raise ValueError('Production video frame count mismatch')
+            record['frames'] = frames
+    receipt = runtime.confined(args.root, args.root / 'workspace/receipts/production' / result['model'] /
+                              ((name or 'model') + '.json'))
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_json(receipt, dict(result, local_directory=str(destination), verified_utc=runtime.now()))
+    print('Saved production video/summary: ' + str(destination))
+    return 0
+
+
+def pull(args):
+    runtime.label(args.name)
+    return fetch_production(args, name=args.name)
 
 
 def pipeline(args):
@@ -259,13 +321,4 @@ def push_params(args):
 
 def fetch_model(args):
     runtime.label(args.model)
-    settings, ssh = ssh_config(args)
-    destination = runtime.confined(args.root, args.root / 'workspace/results/models' / args.model)
-    destination.mkdir(parents=True, exist_ok=True)
-    command = ['rsync', '-rt', '--itemize-changes', '-e', shlex.join(ssh),
-               '--exclude=output/', '--exclude=__pycache__/', '--include=*/',
-               '--include=*.png', '--include=*.mp4', '--include=elinfo_*.csv', '--include=*.PARAM', '--include=*.par', '--exclude=*',
-               settings['host'] + ':' + settings['root'] + '/' + args.model + '/', str(destination) + '/']
-    if args.dry_run:
-        command.insert(1, '--dry-run')
-    return subprocess.run(command).returncode
+    return fetch_production(args, model=args.model)

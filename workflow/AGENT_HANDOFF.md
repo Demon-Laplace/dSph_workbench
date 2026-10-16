@@ -59,7 +59,7 @@ python3 workflow.py isolation-status --model Fornax7002 --name fd25-paf40-202610
 不传 `--submit` 会上传、准备并执行 Slurm 预检。转换二进制 IC 与运行在计算节点执行。
 TREECOOL 自动从配置模板复制为普通文件，禁止依赖复制后失效的相对链接。
 
-当前已配置 `fd25-paf35` 和 `fd25-paf40`：feedback 对应 `timescale_fd=24.9`，**不是 25.0**；BufferSize=120；PartAllocFactor 分别为 3.5/4.0。仅 7002、7003 已明确授权这个 feedback，其他模型按用户参数选择配置，不擅自套用。
+当前已配置 `fd25-paf35` 和 `fd25-paf40`：feedback 对应 `timescale_fd=24.9`，**不是 25.0**；BufferSize=120；PartAllocFactor 分别为 3.5/4.0。7002、7003 使用此 feedback；用户已另行指定 7004、7005 使用 16.6，不得混用。
 普通 `default` 模板的 feedback 是 16.6，不能误用于这两个模型。
 模拟精度保持原样；检查工具可沿用已经验证的 float32，不能顺手把模拟数据降为 float16。
 
@@ -184,3 +184,18 @@ python3 workflow.py isolation-fetch Fornax7002 Fornax7003 --name fd25-paf40-2026
 IC 文件及原建模诊断图保留；回执仍集中存放在 workspace/receipts/。
 2026-10-16 已将 7002/7003 的视频和 CSV 上移，旧 density_output/ 中的逐帧图片移入本地回收站。
 服务器 density_output/ 结构与检查程序保持原样。
+
+### 正式模拟回传与本机运行（2026-10-16）
+
+正式模拟也采用精简回传：fetch-model MODEL、pull --name RUN、collect --wait 都只取
+顶层视频和 elinfo_<model>.csv，直接存入本地 <model>/，逐帧 PNG 留在服务器；回执在
+workspace/receipts/production/。下载检查 SHA256 与视频帧数。不会再创建回传专用目录。
+旧 workspace/results/remote/ 是历史验证产物，不能随意将不同检查范围的同名视频互相覆盖。
+
+本机原生 isolation 已配置，读 [LOCAL_ISOLATION.md](LOCAL_ISOLATION.md)，使用
+isolation-local / isolation-local-status。本机源码和环境在 workspace/software/ 与
+workspace/environments/，计算数据在 workspace/local-isolation/，和服务器结果分开。
+原生构建使用同一套物理宏，应用已有 16 字节分配器对齐补丁；不替换服务器原二进制。
+运行时使用短相对参数路径，旧程序 ParameterFile/InitCondFile 缓冲区只有 100 字符。
+本机时间估计读取 progress.json 的实际积分速度；初始化阶段不得给出确定耗时。
+7004、7005 本次用户指定 timescale_fd=16.6；服务器 profile 命名为 fd16p6-pafXX。
