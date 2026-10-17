@@ -11,3 +11,9 @@ their isolation run names differ. Use repeated `--run MODEL=RUN` arguments to
 identify those runs. Process models sequentially with the configured worker count
 (normally 16), including video-only checks. Do not submit one job per model or
 run multiple worker groups concurrently. Preserve already submitted tasks.
+
+Production orbital simulations use astro_fat, one separate job per model,
+through the existing subastrofat.sh with its current resource settings. For
+Fornax7004/7005, use snap2csv exports of their completed isolation snapshot 50
+and retain timescale_fd=16.6. Validate exports and merged ICs before submission;
+preserve original snapshots and existing user shell scripts.
