@@ -16,6 +16,13 @@
 导出后核对全部粒子 ID、类型映射、质量、速度、气体内能和恒定居中位移，再用
 既有 `merge-ic` 完成合并及二进制逐粒子验证，成功后提交正式模拟。
 
+`simulate --submit` 默认自动检测启动：作业正常运行至少 140 秒且 info.txt 有非零
+时刻积分记录后，写入作业目录的 `startup.json`，退出检测，模拟继续运行。
+初始化或只有初始快照不算通过；失败作业直接报错。不要手动反复轮询或询问确认。
+仅需提交后立即返回可加 `--no-wait-startup`；`--startup-timeout` 默认 7200 秒，超时
+不会取消模拟。已提交作业可用 `remote simulation-startup MODEL --name JOB_NAME`
+自动检查，支持 `--timeout`，不会重复提交。
+
 ## 1. 三端职责与边界
 
 - 本地分析工作区：`/home/x-huang/simulation/model/Fornax`，统一入口 `python3 workflow.py`。

@@ -72,6 +72,9 @@ Fornax7004/7005 must use snap2csv exports from isolation snapshot 50 and retain
 timescale_fd=16.6. Validate exports and merged ICs before submitting. Preserve
 original snapshots and user shell scripts.
 Fornax7004/7005 orbital and orientation transforms must match Fornax5028.
+Production startup monitoring is automatic: exit after 140 running seconds and
+nonzero integration progress, leaving the simulation running. Avoid repeated
+manual checks or confirmation requests.
 
 New agents should first read workspace/code/github-sync/workflow/AGENT_HANDOFF.md
 for the complete local/server/GitHub workflow and the user-approved boundaries.

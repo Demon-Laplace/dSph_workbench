@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 import workflow_runtime as runtime
 
@@ -136,6 +137,8 @@ def new_case(args):
 
 
 def simulate(args):
+    if getattr(args, 'startup_timeout', 7200) <= 0:
+        raise ValueError('--startup-timeout must be positive')
     model = runtime.model_directory(args.root, model_name(args.model)).resolve()
     launcher = model / args.launcher
     if args.launcher not in ('subastrothin.sh', 'subastrofat.sh', 'submeso1.sh') or not launcher.is_file():
@@ -171,5 +174,74 @@ def simulate(args):
                        'command': command, 'submitted': args.submit and result.returncode == 0,
                        'stdout': result.stdout, 'stderr': result.stderr, 'returncode': result.returncode,
                        'launcher_sha256': runtime.sha(script), 'parameter_sha256': runtime.sha(model / 'GZWJL.PARAM')})
-    print(result.stdout, end=''); print(result.stderr, end='')
+    print(result.stdout, end='', flush=True); print(result.stderr, end='', flush=True)
+    if args.submit and result.returncode == 0 and not getattr(args, 'no_wait_startup', False):
+        return simulation_startup(args)
     return result.returncode
+
+
+def simulation_startup(args):
+    """Stop monitoring after 140 seconds of running and nonzero integration progress."""
+    from workflow_isolation_ops import accounting
+    timeout = getattr(args, 'startup_timeout', getattr(args, 'timeout', 7200))
+    if timeout <= 0:
+        raise ValueError('Startup timeout must be positive')
+    model = runtime.model_directory(args.root, model_name(args.model)).resolve()
+    directory = runtime.confined(args.root, args.root / 'workspace/jobs' / runtime.label(args.name))
+    submitted = json.loads((directory / 'submission.json').read_text())
+    if not submitted.get('submitted') or Path(submitted['model']).resolve() != model:
+        raise ValueError('Startup monitoring requires a submitted job for this model')
+    match = re.fullmatch(r'(\d+)(?:;([A-Za-z0-9_.-]+))?', submitted['stdout'].strip())
+    if not match:
+        raise ValueError('Unrecognized submitted job ID; reconcile Slurm before monitoring')
+    job, cluster = match.group(1), match.group(2) or 'all'
+    parameter = model / 'GZWJL.PARAM'
+    if runtime.sha(parameter) != submitted['parameter_sha256']:
+        raise ValueError('Simulation parameters changed since submission')
+    parameters = {}
+    for line in parameter.read_text().splitlines():
+        fields = line.split('%', 1)[0].split()
+        if len(fields) >= 2:
+            parameters[fields[0]] = fields[1]
+    output = runtime.confined(args.root, model / parameters['OutputDir'])
+    deadline = time.monotonic() + timeout
+    print(f'Automatically checking job {job}; exit monitoring after 140 running seconds and integration progress.', flush=True)
+    terminal = {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY',
+                'NODE_FAIL', 'PREEMPTED', 'BOOT_FAIL', 'DEADLINE', 'REVOKED'}
+    while True:
+        try:
+            scheduler = accounting(job, cluster)
+        except ValueError as error:
+            if str(error) != 'Slurm accounting is unavailable or ambiguous; retry later':
+                raise
+            scheduler = {'state': 'ACCOUNTING_PENDING', 'elapsed_seconds': 0}
+        progress = None
+        info = output / 'info.txt'
+        if info.is_file():
+            for point in re.finditer(r'Sync-Point\s+(\d+),\s*Time:\s*([0-9.eE+-]+)', info.read_text(errors='replace')):
+                if int(point.group(1)) > 0 and float(point.group(2)) > 0:
+                    progress = {'sync_point': int(point.group(1)), 'simulation_time': float(point.group(2))}
+        state = scheduler['state']
+        record = {'job_id': job, 'cluster': cluster, 'model': str(model),
+                  'checked_utc': runtime.now(), 'scheduler': scheduler, 'progress': progress,
+                  'required_running_seconds': 140, 'state': 'waiting'}
+        if state in terminal and (state != 'COMPLETED' or scheduler.get('exit_code') != '0:0'):
+            record['state'] = 'failed'
+            runtime.write_json(directory / 'startup.json', record)
+            raise ValueError(f'Simulation job {job} failed during startup: {scheduler}')
+        if state in {'RUNNING', 'COMPLETED'} and scheduler['elapsed_seconds'] >= 140 and progress:
+            record['state'] = 'startup_verified'
+            runtime.write_json(directory / 'startup.json', record)
+            print(json.dumps(record, indent=2), flush=True)
+            return 0
+        if state == 'COMPLETED':
+            record['state'] = 'failed'
+            runtime.write_json(directory / 'startup.json', record)
+            raise ValueError(f'Simulation job {job} exited before startup could be verified')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            record['state'] = 'timed_out'
+            runtime.write_json(directory / 'startup.json', record)
+            raise ValueError('Startup check timed out; the simulation was not cancelled. Resume with simulation-startup.')
+        runtime.write_json(directory / 'startup.json', record)
+        time.sleep(min(15, remaining))
