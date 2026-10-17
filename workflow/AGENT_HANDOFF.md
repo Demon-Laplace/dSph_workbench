@@ -22,6 +22,18 @@
 仅需提交后立即返回可加 `--no-wait-startup`；`--startup-timeout` 默认 7200 秒，超时
 不会取消模拟。已提交作业可用 `remote simulation-startup MODEL --name JOB_NAME`
 自动检查，支持 `--timeout`，不会重复提交。
+检测通过后生成 `simulation-details.json`，包含模型、snapshot 来源、银河系和背景气体
+输入、分类型粒子数、实际合并 IC 的粒子质量范围/均值（太阳质量单位）、轨道角度、
+物理参数和申请资源。远程命令自动回传到本地
+`workspace/receipts/production/<model>/<job-name>/`，校验 SHA256 后结束，不继续监测。
+
+新提交作业使用独立生成的 `run-monitored.sh`，完整保留原 `subastrofat.sh` 等脚本及
+其资源指令，冻结监测 Python 源码。监测是同一 batch 作业内的后台轻量进程，不额外
+sbatch/srun、不多申请节点或 CPU；每 15 秒读一次 info.txt，其余时间休眠。
+从作业实际执行开始计时，排队期间不启动监测。生成报告后后台进程自行退出，模拟
+继续；模拟提前退出时 wrapper 停止监测，并保留原模拟退出码。本地只等待报告文件并
+下载，断线不影响服务器检测；恢复后用 `simulation-startup` 取回。旧作业保留原样，
+独立检测入口兼容旧提交回执，不为安装监测而取消、重提已有模拟。
 
 ## 1. 三端职责与边界
 

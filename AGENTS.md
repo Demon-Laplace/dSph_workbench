@@ -21,3 +21,10 @@ Fornax7004/7005 orbital and orientation transforms must match Fornax5028.
 Use automatic startup monitoring: after 140 running seconds and nonzero
 integration progress, exit the monitor and leave the simulation running.
 Avoid repeated manual checks or confirmation requests.
+After successful startup detection, return simulation details (IC/model and
+Milky Way/background inputs, particle counts/mass resolution, orbit/orientation,
+physics parameters and job resources) and end monitoring.
+Integrate monitoring into the existing batch allocation as a sleeping child,
+without an extra Slurm job or reserved CPU. Use a generated wrapper, preserving
+user launchers. Queue time uses no monitor node resources; local disconnection
+must not stop server detection or simulation.

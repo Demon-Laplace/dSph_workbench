@@ -75,6 +75,14 @@ Fornax7004/7005 orbital and orientation transforms must match Fornax5028.
 Production startup monitoring is automatic: exit after 140 running seconds and
 nonzero integration progress, leaving the simulation running. Avoid repeated
 manual checks or confirmation requests.
+After detection succeeds, generate simulation-details.json with IC/model and
+Milky Way/background inputs, particle counts and mass resolution, orbit and
+orientation, physics parameters and job resources. Return the report and stop
+monitoring while leaving the simulation running.
+The monitor runs as a sleeping child in the existing batch allocation, checking
+every 15 seconds, with no extra Slurm job, MPI task or reserved CPU. Queue time
+uses no monitor node resources. Preserve user launchers; freeze a generated
+wrapper and monitor sources instead. Local report reception is independent.
 
 New agents should first read workspace/code/github-sync/workflow/AGENT_HANDOFF.md
 for the complete local/server/GitHub workflow and the user-approved boundaries.

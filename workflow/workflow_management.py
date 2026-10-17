@@ -100,7 +100,35 @@ def ssh_config(args):
 
 
 def remote(args):
-    return subprocess.run(remote_command(args, args.arguments)).returncode
+    arguments = args.arguments[1:] if args.arguments[:1] == ['--'] else args.arguments
+    report = bool(arguments) and (arguments[0] == 'simulation-startup' or
+        (arguments[0] == 'simulate' and '--submit' in arguments and '--no-wait-startup' not in arguments))
+    if not report:
+        return subprocess.run(remote_command(args, arguments)).returncode
+    result = subprocess.run(remote_command(args, arguments), capture_output=True, text=True)
+    print(result.stdout, end='', flush=True); print(result.stderr, end='', file=sys.stderr, flush=True)
+    if result.returncode:
+        return result.returncode
+    rows = [line.removeprefix('DSPH_SIMULATION_DETAILS ') for line in result.stdout.splitlines()
+            if line.startswith('DSPH_SIMULATION_DETAILS ')]
+    if len(rows) != 1:
+        raise ValueError('Missing verified simulation details; update the server workflow')
+    metadata = json.loads(rows[0])
+    from workflow_models import model_name
+    model, name = model_name(metadata['model']), runtime.label(metadata['name'])
+    destination = runtime.confined(args.root, args.root / 'workspace/receipts/production' / model / name)
+    destination.mkdir(parents=True, exist_ok=True)
+    path = destination / 'simulation-details.json'
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError('Local simulation report target must be a regular file')
+    settings, ssh = ssh_config(args)
+    source = settings['root'] + '/workspace/jobs/' + name + '/simulation-details.json'
+    subprocess.run(['rsync', '-rt', '--checksum', '-e', shlex.join(ssh),
+                    settings['host'] + ':' + source, str(path)], check=True)
+    if runtime.sha(path) != metadata['sha256']:
+        raise ValueError('Simulation details checksum mismatch; retry simulation-startup')
+    print('Saved verified simulation details: ' + str(path))
+    return 0
 
 
 def remote_command(args, arguments):
