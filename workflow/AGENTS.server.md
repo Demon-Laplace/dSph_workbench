@@ -60,6 +60,11 @@ a small centralized deletion receipt, not an archived failed run. Never apply
 this policy to successful cases or long-running interrupted simulations.
 Density checks use the shared isoFornax/python/check_density_profile.py and
 central workflow_isolation_ops; preserve existing user shell launchers.
+Checks for multiple simulations must share one Slurm job on one node, including
+different isolation run names (use repeated --run MODEL=RUN arguments). Process
+models sequentially with the configured worker count, normally 16, including
+video-only checks. Do not submit one job per model or run concurrent worker
+groups. Preserve already submitted tasks rather than cancelling or repeating them.
 
 New agents should first read workspace/code/github-sync/workflow/AGENT_HANDOFF.md
 for the complete local/server/GitHub workflow and the user-approved boundaries.

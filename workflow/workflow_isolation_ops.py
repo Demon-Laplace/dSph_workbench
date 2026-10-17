@@ -167,11 +167,37 @@ def batch_time(value, count):
     return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'
 
 
-def check_many(root, models, name, selection='all', video_only=False):
-    from contextlib import ExitStack
+def density_cases(models, name=None, run_names=None):
+    """Resolve explicit per-model run names before connecting or submitting."""
+    from workflow_models import model_name
     if not models or len(models) != len(set(models)):
         raise ValueError('Provide distinct model IDs')
-    plans = [density_plan(root, model, name, selection, video_only) for model in models]
+    for model in models:
+        model_name(model)
+    if name is not None:
+        runtime.label(name)
+    overrides = {}
+    for entry in run_names or []:
+        model, separator, run = entry.partition('=')
+        if not separator or model not in models:
+            raise ValueError('--run requires MODEL=RUN for a requested model')
+        if model in overrides:
+            raise ValueError('Duplicate --run for ' + model)
+        runtime.label(run)
+        overrides[model] = run
+    cases = []
+    for model in models:
+        run = overrides.get(model, name)
+        if run is None:
+            raise ValueError('Provide --name or --run MODEL=RUN for ' + model)
+        cases.append((model, run))
+    return cases
+
+
+def check_many(root, models, name=None, selection='all', video_only=False, run_names=None):
+    from contextlib import ExitStack
+    cases = density_cases(models, name, run_names)
+    plans = [density_plan(root, model, run, selection, video_only) for model, run in cases]
     settings = runtime.config(root)['isolation_check']
     cluster = settings['sbatch']['clusters']
     existing, pending = [], []
@@ -207,12 +233,13 @@ def check_many(root, models, name, selection='all', video_only=False):
         options = dict(settings['sbatch'])
         allowed = {'clusters', 'qos', 'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem'}
         if set(options) - allowed: raise ValueError('Unsupported density Slurm option')
+        options.update(nodes=1, ntasks=1)
         if 'time' in options: options['time'] = batch_time(options['time'], len(pending))
         if len(pending) == 1:
             work = pending[0]['run']
             shell = pending[0]['shell']
         else:
-            token = hashlib.sha256(json.dumps([(p['model'], name, p['identity']) for p in pending], sort_keys=True).encode()).hexdigest()[:16]
+            token = hashlib.sha256(json.dumps([(p['model'], str(p['run']), p['identity']) for p in pending], sort_keys=True).encode()).hexdigest()[:16]
             work = runtime.confined(root, root / 'workspace/receipts/isolation-check/batches' / token)
             work.mkdir(parents=True, exist_ok=True)
             shell = 'set -eu\n'
@@ -316,16 +343,16 @@ def verify_download(destination, result):
 
 def client(args):
     import workflow_management as management
-    from workflow_models import model_name
-    runtime.label(args.name)
+    cases = density_cases(args.model, args.name, getattr(args, 'run_names', None))
     if (getattr(args, 'fetch', False) or getattr(args, 'wait', False)) and getattr(args, 'timeout', 7200) <= 0:
         raise ValueError('--timeout must be positive')
     remote, ssh = management.ssh_config(args)
     if args.command == 'isolation-check':
-        for model in args.model:
-            model_name(model)
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', 'check-batch',
-                   '--root', remote['root'], '--models', *args.model, '--name', args.name, '--range', args.range]
+                   '--root', remote['root'], '--models', *args.model]
+        if args.name is not None: command += ['--name', args.name]
+        for entry in getattr(args, 'run_names', None) or []: command += ['--run', entry]
+        command += ['--range', args.range]
         if getattr(args, 'video_only', False): command += ['--video-only']
         response = isolation.remote_exec(args, command, capture=True)
         result = json.loads(response.stdout)
@@ -333,11 +360,10 @@ def client(args):
         summary['existing'] = [{key: row.get(key) for key in ('model', 'job_id', 'scheduler')} for row in result['existing']]
         print(json.dumps(summary, indent=2), flush=True)
         if not getattr(args, 'fetch', False): return 0
-    for model in args.model:
-        model_name(model)
+    for model, name in cases:
         operation = {'isolation-clean-failed': 'cleanup', 'isolation-check': 'results', 'isolation-fetch': 'results'}[args.command]
         command = ['python3', remote['root'] + '/workflow_isolation_ops.py', operation,
-                   '--root', remote['root'], '--model', model, '--name', args.name]
+                   '--root', remote['root'], '--model', model, '--name', name]
         if operation == 'cleanup' and args.dry_run: command += ['--dry-run']
         wait = getattr(args, 'wait', False) or (args.command == 'isolation-check' and getattr(args, 'fetch', False))
         result = await_results(args, command, wait) if operation == 'results' else json.loads(
@@ -357,13 +383,13 @@ def client(args):
             targets = [runtime.confined(destination, destination / name) for name in names]
             if any(p.is_symlink() or (p.exists() and not p.is_file()) for p in targets):
                 raise ValueError('Local density result target is not a regular file')
-            source_receipt = isolation.client_directory(args.root, model, args.name).parent / 'density-source.json'
-            identity = {'model': model, 'run': args.name, 'directory': result['directory']}
+            source_receipt = isolation.client_directory(args.root, model, name).parent / 'density-source.json'
+            identity = {'model': model, 'run': name, 'directory': result['directory']}
             if source_receipt.exists() and json.loads(source_receipt.read_text()) != identity:
                 raise ValueError('Local density results belong to another run; move them before fetching a different run')
             if not source_receipt.exists() and any(p.exists() for p in targets):
                 raise ValueError('Local density results have unknown provenance; move them before fetching')
-            receipt = isolation.client_directory(args.root, model, args.name) / 'density-result.json'
+            receipt = isolation.client_directory(args.root, model, name) / 'density-result.json'
             receipt.parent.mkdir(parents=True, exist_ok=True)
             destination.mkdir(parents=True, exist_ok=True)
             runtime.write_json(source_receipt, identity)
@@ -385,7 +411,8 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--model')
     parser.add_argument('--models', nargs='+')
-    parser.add_argument('--name', required=True)
+    parser.add_argument('--name')
+    parser.add_argument('--run', dest='run_names', action='append', metavar='MODEL=RUN')
     parser.add_argument('--range', default='all')
     parser.add_argument('--video-only', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
@@ -394,7 +421,9 @@ def main():
     root = args.root.resolve()
     if args.operation == 'check-batch' and not args.models: parser.error('--models is required')
     if args.operation != 'check-batch' and not args.model: parser.error('--model is required')
-    if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range, args.video_only)
+    if args.operation != 'check-batch' and (not args.name or args.run_names):
+        parser.error('This operation requires --name and does not accept --run')
+    if args.operation == 'check-batch': value = check_many(root, args.models, args.name, args.range, args.video_only, args.run_names)
     elif args.operation == 'cleanup': value = cleanup(root, args.model, args.name, args.dry_run)
     elif args.operation == 'check': value = check(root, args.model, args.name, args.range, args.video_only)
     else: value = results(root, args.model, args.name, args.allow_pending)

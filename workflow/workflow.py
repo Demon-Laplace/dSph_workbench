@@ -184,7 +184,8 @@ def main():
     for operation in ('isolation-clean-failed', 'isolation-check', 'isolation-fetch'):
         p = commands.add_parser(operation)
         p.add_argument('model', nargs='+')
-        p.add_argument('--name', required=True, help='retained/successful isolation run name')
+        p.add_argument('--name', required=operation == 'isolation-clean-failed',
+                       help='default retained/successful isolation run name')
         if operation == 'isolation-clean-failed':
             p.add_argument('--dry-run', action='store_true')
         if operation == 'isolation-check':
@@ -195,6 +196,8 @@ def main():
         if operation == 'isolation-fetch':
             p.add_argument('--wait', action='store_true', help='wait for pending density jobs before downloading')
         if operation in ('isolation-check', 'isolation-fetch'):
+            p.add_argument('--run', dest='run_names', action='append', metavar='MODEL=RUN',
+                           help='per-model run name; repeat for models with different run names')
             p.add_argument('--timeout', type=int, default=7200, help='maximum wait per model in seconds (default: 7200)')
         p.set_defaults(func=isolation_ops.client)
     p = commands.add_parser('isolation-local', help='start a native MPI isolation simulation on this computer')

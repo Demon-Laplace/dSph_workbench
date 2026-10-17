@@ -158,12 +158,12 @@ class IsolationOpsTests(unittest.TestCase):
     def test_batch_submits_once_runs_sequentially_and_preserves_model_outputs(self):
         import os
         import shutil
-        second = isolation.case_dir(self.root, 'success', 'Fornax7003')
+        second = isolation.case_dir(self.root, 'other-success', 'Fornax7003')
         shutil.copytree(self.keep, second)
         for run in [self.keep, second]:
             for n in (0, 300, 600): (run / 'output' / f'snapshot_{n:03d}.hdf5').touch()
         config = json.loads((self.root / 'workflow.json').read_text())
-        config['isolation_check']['sbatch']['time'] = '01:00:00'
+        config['isolation_check']['sbatch'].update(time='01:00:00', nodes=2, ntasks=2)
         runtime.write_json(self.root / 'workflow.json', config)
         (self.root / 'density.py').write_text(
             'import argparse\nfrom pathlib import Path\n'
@@ -174,13 +174,16 @@ class IsolationOpsTests(unittest.TestCase):
         with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[]), \
              patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '125;test\n', '')) as submit, \
              patch.object(ops, 'accounting', return_value={'state': 'RUNNING'}):
-            first = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success')
-            again = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success')
+            overrides = ['Fornax7003=other-success']
+            first = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success', run_names=overrides)
+            again = ops.check_many(self.root, ['Fornax7002', 'Fornax7003'], 'success', run_names=overrides)
             with self.assertRaisesRegex(ValueError, 'active batch'):
-                ops.check(self.root, 'Fornax7003', 'success', 'quick')
+                ops.check(self.root, 'Fornax7003', 'other-success', 'quick')
         submit.assert_called_once()
         command = submit.call_args.args[0]
         self.assertEqual(command[command.index('--time') + 1], '02:00:00')
+        self.assertEqual(command[command.index('--nodes') + 1], '1')
+        self.assertEqual(command[command.index('--ntasks') + 1], '1')
         self.assertEqual(first['job_id'], '125')
         self.assertEqual([r['job_id'] for r in again['existing']], ['125', '125'])
         import sys
@@ -194,8 +197,38 @@ class IsolationOpsTests(unittest.TestCase):
             self.assertTrue((run / 'density_output/density.mp4').exists())
             self.assertIn(str(run), (run / 'density-125.log').read_text())
         probe.write_text('#!' + sys.executable + '\nprint(\'{"streams":[{"nb_frames":"2"}]}\')\n')
+        (second / 'density_output/snapshot_000_density_profile.png').unlink()
         with self.assertRaises(subprocess.CalledProcessError):
             subprocess.run(['bash', '-c', command[-1]], env=environment, check=True)
+        self.assertFalse((second / 'density_output/snapshot_000_density_profile.png').exists())
+
+    def test_run_names_are_explicit_complete_and_validated_before_connection(self):
+        from types import SimpleNamespace
+        models = ['Fornax7002', 'Fornax7003']
+        self.assertEqual(ops.density_cases(models, 'success'), [(m, 'success') for m in models])
+        self.assertEqual(ops.density_cases(models, run_names=['Fornax7002=one', 'Fornax7003=two']),
+                         [('Fornax7002', 'one'), ('Fornax7003', 'two')])
+        invalid = [[], ['Fornax7002=one'], ['Fornax7004=one'], ['Fornax7002'],
+                   ['Fornax7002='], ['Fornax7002=../escape'],
+                   ['Fornax7002=one', 'Fornax7002=two']]
+        for names in invalid:
+            with self.subTest(names=names), patch.object(isolation, 'remote_exec') as remote:
+                args = SimpleNamespace(model=models, name=None, run_names=names)
+                with self.assertRaises(ValueError): ops.client(args)
+                remote.assert_not_called()
+
+    def test_cli_accepts_per_model_runs_without_shared_name(self):
+        import workflow
+        overrides = ['Fornax7002=one', 'Fornax7003=two']
+        for operation, flag in [('isolation-check', '--fetch'), ('isolation-fetch', '--wait')]:
+            arguments = ['workflow.py', '--root', str(self.root), operation, 'Fornax7002', 'Fornax7003',
+                         '--run', overrides[0], '--run', overrides[1], flag]
+            with self.subTest(operation=operation), patch('sys.argv', arguments), \
+                 patch.object(ops, 'client', return_value=0) as client:
+                self.assertEqual(workflow.main(), 0)
+                parsed = client.call_args.args[0]
+                self.assertIsNone(parsed.name)
+                self.assertEqual(parsed.run_names, overrides)
 
     def test_client_sends_one_batch_request_from_either_local_workspace(self):
         from types import SimpleNamespace
@@ -301,6 +334,7 @@ class IsolationOpsTests(unittest.TestCase):
         from types import SimpleNamespace
         import workflow_management as management
         args = SimpleNamespace(root=self.root, model=['Fornax7002', 'Fornax7003'], name='success',
+                               run_names=['Fornax7003=other-success'],
                                command='isolation-check', range='all', fetch=True, timeout=60)
         batch = {'job_id':'125', 'submitted_models':args.model, 'existing':[]}
         replies = [batch] + [{'ready':True, 'directory':'/data/'+model+'/density_output',
@@ -311,12 +345,29 @@ class IsolationOpsTests(unittest.TestCase):
             self.assertEqual(ops.client(args), 0)
         self.assertEqual(remote.call_count, 3)
         self.assertIn('check-batch', remote.call_args_list[0].args[1])
+        command = remote.call_args_list[0].args[1]
+        self.assertEqual(command[command.index('--run') + 1], 'Fornax7003=other-success')
         self.assertEqual(rsync.call_count, 2)
         for model in args.model:
             self.assertTrue((self.root/model/'isolation').is_dir())
             self.assertFalse((self.root/model/'isolation/density_output').exists())
-            saved = isolation.client_directory(self.root, model, 'success')/'density-result.json'
+            name = 'success' if model == 'Fornax7002' else 'other-success'
+            request = remote.call_args_list[1 if model == 'Fornax7002' else 2].args[1]
+            self.assertEqual(request[request.index('--name') + 1], name)
+            saved = isolation.client_directory(self.root, model, name)/'density-result.json'
             self.assertIn('download_verified_utc', json.loads(saved.read_text()))
+            source = saved.parent.parent / 'density-source.json'
+            self.assertEqual(json.loads(source.read_text())['run'], name)
+        # The same mapping also works when resuming downloads without submission.
+        args.command = 'isolation-fetch'
+        args.fetch = False
+        args.wait = True
+        with patch.object(management, 'ssh_config', return_value=({'root':'/data', 'host':'server'}, ['ssh'])), \
+             patch.object(isolation, 'remote_exec', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(r), '') for r in replies[1:]]) as remote, \
+             patch.object(ops.subprocess, 'run'):
+            self.assertEqual(ops.client(args), 0)
+        self.assertEqual(remote.call_count, 2)
+        self.assertTrue(all('check-batch' not in c.args[1] for c in remote.call_args_list))
 
     @unittest.skipUnless(__import__('shutil').which('rsync'), 'rsync required')
     def test_fetch_only_video_and_summary_preserves_existing_ic(self):

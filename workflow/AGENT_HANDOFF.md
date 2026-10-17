@@ -1,7 +1,7 @@
 # dSph 工作流：智能体交接与操作说明
 
 本文件供没有对话上下文的智能体使用。先读本文件，再读相关代码；不要重新设计已稳定的目录结构。
-最后更新：2026-10-16。示例中的运行状态是历史事实，执行前必须重新查询。
+最后更新：2026-10-17。示例中的运行状态是历史事实，执行前必须重新查询。
 
 ## 1. 三端职责与边界
 
@@ -129,8 +129,20 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 
 ### 多模型密度检查共用一次 Slurm 提交
 
-一次 `isolation-check MODEL1 MODEL2 ... --name RUN` 只调用一次 sbatch，所有模型
-共用一个 JobID。在该作业内依次检查各模型，每个模型仍使用配置的 16 个进程；
+多个模拟的检查必须合并为一个 Slurm 作业、一个节点，包括运行名不同的模拟，
+不能因 `--name` 不同就拆成多个独立作业。相同运行名仍可使用
+`isolation-check MODEL1 MODEL2 ... --name RUN`；不同运行名用重复的 `--run MODEL=RUN`
+明确指定，也可用 `--name` 提供默认值、`--run` 覆盖个别模型。例如：
+
+```bash
+python3 workflow.py isolation-check Fornax7004 Fornax7005 \
+  --run Fornax7004=fd16p6-paf60-20261016 \
+  --run Fornax7005=fd16p6-paf40-20261016 --fetch
+```
+
+`isolation-fetch` 支持相同的映射与 `--wait`；`--video-only` 也遵守此规则。
+一次批量检查只调用一次 sbatch，所有待提交模型共用一个 JobID，强制 nodes=1、ntasks=1。
+在该作业内依次检查各模型，每个模型仍使用配置的 16 个进程；
 不把多组进程同时挤在同一份 CPU/内存配额里。申请时长按待检查模型数乘以单模型时长。
 每个模型的 density_output/ 与 density-<JobID>.log 分开保存，图和视频不会混合。
 某模型失败时停止本批后续模型；已生成结果保留。相同命令重复执行返回原作业号。
