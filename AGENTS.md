@@ -17,3 +17,4 @@ through the existing subastrofat.sh with its current resource settings. For
 Fornax7004/7005, use snap2csv exports of their completed isolation snapshot 50
 and retain timescale_fd=16.6. Validate exports and merged ICs before submission;
 preserve original snapshots and existing user shell scripts.
+Fornax7004/7005 orbital and orientation transforms must match Fornax5028.
