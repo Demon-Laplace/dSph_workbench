@@ -3,6 +3,7 @@ import astropy.units as u
 from astropy.coordinates import CartesianDifferential, CartesianRepresentation, SkyCoord
 
 from basefunc import Analysis
+from canonical_observer import production_observables
 from variable import r_3d_cut, stellar_region_rhalf_multiplier
 
 
@@ -61,6 +62,8 @@ def stellar_mass_components(masses, aperture_mask, old_star_mask):
 
 def old_dwarf_star_local_mask(snapshot):
     """Return a local mask selecting old dwarf stars from total_dw_star_mask arrays."""
+    if "fixed_old_local_mask" in snapshot:
+        return np.asarray(snapshot["fixed_old_local_mask"],dtype=bool)
     df = snapshot["df"]
     total_dw_star_mask = np.asarray(snapshot["total_dw_star_mask"], dtype=bool)
 
@@ -123,14 +126,8 @@ def _star_projected_kinematics(snapshot, local_mask):
 
     x_kpc = np.asarray(snapshot["x_kpc"], dtype=float)[local_mask]
     y_kpc = np.asarray(snapshot["y_kpc"], dtype=float)[local_mask]
-    vlos = Analysis.cal_vlos(
-        np.asarray(star_coords["xh"], dtype=float)[local_mask],
-        np.asarray(star_coords["yh"], dtype=float)[local_mask],
-        np.asarray(star_coords["zh"], dtype=float)[local_mask],
-        np.asarray(star_coords["vxh"], dtype=float)[local_mask],
-        np.asarray(star_coords["vyh"], dtype=float)[local_mask],
-        np.asarray(star_coords["vzh"], dtype=float)[local_mask],
-    )
+    # Preserve the single canonical per-ID scalar; no second ray or solar subtraction.
+    vlos=np.asarray(star_coords['vlos'])[local_mask]
     return {
         "x_kpc": x_kpc,
         "y_kpc": y_kpc,
@@ -170,9 +167,9 @@ def detrended_dispersion_in_aperture(
 ):
     """Fit and remove a planar velocity gradient inside an aperture.
 
-    The default aperture is circular, matching the Walker-style observational
-    selection.  Set ``circular=False`` only for an explicit elliptical
-    diagnostic.
+    This is explicitly a legacy planar-detrending dispersion diagnostic.
+    It is NOT the Walker 61-direction spherical R5 velocity-gradient estimator.
+    Set ``circular=False`` only for an explicit elliptical diagnostic.
     """
     x_kpc = np.asarray(x_kpc, dtype=float)
     y_kpc = np.asarray(y_kpc, dtype=float)
@@ -210,19 +207,9 @@ def detrended_dispersion_in_aperture(
 
 
 def _mean_pm_from_arrays(x, y, z, vx, vy, vz):
-    pos = CartesianRepresentation(
-        x * u.kpc,
-        y * u.kpc,
-        z * u.kpc,
-    )
-    vel = CartesianDifferential(
-        vx * u.km / u.s,
-        vy * u.km / u.s,
-        vz * u.km / u.s,
-    )
-    coord = SkyCoord(pos.with_differentials(vel), frame="galactocentric")
-    coord_icrs = coord.transform_to("icrs")
-    return np.mean(coord_icrs.pm_ra_cosdec).value, np.mean(coord_icrs.pm_dec).value
+    result=production_observables(np.column_stack((x,y,z)),np.column_stack((vx,vy,vz)),np.arange(len(x),dtype=np.uint64))
+    return float(np.mean(result['pmra'])),float(np.mean(result['pmdec']))
+
 
 
 def compute_snapshot_summary(snapshot, numsp):
@@ -474,7 +461,7 @@ def compute_snapshot_summary(snapshot, numsp):
         r_3d_cut,
     )
 
-    cold_gas_r = np.sqrt(np.array(rotra_dw_cold_gas) ** 2 + np.array(rotdec_dw_cold_gas) ** 2)
+    cold_gas_r = np.asarray(snapshot['cold_gas_coords']['_sky']['rho_deg'])
     cold_gas_within_mask = cold_gas_r <= 2.1
     rotra_dw_cold_gas_within = np.array(rotra_dw_cold_gas)[cold_gas_within_mask]
     rotdec_dw_cold_gas_within = np.array(rotdec_dw_cold_gas)[cold_gas_within_mask]
@@ -487,14 +474,9 @@ def compute_snapshot_summary(snapshot, numsp):
     else:
         cold_gas_center_ra, cold_gas_center_dec = np.nan, np.nan
 
-    mean_pmra, mean_pmdec = _mean_pm_from_arrays(
-        obs_star_x,
-        obs_star_y,
-        obs_star_z,
-        obs_star_vx,
-        obs_star_vy,
-        obs_star_vz,
-    )
+    # Same R5 massmean HRF velocity projected at the common image centre.
+    mean_pmra,mean_pmdec=snapshot['motion_R5']['HRF_EN_masyr']
+
 
     # Total gravitating stellar mass includes newly formed stars.  Old stars
     # remain a separate RGB-like tracer for light and kinematic diagnostics.
@@ -564,9 +546,14 @@ def compute_snapshot_summary(snapshot, numsp):
         "shape_center_y_kpc": shape_center_y_kpc,
         "distance": d_mean,
         "age": tsnap,
-        # ``sigma`` is the Walker-style observable: old stars inside
+        # ``sigma`` retains the historical half-light planar-detrending diagnostic: old stars inside
         # the directly measured circular half-light aperture, after fitting
         # and removing a planar LOS velocity gradient on that same sample.
+        "walker_R5_k_kms_per_deg": snapshot['walker_R5']['k_abs'],
+        "walker_R5_v0_kms": snapshot['walker_R5']['v0_kms'],
+        "walker_R5_sigma_raw_mle_kms": snapshot['walker_R5']['sigma_raw_mle_kms'],
+        "walker_R5_sigma_after_mle_kms": snapshot['walker_R5']['sigma_mle_kms'],
+        "walker_R5_nstar": snapshot['walker_R5']['N_fit'],
         "sigma": sigma_re_circular,
         "sigma_re_circular": sigma_re_circular,
         "sigma_re_elliptical": sigma_re_elliptical,

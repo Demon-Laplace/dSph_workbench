@@ -7,6 +7,7 @@ import time
 from basefunc import DataProcessor, GalaxySimulation
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import compute_snapshot_summary
+from canonical_observer import require_canonical_csv, canonical_csv_comment
 from variable import core_radius_dict, folder_path, gizmo_config, orbit_file
 from pathlib import Path
 import sys
@@ -42,6 +43,8 @@ ELINFO_COLUMNS = [
     'sigma_x', 'sigma_y', 'sigma_z',
     'pmra', 'pmdec', 'cold_gas_center_ra', 'cold_gas_center_dec',
     'hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction', 'gas_mass', 'gas_half_mass',
+    'walker_R5_k_kms_per_deg', 'walker_R5_v0_kms', 'walker_R5_sigma_raw_mle_kms',
+    'walker_R5_sigma_after_mle_kms', 'walker_R5_nstar',
     'numsp',
 ]
 NUMSP_COLUMN = 'numsp'
@@ -103,6 +106,7 @@ def read_elinfo_csv(path, expected_columns=ELINFO_COLUMNS):
     }
     if not path.exists():
         return report
+    require_canonical_csv(path)
 
     comment_lines = []
     data_lines = []
@@ -274,7 +278,9 @@ class GetInfo:
             raise ValueError(f"Core radius not found for dwarf: {self.dwarf_name}")
             
         # Set output file path
-        self.output_csv_file = Path(f'./elinfo_{self.modelname}.csv')
+        default_root=Path(folder_path).resolve() / 'analysis' / 'astropy_native_direct_v1'
+        self.output_csv_file = Path(os.environ.get('DSPH_CANONICAL_OUTPUT_ROOT',str(default_root))) / f'elinfo_{self.modelname}.csv'
+        self.output_csv_file.parent.mkdir(parents=True,exist_ok=True)
         self.profile = False
         self.profile_memory = False
         self.float_precision = 8
@@ -324,23 +330,7 @@ class GetInfo:
                 ])
             print("[GetInfoProfile] " + " ".join(parts), flush=True)
         
-        return [summary['star_mass'], summary['star_mass_old_tracer'], summary['star_mass_new'],
-                summary['star_mass_aperture_re_multiple'], summary['star_mass_aperture_major_kpc'],
-                summary['star_half_mass'], summary['star_half_mass_old_tracer'], summary['new_star_half_mass'],
-                summary['hotgas_mass'], summary['hotgas_half_mass'], 
-                summary['coldgas_mass'], summary['coldgas_half_mass'], 
-                summary['mw_mass_r'], summary['eps'], summary['pa'], summary['gas_density'],
-                summary['vr'], summary['vtheta'], summary['vphi'], summary['distance_gal'], summary['rhalf'], 
-                summary['rhalf_circularized'], summary['rhalf_circular'],
-                summary['shape_center_x_kpc'], summary['shape_center_y_kpc'],
-                summary['distance'], summary['age'], summary['sigma'], summary['sigma_re_circular'],
-                summary['sigma_re_elliptical'], summary['sigma_fixed_500pc'], summary['sigma_re_noldstar'],
-                summary['sigma_gradient_kms_per_kpc'], summary['tsigma'],
-                summary['tsigma_xyz'],
-                summary['sigma_x'], summary['sigma_y'], summary['sigma_z'],
-                summary['pmra'], summary['pmdec'], summary['cold_gas_center_ra'], summary['cold_gas_center_dec'],
-                summary['hi_mass'], summary['hi_half_mass'], summary['hi_fraction'], summary['hi_half_fraction'],
-                summary['gas_mass'], summary['gas_half_mass'], summary['numsp']]
+        return [summary[column] for column in ELINFO_COLUMNS]
 
     def get_info_block(self, numsp_block):
         return [self.get_info(numsp) for numsp in numsp_block]
@@ -465,6 +455,7 @@ class GetInfo:
         self.show_progress = not args.no_progress
         self.output_csv_file = args.output_csv.resolve()
         if args.rebuild and self.output_csv_file.exists():
+            require_canonical_csv(self.output_csv_file)
             self.output_csv_file.unlink()
 
         start, end = map(int, args.range.split(','))
@@ -484,6 +475,7 @@ class GetInfo:
         output_comments = [
             f"# Orbit Data: {','.join(map(str, orbit_data))}\n",
             f"# Timescale_fd: {fd_value}\n",
+            canonical_csv_comment(),
             "# HI: M_HI=0.76*sum(M_gas*NeutralHydrogenAbundance), both temperature phases; coldgas_* are legacy HI aliases\n",
             "# hi_fraction=M_HI/M_star in the same aperture; gas_mass/gas_half_mass include all gas\n",
             "# star_mass and star_half_mass include old and newly formed dwarf stars within their existing apertures\n",

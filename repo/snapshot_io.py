@@ -74,7 +74,7 @@ class SnapshotLoaderMixin:
 
     @staticmethod
     def _fill_constant(target, slice_idx, value):
-        target[slice_idx] = np.float32(value)
+        target[slice_idx] = value
 
     @staticmethod
     def _announce_auto_boxsize_once(boxsize):
@@ -118,14 +118,14 @@ class SnapshotLoaderMixin:
         )
 
         df_data = {
-            'id': np.zeros(total_particles, dtype=np.int32),
+            'id': np.zeros(total_particles, dtype=np.uint64),
             'x': np.zeros(total_particles, dtype=np.float32),
             'y': np.zeros(total_particles, dtype=np.float32),
             'z': np.zeros(total_particles, dtype=np.float32),
             'vx': np.zeros(total_particles, dtype=np.float32),
             'vy': np.zeros(total_particles, dtype=np.float32),
             'vz': np.zeros(total_particles, dtype=np.float32),
-            'm': np.zeros(total_particles, dtype=np.float32),
+            'm': np.zeros(total_particles, dtype=np.float64),
             'tp': np.zeros(total_particles, dtype=np.int32),
         }
 
@@ -171,7 +171,7 @@ class SnapshotLoaderMixin:
                     if mass_table[tp] > 0.0:
                         self._fill_constant(df_data['m'], slice_idx, mass_table[tp] * 1e10)
                     else:
-                        df_data['m'][slice_idx] = group['Masses'][:] * 1e10
+                        df_data['m'][slice_idx] = np.asarray(group['Masses'][:],dtype=np.float64) * 1e10
 
                     if tp == 0 and dftype >= 2:
                         need_ugas = ('ugas' in gas_columns) or ('temp' in gas_columns)
@@ -256,14 +256,14 @@ class SnapshotLoaderMixin:
             )
 
             df_data = {
-                'id': np.zeros(total_particles, dtype=np.int32),
+                'id': np.zeros(total_particles, dtype=np.uint64),
                 'x': np.zeros(total_particles, dtype=np.float32),
                 'y': np.zeros(total_particles, dtype=np.float32),
                 'z': np.zeros(total_particles, dtype=np.float32),
                 'vx': np.zeros(total_particles, dtype=np.float32),
                 'vy': np.zeros(total_particles, dtype=np.float32),
                 'vz': np.zeros(total_particles, dtype=np.float32),
-                'm': np.zeros(total_particles, dtype=np.float32),
+                'm': np.zeros(total_particles, dtype=np.float64),
                 'tp': np.zeros(total_particles, dtype=np.int32),
             }
 
@@ -295,14 +295,14 @@ class SnapshotLoaderMixin:
                 pos = data['p'].astype(np.float32, copy=False)
                 vel = data['v'].astype(np.float32, copy=False)
 
-                df_data['id'][slice_idx] = data['id'].astype(np.int32, copy=False)
+                df_data['id'][slice_idx] = data['id'].astype(np.uint64, copy=False)
                 df_data['x'][slice_idx] = pos[:, 0]
                 df_data['y'][slice_idx] = pos[:, 1]
                 df_data['z'][slice_idx] = pos[:, 2]
                 df_data['vx'][slice_idx] = vel[:, 0]
                 df_data['vy'][slice_idx] = vel[:, 1]
                 df_data['vz'][slice_idx] = vel[:, 2]
-                df_data['m'][slice_idx] = (data['m'] * 1e10).astype(np.float32, copy=False)
+                df_data['m'][slice_idx] = np.asarray(data['m'],dtype=np.float64) * 1e10
                 df_data['tp'][slice_idx] = tp
 
                 if tp == 0 and dftype >= 2:

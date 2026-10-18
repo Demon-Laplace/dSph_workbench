@@ -28,6 +28,8 @@ import argparse
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import old_star_projected_kinematics, hi_particle_masses, hi_fraction
+from canonical_observer import require_canonical_csv, angle_velocity_grid, tangent_kpc_to_raw_offsets, raw_sky_pixel_area_arcsec2
+from canonical_display import center_motion_arrow
 
 from matplotlib.patches import Ellipse
 from variable import (
@@ -55,6 +57,10 @@ warnings.filterwarnings("ignore")
 plt.switch_backend('Agg')
 
 PLOT_CONTEXT = None
+# New contract outputs are isolated from old CSV, PNG and videos.
+_default_canonical_root = Path(folder_path).resolve() / 'analysis' / 'astropy_native_direct_v1'
+CANONICAL_ANALYSIS_ROOT = Path(os.environ.get('DSPH_CANONICAL_OUTPUT_ROOT',str(_default_canonical_root))).resolve()
+output_folder = str(CANONICAL_ANALYSIS_ROOT / 'output_img')
 SKY_FIELD_HALF_WIDTH_DEG = 2.1
 GAS_CONTOUR_NBINS = 50
 GAS_CONTOUR_SMOOTH_SIGMA_PIXELS = 2.0
@@ -487,12 +493,13 @@ def build_plot_context():
     inifile = DataProcessor.resolve_dwarf_ini_path(dwarf_name)
     print(f"[PlotFig] Using initial INI file: {inifile}")
     dw_particles = GalaxySimulation.get_dw_num(inifile)
-    elinfo_path = f'./elinfo_{modelname}.csv'
+    elinfo_path = str(CANONICAL_ANALYSIS_ROOT / f'elinfo_{modelname}.csv')
 
     core_radius = core_radius_dict.get(dwarf_name, None)
     if core_radius is None:
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
+    require_canonical_csv(elinfo_path)
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
     dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
     if 'numsp' not in dw_elinfo.columns:
@@ -811,11 +818,15 @@ def _plot_stellar_sky_panel(
     pa,
     shape_center_ra=0.0,
     shape_center_dec=0.0,
+    arrow_tip=None,
+    shape_outline=None,
 ):
     arrow_length = 1.5
     norm = np.hypot(mean_pmra, mean_pmdec)
     dx_scaled = 0.0 if norm == 0 else mean_pmra / norm * arrow_length
     dy_scaled = 0.0 if norm == 0 else mean_pmdec / norm * arrow_length
+    if arrow_tip is not None:
+        dx_scaled,dy_scaled=np.asarray(arrow_tip,dtype=float)
 
     ax.arrow(
         0,
@@ -828,6 +839,7 @@ def _plot_stellar_sky_panel(
         ec='black',
         alpha=0.7,
         lw=2,
+        label='Heliocentric proper motion',
     )
 
     im = ax.imshow(img.T, origin='lower', extent=extent, cmap='bone_r', vmin=22, vmax=34)
@@ -840,41 +852,33 @@ def _plot_stellar_sky_panel(
 
     _style_axis(
         ax,
-        'RA (deg)',
-        'DEC (deg)',
+        r'$\Delta$RA (deg)',
+        r'$\Delta$Dec (deg)',
         xlim=(-SKY_FIELD_HALF_WIDTH_DEG, SKY_FIELD_HALF_WIDTH_DEG),
         ylim=(-SKY_FIELD_HALF_WIDTH_DEG, SKY_FIELD_HALF_WIDTH_DEG),
         invert_x=True,
     )
     ax.legend(loc='lower right', fontsize=10)
 
-    a = stellar_region_rhalf_multiplier * r_half_deg
-    b = a * (1 - eps)
-    ellipse = Ellipse(
-        xy=(shape_center_ra, shape_center_dec),
-        width=2 * a,
-        height=2 * b,
-        angle=np.degrees(pa),
-        edgecolor='dimgray',
-        facecolor='none',
-        lw=2,
-        zorder=10,
-    )
-    ax.add_patch(ellipse)
+    if shape_outline is not None:
+        ax.plot(shape_outline[0],shape_outline[1],color='dimgray',lw=2,zorder=10)
     _append_colorbar(fig, ax, im, r'$\mu_V$ (mag arcsec$^{-2}$)')
 
 
-def _plot_vlos_panel(fig, ax, vf, extent_vf):
+def _plot_vlos_panel(fig, ax, vf, extent_vf, arrow_tip=None):
     sc = ax.imshow(vf.T, origin='lower', extent=extent_vf, cmap='coolwarm', vmin=-12, vmax=12)
     _style_axis(
         ax,
-        'RA (kpc)',
-        'DEC (kpc)',
+        r'$\Delta$RA (deg)',
+        r'$\Delta$Dec (deg)',
         xlim=(extent_vf[0], extent_vf[1]),
         ylim=(extent_vf[2], extent_vf[3]),
         invert_x=True,
     )
-    _append_colorbar(fig, ax, sc, r'<vlos> (km/s)')
+    if arrow_tip is not None:
+        ax.arrow(0.,0.,*arrow_tip,head_width=.08,head_length=.1,color='black',lw=2,label='Heliocentric proper motion')
+        ax.legend(loc='lower right',fontsize=8)
+    _append_colorbar(fig, ax, sc, r'$\langle v_{los}\rangle-v_0$ (km/s)')
 
 
 def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, star_z, cy, cz):
@@ -1165,14 +1169,19 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     shape_center_y_kpc = row['shape_center_y_kpc']
 
     r_half_deg = np.degrees(r_half / d_mean)
-    shape_center_ra = np.degrees(shape_center_x_kpc / d_mean)
-    shape_center_dec = np.degrees(shape_center_y_kpc / d_mean)
+    shape_center_ra,shape_center_dec=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],shape_center_x_kpc,shape_center_y_kpc)
+    phi=np.linspace(0,2*np.pi,181)
+    major=stellar_region_rhalf_multiplier*r_half
+    minor=major*(1-eps)
+    xp=shape_center_x_kpc+major*np.cos(phi)*np.cos(pa)-minor*np.sin(phi)*np.sin(pa)
+    yp=shape_center_y_kpc+major*np.cos(phi)*np.sin(pa)+minor*np.sin(phi)*np.cos(pa)
+    shape_outline=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],xp,yp)
 
     if 'cold_gas_center_ra' in row.index and 'cold_gas_center_dec' in row.index:
         cold_gas_center_ra = row['cold_gas_center_ra']
         cold_gas_center_dec = row['cold_gas_center_dec']
     else:
-        cold_gas_r = np.sqrt(np.array(rotra_dw_cold_gas) ** 2 + np.array(rotdec_dw_cold_gas) ** 2)
+        cold_gas_r = np.asarray(snapshot['cold_gas_coords']['_sky']['rho_deg'])
         cold_gas_within_mask = cold_gas_r <= 2.1
         rotra_dw_cold_gas_within = np.array(rotra_dw_cold_gas)[cold_gas_within_mask]
         rotdec_dw_cold_gas_within = np.array(rotdec_dw_cold_gas)[cold_gas_within_mask]
@@ -1185,24 +1194,9 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         else:
             cold_gas_center_ra, cold_gas_center_dec = np.nan, np.nan
 
-    if 'pmra' in row.index and 'pmdec' in row.index:
-        mean_pmra = row['pmra']
-        mean_pmdec = row['pmdec']
-    else:
-        pos = CartesianRepresentation(
-            x_star * u.kpc,
-            y_star * u.kpc,
-            z_star * u.kpc,
-        )
-        vel = CartesianDifferential(
-            vx_star * u.km / u.s,
-            vy_star * u.km / u.s,
-            vz_star * u.km / u.s,
-        )
-        coord = SkyCoord(pos.with_differentials(vel), frame='galactocentric')
-        coord_icrs = coord.transform_to('icrs')
-        mean_pmra = np.mean(coord_icrs.pm_ra_cosdec).value
-        mean_pmdec = np.mean(coord_icrs.pm_dec).value
+    # Current snapshot canonical six-vectors, never CSV/legacy PM precedence.
+    mean_pmra,mean_pmdec=snapshot['motion_R5']['HRF_EN_masyr']
+    arrow_tip=center_motion_arrow(snapshot['star_coords']['_sky'],snapshot['motion_R5']['HRF_unit_EN'],length_deg=.65)['tip_delta_RA_Dec_deg']
 
     obs_r_intervals = _observed_profile_intervals_kpc(context['dprof'])
     profile_kwargs = {'r_intervals': obs_r_intervals} if obs_r_intervals is not None else {'bins': 40}
@@ -1260,14 +1254,15 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         m_l_relation=sim_plot_mass_to_light_ratio,
         coordinate_unit='deg',
     )
-    sky_field_half_width_kpc = np.radians(SKY_FIELD_HALF_WIDTH_DEG) * d_mean
-    vf, extent_vf = Analysis.get_vlos_field(
-        x_kpc,
-        y_kpc,
-        vlos_array,
-        size_kpc=2.0 * sky_field_half_width_kpc,
-        npix=40,
-    )
+    # Raw RA/Dec pixels have spherical area varying with Dec; the old square
+    # tangent-pixel area must not be reused after changing the displayed axes.
+    actual_area=raw_sky_pixel_area_arcsec2(snapshot['dw_cdec'],120)
+    old_area=(2.*SKY_FIELD_HALF_WIDTH_DEG/120*3600.)**2
+    img=img+2.5*np.log10(actual_area/old_area)[None,:]
+    sky_field_half_width_kpc=np.tan(np.radians(SKY_FIELD_HALF_WIDTH_DEG))*d_mean
+    vf,extent_vf=angle_velocity_grid(rotra_dw_star,rotdec_dw_star,vlos_array,
+        snapshot['walker_R5']['v0_kms'],npix=40)
+
 
     vgsr = np.sqrt(vr**2 + vtheta**2 + vphi**2)
 
@@ -1293,8 +1288,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     star_hist, _, _ = np.histogram2d(snapshot['x_kpc'], snapshot['y_kpc'], bins=GAS_CONTOUR_NBINS,
         range=contour_range_kpc, weights=df.loc[total_dw_star_mask, 'm'].to_numpy())
     star_mass_contour = star_hist[cd_smooth > cd_threshold].sum(dtype=np.float64)
-    x_contour = np.degrees(x_contour_kpc / d_mean)
-    y_contour = np.degrees(y_contour_kpc / d_mean)
+    x_contour,y_contour=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],x_contour_kpc,y_contour_kpc)
 
     return {
         'row': row,
@@ -1314,6 +1308,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'hot_gas_z': hot_gas_z,
         'cold_gas_center_ra': cold_gas_center_ra,
         'cold_gas_center_dec': cold_gas_center_dec,
+        'arrow_tip': arrow_tip,
+        'shape_outline': shape_outline,
         'mean_pmra': mean_pmra,
         'mean_pmdec': mean_pmdec,
         'eps': eps,
@@ -1565,13 +1561,15 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['pa'],
         metrics['shape_center_ra'],
         metrics['shape_center_dec'],
+        arrow_tip=metrics['arrow_tip'],
+        shape_outline=metrics['shape_outline'],
     )
 
     if verbose:
         print('Stellar sky map plotted.')
 
     #--- vlos sky map (deg) ---#
-    _plot_vlos_panel(fig, axes[0, 1], metrics['vf'], metrics['extent_vf'])
+    _plot_vlos_panel(fig, axes[0, 1], metrics['vf'], metrics['extent_vf'],arrow_tip=metrics['arrow_tip'])
 
     if verbose:
         print('vlos sky map plotted.')

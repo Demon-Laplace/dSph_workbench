@@ -263,3 +263,32 @@ workspace/validation/hi-fix-20261016/，不会上传粒子数据或图片到 Git
 并清理，PAF=6.0 的替代作业号 305984 保留；7005 为 PAF=4.0，作业号 305981。
 这仅为历史记录，接手时必须重新查询状态，不能重复提交。
 本机耗时估计的实测依据和局限见 LOCAL_ISOLATION.md。
+
+### 日心观测与结果目录规范（2026-10-18，覆盖旧正式模拟回传规则）
+
+新正式观测分析固定 `astropy_native_direct_v1`：原生银心轴直接对应显式
+Astropy Galactocentric，太阳在负X，参数为R0=8.122 kpc、zSun=0.0208 kpc、
+VSun=(12.9,245.6,7.78) km/s、GC ICRS=(266.4051,-28.936175)度、roll=0。
+同快照MW H/B与单位各应用一次，恒星和冷热气体共用完整六维转换。
+相机只换表示；逐星LOS、RA/Dec、距离与PM必须来自同一观察者。
+这套方法本身不证明模型绝对六维已匹配真实Fornax。
+
+默认原始DeltaRA/DeltaDec两轴各±2.1度、北上东左、40×40角度分箱、
+有星即着色、色标±12 km/s；日心自行箭头从(0,0)出发。
+图内不标梯度PA或角动量轴。Walker61仍用真实球面角距与投影圆R<5 kpc，
+不能按显示方窗裁切拟合。测量定义及字段见repo/SERVER_WORKFLOW.md。
+
+固定cohort使用snapshot目录旁的
+`analysis/astropy_native_direct_v1/cohort_ids.npz`（唯一uint64 particle_id），
+或显式DSPH_PREEXISTING_ID_PATH。无文件直接报错，不猜成员。标记
+selected_then_frozen，不冒称全部初始IC恒星。
+
+新结果保存在对应快照目录旁的`analysis/astropy_native_direct_v1/`；新CSV、
+图与视频不覆盖旧结果。prepare冻结cohort与observer模块SHA；run/collect/fetch
+检查CSV身份并保持版本目录，不能回退旧顶层elinfo。回传仅取已验证的视频和
+CSV，本地也保留`<model>/output/analysis/astropy_native_direct_v1/`路径。
+旧prepared分析保留原代码、旧路径并明确legacy身份，不重写冻结运行。
+
+更改正式源码后仍须同步GitHub main、创建并激活新不可变release；只改editable
+source不会改变workflow.json中已经选择的analysis_code。历史release、用户.sh、
+模拟/隔离快照、IC与论文不修改。多模型验证仍合并一个Slurm、顺序执行。

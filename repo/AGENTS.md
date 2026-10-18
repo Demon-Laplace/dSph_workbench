@@ -68,3 +68,40 @@ Avoid promoting full arrays to float64 solely for output comparisons. Preserve
 the simulation solver precision settings. Do not use float16 for unscaled
 physical mass values; its finite range is insufficient. Verify explicit
 reduced-precision choices with relevant output checks.
+
+
+## Canonical observing contract adopted 2026-10-18
+
+New PlotFig/GetInfo observations use astropy_native_direct_v1. Native MW-centred
+axes map directly to explicit Astropy Galactocentric axes (identity): R0=8.122
+kpc, z_sun=0.0208 kpc, solar velocity=(12.9,245.6,7.78) km/s, GC ICRS=
+(266.4051,-28.936175) deg, roll=0. Sun is on the negative X side. Apply the
+same-snapshot MW H, TP2/3/4 massmean bulk B within true 3D r<5 kpc, and code
+units once, then one complete 6D transform to ICRS. Stars and both temperature
+gas phases share this contract. Camera changes never redefine bound per-ID LOS.
+
+Default arrows are Heliocentric proper motion, using the same R5 massmean HRF
+velocity at the common image-centre E/N and distance. GRF motion is separate
+and must say Motion relative to the Milky Way. Display axes are raw wrapped
+DeltaRA and raw DeltaDec, both +/-2.1 degrees, north up/east left; arrows start
+at (0,0) with correct spherical/raw-RA endpoint geometry. The 40x40 velocity
+display has colour wherever stars exist and +/-12 km/s limits, subtracting a
+declared display constant only. Display window never replaces the measurement
+aperture. No gradient PA or angular-momentum-axis annotations.
+
+Walker ideal-simulation measurement uses true spherical rho in degrees, fixed
+selected-then-frozen uint64 cohort IDs, forward Rproj=D0*tan(rho)<5 kpc, equal
+stars with Pi=1 and zero measurement error, all 61 directions 0,3,...,180 deg.
+Choose max abs(k) in km/s/deg. Half-light planar detrending remains a separately
+named legacy diagnostic, never a Walker61/R5 replacement. Raw and residual MLE
+dispersion are separately named. Do not reuse legacy observer search/probability
+results as canonical without remeasurement.
+
+Canonical analysis requires cohort_ids.npz (particle_id unique uint64) at
+output/analysis/astropy_native_direct_v1 or explicit DSPH_PREEXISTING_ID_PATH.
+Record selected_then_frozen, not all initial IC stars. Missing or changed
+cohorts fail closed. CSV observer/config/cohort SHA guards prevent mixed-frame
+or mixed-member continuation. New outputs live beside the snapshot in
+output/analysis/astropy_native_direct_v1; DSPH_CANONICAL_OUTPUT_ROOT explicitly
+selects a fresh validation/output directory. Legacy CSV/images/videos, raw
+snapshots/ICs, GIZMO, user shell launchers, and the paper are preserved.

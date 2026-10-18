@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 import tempfile
 import subprocess
+import shutil
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+
+import numpy as np
 
 import workflow_cleanup as cleanup
 import workflow_runtime as runtime
@@ -32,6 +35,13 @@ class WorkflowTests(unittest.TestCase):
         code.mkdir()
         for name in ('GetInfo.py', 'PlotFig.py', 'data_processing.py'):
             (code / name).write_text('# fixture\n')
+        # New analyses pin the real observer implementation and an explicit
+        # synthetic cohort. Historical top-level CSV remains a separate fixture.
+        observer = Path(__file__).resolve().parents[2] / 'repo' / 'canonical_observer.py'
+        shutil.copy2(observer, code / observer.name)
+        cohort = model / 'output' / 'analysis' / runtime.CANONICAL_OBSERVER_ID / 'cohort_ids.npz'
+        cohort.parent.mkdir(parents=True)
+        np.savez_compressed(cohort, particle_id=np.array([1], dtype=np.uint64))
         (self.root / 'workflow.json').write_text(json.dumps({'analysis_code': 'code'}))
         self.args = SimpleNamespace(root=self.root, model='Fornax1', name='test', snapshots=None, dry_run=False)
 
@@ -124,7 +134,8 @@ class WorkflowTests(unittest.TestCase):
         for name in ('snapshot_001.hdf5', 'Fornax.ini', 'slurm-123.out', 'config.json', 'figure.png'):
             (source / name).write_text('not source')
         (source / 'link.py').symlink_to(self.root / 'workflow.json')
-        self.assertEqual({p.name for p in github.source_files(source)}, {'GetInfo.py', 'PlotFig.py', 'data_processing.py'})
+        self.assertEqual({p.name for p in github.source_files(source)},
+                         {'GetInfo.py', 'PlotFig.py', 'data_processing.py', 'canonical_observer.py'})
         (source / 'GetInfo.py').write_text('invalid python !')
         with self.assertRaises(SyntaxError):
             github.source_files(source)
@@ -167,7 +178,8 @@ class WorkflowTests(unittest.TestCase):
                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
         subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
         checkout.mkdir()
-        git_at(checkout, 'init', '-b', 'main')
+        git_at(checkout, 'init')
+        git_at(checkout, 'checkout', '-b', 'main')
         git_at(checkout, 'config', 'user.name', 'Workflow test')
         git_at(checkout, 'config', 'user.email', 'workflow-test@example.invalid')
         git_at(checkout, 'remote', 'add', 'origin', str(remote))

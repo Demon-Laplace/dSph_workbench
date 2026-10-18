@@ -4,6 +4,7 @@ from sklearn.neighbors import KDTree
 
 from analysis_core import Analysis as AnalysisCore
 from coordinate_transform import CoordinateTransform
+from canonical_observer import LENGTH_CODE_TO_KPC, VELOCITY_CODE_TO_KMS, CANONICAL_OBSERVER_ID, observer_contract_sha256
 from variable import fornax_core_radius
 
 
@@ -68,6 +69,8 @@ class ParticleSelectionMixin:
 
     def center_on_MW(self, r_init=300.0, r_min=5.0, shrink=0.8):
         df = self.df
+        if getattr(self, '_canonical_MW_centered', False):
+            return df
 
         x = df["x"].to_numpy()
         y = df["y"].to_numpy()
@@ -76,10 +79,10 @@ class ParticleSelectionMixin:
         tp = df["tp"].to_numpy()
 
         sel = (tp == 2) | (tp == 4)
-        x = x[sel]
-        y = y[sel]
-        z = z[sel]
-        m = m[sel]
+        x = x[sel].astype(float)
+        y = y[sel].astype(float)
+        z = z[sel].astype(float)
+        m = m[sel].astype(float)
 
         xc = np.average(x, weights=m)
         yc = np.average(y, weights=m)
@@ -103,77 +106,45 @@ class ParticleSelectionMixin:
 
             r_current *= shrink
 
-        df['x'] -= xc
-        df['y'] -= yc
-        df['z'] -= zc
+        # Existing shrink-centre definition retained; physical units and B applied once.
+        H=np.array([xc,yc,zc],dtype=float)
+        for axis,center in zip(('x','y','z'),H):
+            df[axis]=(df[axis].to_numpy(dtype=float)-center)*LENGTH_CODE_TO_KPC
         df['r'] = np.sqrt(df['x'] ** 2 + df['y'] ** 2 + df['z'] ** 2)
-
+        bulk_mask=np.isin(df['tp'].to_numpy(),[2,3,4]) & (df['r'].to_numpy()<5.)
+        if not bulk_mask.any():raise ValueError('No TP2/3/4 MW bulk particles inside true r<5 kpc')
+        B=np.average(df.loc[bulk_mask,['vx','vy','vz']].to_numpy(dtype=float),axis=0,
+                     weights=df.loc[bulk_mask,'m'].to_numpy(dtype=float))
+        for axis,bulk in zip(('vx','vy','vz'),B):
+            df[axis]=(df[axis].to_numpy(dtype=float)-bulk)*VELOCITY_CODE_TO_KMS
+        self.observer_host_state=dict(host_center_input_code=H.tolist(),host_bulk_input_code=B.tolist(),
+            length_to_kpc=LENGTH_CODE_TO_KPC,velocity_to_kms=VELOCITY_CODE_TO_KMS,
+            bulk_particle_count=int(bulk_mask.sum()),canonical_observer_id=CANONICAL_OBSERVER_ID,
+            observer_config_sha256=observer_contract_sha256())
+        self._canonical_MW_centered=True
         return df
 
     def convert_coordinates(self, df=None, copy_df=True, include_galactic=True):
-        df = self.df if df is None else df
-        if copy_df:
-            df = df.copy()
-
-        x = df['x'].to_numpy()
-        y = df['y'].to_numpy()
-        z = df['z'].to_numpy()
-        vx = df['vx'].to_numpy()
-        vy = df['vy'].to_numpy()
-        vz = df['vz'].to_numpy()
-
-        xh, yh, zh, vxh, vyh, vzh = CoordinateTransform.to_heliocentric(x, y, z, vx, vy, vz)
-        df['xh'], df['yh'], df['zh'] = xh, yh, zh
-        df['vxh'], df['vyh'], df['vzh'] = vxh, vyh, vzh
-
-        df['rh'] = CoordinateTransform.calculate_distances(xh, yh, zh)
-
-        l, b = CoordinateTransform.to_galactic(xh, yh, zh)
-        if include_galactic:
-            df['l'], df['b'] = l, b
-
-        ra, dec = CoordinateTransform.galactic_to_equatorial(l, b)
-        df['ra'], df['dec'] = ra, dec
-
+        df=self.df if df is None else df
+        if copy_df:df=df.copy()
+        result=self.convert_coordinates_for_mask(np.ones(len(df),dtype=bool),df=df,
+            with_velocity=True,include_galactic=include_galactic)
+        for key in ('xh','yh','zh','vxh','vyh','vzh','rh','ra','dec','vlos','pmra','pmdec'):
+            df[key]=result[key]
+        if include_galactic:df['l'],df['b']=result['l'],result['b']
         return df
 
     def convert_coordinates_for_mask(self, mask, df=None, with_velocity=True, include_galactic=False):
-        df = self.df if df is None else df
-        mask = np.asarray(mask, dtype=bool)
-
-        x = df.loc[mask, 'x'].to_numpy()
-        y = df.loc[mask, 'y'].to_numpy()
-        z = df.loc[mask, 'z'].to_numpy()
-
-        result = {}
-        if with_velocity:
-            vx = df.loc[mask, 'vx'].to_numpy()
-            vy = df.loc[mask, 'vy'].to_numpy()
-            vz = df.loc[mask, 'vz'].to_numpy()
-            xh, yh, zh, vxh, vyh, vzh = CoordinateTransform.to_heliocentric(x, y, z, vx, vy, vz)
-            result['vxh'] = vxh
-            result['vyh'] = vyh
-            result['vzh'] = vzh
-        else:
-            xh, yh, zh = CoordinateTransform.to_heliocentric(x, y, z)
-
-        result['x'] = x
-        result['y'] = y
-        result['z'] = z
-        result['xh'] = xh
-        result['yh'] = yh
-        result['zh'] = zh
-        result['rh'] = CoordinateTransform.calculate_distances(xh, yh, zh)
-
-        l, b = CoordinateTransform.to_galactic(xh, yh, zh)
+        df=self.df if df is None else df
+        if not getattr(self,'_canonical_MW_centered',False):
+            raise ValueError('Call center_on_MW exactly once before observation conversion')
+        mask=np.asarray(mask,dtype=bool)
+        selected=df.loc[mask]
+        # All temperature/particle components use one complete six-dimensional contract.
+        result=CoordinateTransform.observe_grf(*(selected[a].to_numpy() for a in ('x','y','z','vx','vy','vz')),
+            particle_id=selected['id'].to_numpy(dtype=np.uint64))
         if include_galactic:
-            result['l'] = l
-            result['b'] = b
-
-        ra, dec = CoordinateTransform.galactic_to_equatorial(l, b)
-        result['ra'] = ra
-        result['dec'] = dec
-
+            result['l'],result['b']=CoordinateTransform.to_galactic(result['x'],result['y'],result['z'])
         return result
 
     def classify_new_dwarf_stars(self, dw_star_mask, r_cut=core_radius):

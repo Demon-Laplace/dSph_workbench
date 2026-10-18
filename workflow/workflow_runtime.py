@@ -1,4 +1,5 @@
 """Configured analysis runs, Slurm submission, and result verification."""
+import ast
 import csv
 import fcntl
 import hashlib
@@ -61,6 +62,83 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+CANONICAL_OBSERVER_ID = 'astropy_native_direct_v1'
+CANONICAL_SCHEMA_ID = 'elinfo_astropy_native_direct_v1'
+CANONICAL_SUMMARY_COLUMNS = {
+    'numsp', 'star_mass', 'distance', 'sigma', 'pmra', 'pmdec',
+    'walker_R5_k_kms_per_deg', 'walker_R5_v0_kms',
+    'walker_R5_sigma_raw_mle_kms', 'walker_R5_sigma_after_mle_kms',
+    'walker_R5_nstar',
+}
+
+
+def code_observation_metadata(code):
+    """Read the code identity without importing scientific dependencies."""
+    module = code / 'canonical_observer.py'
+    if not module.is_file() or module.is_symlink():
+        raise ValueError('New analyses require the canonical observer release; select validated --code or activate it first')
+    value = None
+    for node in ast.parse(module.read_bytes(), filename=str(module)).body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'CANONICAL_OBSERVER_ID' for t in node.targets):
+            value = ast.literal_eval(node.value)
+    if value != CANONICAL_OBSERVER_ID:
+        raise ValueError('Unsupported observer identity in analysis code')
+    return {'canonical_observer_id': value, 'schema_id': CANONICAL_SCHEMA_ID,
+            'analysis_relative_dir': 'output/analysis/' + value,
+            'canonical_module_sha256': sha(module), 'cohort_definition': 'selected_then_frozen'}
+
+
+def observation_output_directory(model_directory, observation):
+    if observation is None:
+        return model_directory
+    if (observation.get('canonical_observer_id') != CANONICAL_OBSERVER_ID
+            or observation.get('schema_id') != CANONICAL_SCHEMA_ID
+            or observation.get('analysis_relative_dir') != 'output/analysis/' + CANONICAL_OBSERVER_ID):
+        raise ValueError('Unknown or inconsistent observation manifest; prepare a new run')
+    return confined(model_directory, model_directory / observation['analysis_relative_dir'])
+
+
+def canonical_csv_identity(path):
+    """Read an identity marker, never certify legacy data from a filename."""
+    identities = []
+    with Path(path).open(encoding='utf-8') as stream:
+        for line in stream:
+            if line.startswith('# canonical_observer_id='):
+                fields = dict(item.split('=', 1) for item in line[2:].split() if '=' in item)
+                identities.append(fields)
+            elif line.strip() and not line.startswith('#'):
+                break
+    if len(identities) != 1:
+        raise ValueError('Canonical summary requires exactly one observer identity marker')
+    identity = identities[0]
+    if identity.get('canonical_observer_id') != CANONICAL_OBSERVER_ID:
+        raise ValueError('Legacy or different-observer summary is not canonical')
+    for field in ('observer_config_sha256', 'cohort_file_sha256'):
+        if not re.fullmatch(r'[0-9a-f]{64}', identity.get(field, '')):
+            raise ValueError('Missing or malformed canonical identity field: ' + field)
+    return identity
+
+
+def verify_canonical_csv(path, observation, code, cohort_path):
+    identity = canonical_csv_identity(path)
+    if identity['cohort_file_sha256'] != observation['cohort_file_sha256'] or sha(cohort_path) != observation['cohort_file_sha256']:
+        raise ValueError('Summary or frozen cohort identity differs from the prepared run')
+    module = code / 'canonical_observer.py'
+    if sha(module) != observation['canonical_module_sha256']:
+        raise ValueError('Pinned observer module changed')
+    environment = os.environ.copy()
+    environment['PYTHONDONTWRITEBYTECODE'] = '1'
+    environment['DSPH_PREEXISTING_ID_PATH'] = str(cohort_path)
+    command = ('import sys; sys.path.insert(0,sys.argv[1]); '
+               'from canonical_observer import require_canonical_csv; '
+               'require_canonical_csv(sys.argv[2])')
+    checked = subprocess.run([sys.executable, '-c', command, str(code), str(path)], env=environment,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if checked.returncode:
+        raise ValueError('Pinned observer/cohort CSV guard rejected the summary: ' + checked.stderr.strip())
+    return identity
+
+
 def prepare(args):
     label(args.model)
     if not re.fullmatch(r'Fornax\d+(?:_.+)?', args.model):
@@ -100,6 +178,13 @@ def prepare(args):
     for name in ('GetInfo.py', 'PlotFig.py', 'data_processing.py'):
         if not (code / name).is_file():
             raise ValueError(f'Missing production code: {code / name}')
+    observation = code_observation_metadata(code)
+    cohort_source = Path(os.environ.get('DSPH_PREEXISTING_ID_PATH') or
+                         str(snapshot_dir / 'analysis' / CANONICAL_OBSERVER_ID / 'cohort_ids.npz')).resolve()
+    if not cohort_source.is_file() or cohort_source.is_symlink() or cohort_source.suffix != '.npz':
+        raise ValueError('A verified frozen uint64 particle_id cohort NPZ is required: ' + str(cohort_source))
+    observation.update(cohort_source=str(cohort_source), cohort_file_sha256=sha(cohort_source),
+                       cohort_relative_path='inputs/cohort_ids.npz')
     destination = run_dir(args)
     if destination.exists() or destination.is_symlink():
         raise ValueError(f'Run already exists; choose a different --name: {destination}')
@@ -113,6 +198,7 @@ def prepare(args):
     manifest = {'created_utc': now(), 'model': args.model, 'source': str(source),
                 'analysis_source': str(code), 'code_sha256': {}, 'inputs': {}, 'snapshots': {},
                 'adaptations': [], 'status': 'prepared'}
+    manifest['observation'] = observation
     # Copy the complete module set; no import from a model's obsolete local scripts.
     for path in sorted(code.glob('*.py')):
         target = destination / 'code' / path.name
@@ -126,6 +212,13 @@ def prepare(args):
                 target.write_text(text)
                 manifest['adaptations'].append('snapshot_io: temporary marker follows run TMPDIR')
         manifest['code_sha256'][str(target.relative_to(destination))] = sha(target)
+    cohort_target = destination / observation['cohort_relative_path']
+    cohort_target.parent.mkdir(exist_ok=True)
+    shutil.copy2(cohort_source, cohort_target)
+    if sha(cohort_target) != observation['cohort_file_sha256'] or sha(cohort_source) != observation['cohort_file_sha256']:
+        raise ValueError('Frozen cohort changed while preparing the run')
+    manifest['inputs'][observation['cohort_relative_path']] = {
+        'source': str(cohort_source), 'sha256': observation['cohort_file_sha256']}
     for path in required:
         target = runtime / path.name
         shutil.copy2(path, target)
@@ -179,13 +272,21 @@ def verify_inputs(directory, manifest):
                 raise ValueError(f'Source changed since preparation: {name}; prepare a new run')
 
 
-def verify_summary(path, selected):
-    with path.open() as stream:
+def verify_summary(path, selected, observation=None, code=None, cohort_path=None):
+    if observation is not None:
+        if code is None or cohort_path is None:
+            raise ValueError('Canonical summary verification requires pinned code and cohort')
+        verify_canonical_csv(path, observation, code, cohort_path)
+    with path.open(encoding='utf-8') as stream:
         reader = csv.DictReader(line for line in stream if not line.startswith('#'))
         required = {'numsp', 'star_mass', 'distance', 'sigma'}
+        if observation is not None:
+            required = CANONICAL_SUMMARY_COLUMNS
         if not required.issubset(reader.fieldnames or []):
             raise ValueError(f'Incomplete summary schema: {path}')
         numbers = [int(float(row['numsp'])) for row in reader]
+    if observation is not None and not numbers:
+        raise ValueError('Canonical summary contains no completed snapshot rows')
     if len(numbers) != len(set(numbers)) or not set(selected).issubset(numbers):
         raise ValueError('Summary has missing or duplicate snapshots')
 
@@ -204,9 +305,17 @@ def run(args):
     if args.processes < 1:
         raise ValueError('--processes must be positive')
     runtime = directory / manifest['model']
+    observation = manifest.get('observation')
+    output_root = observation_output_directory(runtime, observation)
+    summary_path = output_root / f"elinfo_{manifest['model']}.csv"
+    cohort_path = confined(directory, directory / observation['cohort_relative_path']) if observation is not None else None
+    summary_options = {'observation': observation, 'code': directory / 'code', 'cohort_path': cohort_path}
     environment = os.environ.copy()
     environment.update({'PYTHONDONTWRITEBYTECODE': '1', 'OMP_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1',
                         'MKL_NUM_THREADS': '1', 'NUMEXPR_NUM_THREADS': '1', 'MPLBACKEND': 'Agg'})
+    if observation is not None:
+        environment['DSPH_CANONICAL_OUTPUT_ROOT'] = str(output_root)
+        environment['DSPH_PREEXISTING_ID_PATH'] = str(cohort_path)
     for key, subdir in [('TMPDIR', '.tmp'), ('MPLCONFIGDIR', '.mpl'), ('XDG_CACHE_HOME', '.cache')]:
         path = directory / subdir
         path.mkdir(exist_ok=True)
@@ -214,12 +323,14 @@ def run(args):
     logdir = directory / 'logs'
     logdir.mkdir(exist_ok=True)
     status = {'started_utc': now(), 'status': 'running', 'stages': [], 'range': args.range, 'python': sys.executable}
+    status['canonical_observer_id'] = observation['canonical_observer_id'] if observation is not None else 'legacy_unversioned'
+    status['analysis_output_directory'] = str(output_root)
     write_json(directory / 'status.json', status)
     stages = ['info', 'plot'] if args.stage == 'all' else [args.stage]
     try:
         for stage in stages:
             if stage == 'plot':
-                verify_summary(runtime / f"elinfo_{manifest['model']}.csv", selected)
+                verify_summary(summary_path, selected, **summary_options)
             script = 'GetInfo.py' if stage == 'info' else 'PlotFig.py'
             command = [sys.executable, str(directory / 'code' / script), '--range', args.range,
                        '--processes', str(args.processes), '--worker-threads', '1']
@@ -231,10 +342,10 @@ def run(args):
                 log.write(f'\n=== {now()} ===\n'); log.flush()
                 subprocess.run(command, cwd=runtime, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
             if stage == 'info':
-                verify_summary(runtime / f"elinfo_{manifest['model']}.csv", selected)
+                verify_summary(summary_path, selected, **summary_options)
             else:
                 for number in selected:
-                    path = runtime / 'output_img' / f'check_nature_{number:03d}.png'
+                    path = output_root / 'output_img' / f'check_nature_{number:03d}.png'
                     with path.open('rb') as image:
                         if image.read(8) != b'\x89PNG\r\n\x1a\n':
                             raise ValueError(f'Invalid PNG: {path}')
@@ -248,7 +359,10 @@ def run(args):
         raise
     finally:
         status['finished_utc'] = now()
-        write_json(directory / 'status.json', status)
+        try:
+            write_json(directory / 'status.json', status)
+        finally:
+            lock.close()
     return 0
 
 

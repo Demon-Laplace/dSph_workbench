@@ -144,22 +144,43 @@ def remote_command(args, arguments):
 
 
 def production_results(root, model=None, name=None):
-    """Small verified manifest of top-level production videos/tables, never frames."""
+    """Read one observer's verified small outputs; never search legacy fallbacks."""
     import workflow_isolation as isolation
     expected_frames = None
+    observation = None
+    code = None
+    cohort = None
     if name:
         runtime.label(name)
         run = runtime.confined(root, root / 'workspace/analysis' / name)
         manifest = json.loads((run / 'manifest.json').read_text())
         model = manifest['model']
         source = runtime.confined(run, run / model)
+        observation = manifest.get('observation')
+        if observation is not None:
+            code = run / 'code'
+            cohort = runtime.confined(run, run / observation['cohort_relative_path'])
         state = json.loads((run / 'status.json').read_text()) if (run / 'status.json').exists() else {}
         if state.get('status') == 'complete' and state.get('range'):
             expected_frames = len(runtime.selected_snapshots(manifest, state['range']))
     else:
         source = runtime.model_directory(root, model)
+        code = (root / runtime.config(root).get('analysis_code', 'tools/server-analysis')).resolve()
+        observation = runtime.code_observation_metadata(code)
+        cohort = source / observation['analysis_relative_dir'] / 'cohort_ids.npz'
+        if not cohort.is_file():
+            raise ValueError('Canonical model fetch needs its verified cohort fixture; old outputs are not a fallback')
+        observation['cohort_file_sha256'] = isolation.sha(cohort)
     runtime.label(model)
+    source = runtime.observation_output_directory(source, observation)
+    summary = source / ('elinfo_' + model + '.csv')
+    if observation is not None:
+        if not summary.is_file():
+            raise ValueError('Canonical summary is missing; run the new analysis instead of using legacy CSV')
+        runtime.verify_summary(summary, [], observation=observation, code=code, cohort_path=cohort)
     files = sorted(source.glob('*.mp4')) + list(source.glob('elinfo_' + model + '.csv'))
+    if observation is not None:
+        files += sorted(source.glob('observer_snapshot_*.json'))
     if not files: raise ValueError('No production videos or summary table available')
     records = []
     for path in files:
@@ -167,7 +188,12 @@ def production_results(root, model=None, name=None):
         if path.is_symlink() or not path.is_file() or not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
             raise ValueError('Invalid production output: ' + str(path))
         records.append({'name': path.name, 'bytes': path.stat().st_size, 'sha256': isolation.sha(path)})
-    return {'model': model, 'directory': str(source), 'files': records, 'expected_frames': expected_frames}
+    return {'model': model, 'directory': str(source), 'files': records, 'expected_frames': expected_frames,
+            'canonical_observer_id': observation['canonical_observer_id'] if observation is not None else 'legacy_unversioned',
+            'schema_id': observation['schema_id'] if observation is not None else 'legacy_elinfo',
+            'local_relative_directory': observation['analysis_relative_dir'] if observation is not None else '.',
+            'observer_config_sha256': runtime.canonical_csv_identity(summary)['observer_config_sha256'] if observation is not None else None,
+            'cohort_file_sha256': observation['cohort_file_sha256'] if observation is not None else None}
 
 
 def fetch_production(args, model=None, name=None):
@@ -180,10 +206,25 @@ def fetch_production(args, model=None, name=None):
     response = isolation.remote_exec(args, ['python3', '-c', command], capture=True)
     result = json.loads(response.stdout)
     destination = runtime.model_directory(args.root, result['model'])
+    observer = result.get('canonical_observer_id')
+    if observer == runtime.CANONICAL_OBSERVER_ID:
+        relative = 'output/analysis/' + runtime.CANONICAL_OBSERVER_ID
+        if result.get('local_relative_directory') != relative or result.get('schema_id') != runtime.CANONICAL_SCHEMA_ID:
+            raise ValueError('Inconsistent canonical result manifest')
+        destination = runtime.confined(destination, destination / relative)
+    elif observer == 'legacy_unversioned' and name:
+        # A named frozen historical run is explicitly legacy. It remains separate
+        # from every canonical output and is never certified by a new filename.
+        if result.get('local_relative_directory') != '.':
+            raise ValueError('Invalid legacy result directory')
+    else:
+        raise ValueError('Default fetch requires canonical identity; use an explicit frozen run for legacy results')
     filters = []
     for record in result['files']:
         filename = record['name']
-        if not re.fullmatch(r'[A-Za-z0-9_.-]+', filename) or not filename.endswith(('.mp4', '.csv')):
+        allowed = filename.endswith(('.mp4', '.csv')) or (
+            observer == runtime.CANONICAL_OBSERVER_ID and re.fullmatch(r'observer_snapshot_\d+\.json', filename))
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+', filename) or not allowed:
             raise ValueError('Invalid production result filename')
         target = runtime.confined(destination, destination / filename)
         if target.is_symlink() or (target.exists() and not target.is_file()):

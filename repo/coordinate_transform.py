@@ -1,15 +1,28 @@
 import numpy as np
 from astropy import units as u
 from astropy.coordinates import Galactocentric, Galactic, SkyCoord
+from canonical_observer import OBSERVER_FRAME, production_observables
 
 
 class CoordinateTransform:
     """Handle coordinate transformations."""
 
     @staticmethod
+    def fixed_frame():
+        f=OBSERVER_FRAME
+        return Galactocentric(galcen_distance=f['galcen_distance_kpc']*u.kpc,
+            z_sun=f['z_sun_kpc']*u.kpc,galcen_v_sun=np.asarray(f['galcen_v_sun_kms'])*u.km/u.s,
+            galcen_coord=SkyCoord(ra=f['galcen_icrs_deg'][0]*u.deg,dec=f['galcen_icrs_deg'][1]*u.deg,frame='icrs'),
+            roll=f['roll_deg']*u.deg)
+
+    @staticmethod
+    def observe_grf(x,y,z,vx,vy,vz,particle_id):
+        return production_observables(np.column_stack((x,y,z)),np.column_stack((vx,vy,vz)),particle_id)
+
+    @staticmethod
     def to_heliocentric(x, y, z, vx=None, vy=None, vz=None):
-        galactocentric_frame = Galactocentric()
-        x_sun = galactocentric_frame.galcen_distance.to(u.kpc).value
+        galactocentric_frame = CoordinateTransform.fixed_frame()
+        x_sun = -np.sqrt(galactocentric_frame.galcen_distance.to_value(u.kpc)**2 - galactocentric_frame.z_sun.to_value(u.kpc)**2)
         z_sun = galactocentric_frame.z_sun.to(u.kpc).value
 
         xh = x - x_sun
@@ -31,6 +44,7 @@ class CoordinateTransform:
 
     @staticmethod
     def to_galactic(x, y, z, chunk_size=100000):
+        """Position-only conversion: input MUST be MW-centred Galactocentric, never xh/yh/zh."""
         if len(x) == 0:
             return np.array([], dtype=float), np.array([], dtype=float)
 
@@ -46,6 +60,7 @@ class CoordinateTransform:
                 x=chunk_x * u.kpc,
                 y=chunk_y * u.kpc,
                 z=chunk_z * u.kpc,
+                **{name:getattr(CoordinateTransform.fixed_frame(),name) for name in ("galcen_distance","z_sun","galcen_v_sun","galcen_coord","roll")}
             ).transform_to(Galactic())
 
             l_list.append(galactic_coords.l.deg)
