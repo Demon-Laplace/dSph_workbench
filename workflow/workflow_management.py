@@ -211,7 +211,6 @@ def fetch_production(args, model=None, name=None):
         relative = 'output/analysis/' + runtime.CANONICAL_OBSERVER_ID
         if result.get('local_relative_directory') != relative or result.get('schema_id') != runtime.CANONICAL_SCHEMA_ID:
             raise ValueError('Inconsistent canonical result manifest')
-        destination = runtime.confined(destination, destination / relative)
     elif observer == 'legacy_unversioned' and name:
         # A named frozen historical run is explicitly legacy. It remains separate
         # from every canonical output and is never certified by a new filename.
@@ -219,26 +218,32 @@ def fetch_production(args, model=None, name=None):
             raise ValueError('Invalid legacy result directory')
     else:
         raise ValueError('Default fetch requires canonical identity; use an explicit frozen run for legacy results')
-    filters = []
+    receipt_base = runtime.confined(args.root, args.root / 'workspace/receipts/production' / result['model'])
+    metadata_directory = receipt_base / runtime.label(name or 'model') / 'observer'
+    transfers = {}
+    output_paths = {}
     for record in result['files']:
         filename = record['name']
         allowed = filename.endswith(('.mp4', '.csv')) or (
             observer == runtime.CANONICAL_OBSERVER_ID and re.fullmatch(r'observer_snapshot_\d+\.json', filename))
         if not re.fullmatch(r'[A-Za-z0-9_.-]+', filename) or not allowed:
             raise ValueError('Invalid production result filename')
-        target = runtime.confined(destination, destination / filename)
+        folder = metadata_directory if filename.endswith('.json') else destination
+        target = runtime.confined(args.root, folder / filename)
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise ValueError('Production result target is not a regular file')
-        filters.append('--include=/' + filename)
-    command = ['rsync', '-rt', '--checksum', '--itemize-changes', '-e', shlex.join(ssh), *filters,
-               '--exclude=*', settings['host'] + ':' + result['directory'] + '/', str(destination) + '/']
-    if args.dry_run: command.insert(1, '--dry-run')
-    else: destination.mkdir(parents=True, exist_ok=True)
-    print(shlex.join(command), flush=True)
-    subprocess.run(command, check=True)
+        output_paths[filename] = target
+        transfers.setdefault(folder, []).append('--include=/' + filename)
+    for folder, filters in transfers.items():
+        command = ['rsync', '-rt', '--checksum', '--itemize-changes', '-e', shlex.join(ssh), *filters,
+                   '--exclude=*', settings['host'] + ':' + result['directory'] + '/', str(folder) + '/']
+        if args.dry_run: command.insert(1, '--dry-run')
+        else: folder.mkdir(parents=True, exist_ok=True)
+        print(shlex.join(command), flush=True)
+        subprocess.run(command, check=True)
     if args.dry_run: return 0
     for record in result['files']:
-        path = destination / record['name']
+        path = output_paths[record['name']]
         if path.stat().st_size != record['bytes'] or isolation.sha(path) != record['sha256']:
             raise ValueError('Production output checksum mismatch; retry fetching')
         if path.suffix == '.mp4':
@@ -249,10 +254,12 @@ def fetch_production(args, model=None, name=None):
             if frames < 1 or (result['expected_frames'] is not None and frames != result['expected_frames']):
                 raise ValueError('Production video frame count mismatch')
             record['frames'] = frames
-    receipt = runtime.confined(args.root, args.root / 'workspace/receipts/production' / result['model'] /
-                              ((name or 'model') + '.json'))
+    receipt = receipt_base / ((name or 'model') + '.json')
     receipt.parent.mkdir(parents=True, exist_ok=True)
-    runtime.write_json(receipt, dict(result, local_directory=str(destination), verified_utc=runtime.now()))
+    runtime.write_json(receipt, dict(result, source_relative_directory=result['local_relative_directory'],
+        local_relative_directory='.', local_directory=str(destination),
+        local_metadata_directory=str(metadata_directory) if metadata_directory in transfers else None,
+        verified_utc=runtime.now()))
     print('Saved production video/summary: ' + str(destination))
     return 0
 

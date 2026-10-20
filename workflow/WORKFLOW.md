@@ -154,7 +154,7 @@ python3 workflow.py pull --name run7001-example
 python3 workflow.py fetch-model Fornax5026 --dry-run
 ```
 
-`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 从指定分析任务取回视频和 elinfo 统计表；`fetch-model` 从正式模拟目录取回同类成果。两者直接写入本地 `<model>/`，逐帧图片、代码和参数留在服务器。下载后验证 SHA256；视频验证帧数。
+`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 从指定分析任务取回视频和 elinfo 统计表；`fetch-model` 从正式模拟目录取回同类成果。视频和 CSV 直接写入本地 `<model>/`，包括 canonical 分析结果，不复制服务器的 `output/analysis/<observer>/` 层级。逐快照 observer JSON 归入 `workspace/receipts/production/<model>/<run>/observer/`；逐帧图片、代码和参数留在服务器。下载后验证 SHA256；视频验证帧数。
 
 同一任务目录有进程锁，提交回执防止误重复提交。失败后或希望补做视频时，可以显式续跑：
 

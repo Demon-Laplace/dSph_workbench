@@ -155,7 +155,7 @@ class ObserverWorkflowTests(unittest.TestCase):
         self.assertEqual(result['canonical_observer_id'], ID)
         self.assertEqual({r['name'] for r in result['files']}, {'elinfo_'+MODEL+'.csv','observer_snapshot_300.json'})
 
-    def test_canonical_results_and_fetch_target_stay_versioned(self):
+    def test_server_results_stay_versioned_and_local_media_use_model_root(self):
         directory, manifest = self.run_canonical()
         result = management.production_results(self.root, name=self.args.name)
         self.assertEqual(result['canonical_observer_id'], ID)
@@ -167,7 +167,33 @@ class ObserverWorkflowTests(unittest.TestCase):
              patch.object(isolation_stub, 'remote_exec', return_value=SimpleNamespace(stdout=json.dumps(result)), create=True), \
              patch.object(management.subprocess, 'run') as rsync:
             self.assertEqual(management.fetch_production(args,name=self.args.name),0)
-        self.assertEqual(rsync.call_args.args[0][-1],str(self.model/'output'/'analysis'/ID)+'/')
+        self.assertEqual(rsync.call_args.args[0][-1],str(self.model)+'/')
+
+    def test_fetch_keeps_observer_sidecars_in_receipts(self):
+        directory, manifest = self.run_canonical()
+        output = directory / MODEL / manifest['observation']['analysis_relative_dir']
+        (output / 'observer_snapshot_300.json').write_text('{}')
+        result = management.production_results(self.root, name=self.args.name)
+        args = SimpleNamespace(root=self.root, name=self.args.name, dry_run=False)
+        def transfer(command, **kwargs):
+            target = Path(command[-1])
+            for option in command:
+                if option.startswith('--include=/'):
+                    filename = option.removeprefix('--include=/')
+                    shutil.copy2(output / filename, target / filename)
+        with patch.object(management, 'ssh_config', return_value=({'root':'/remote','host':'fixture'},['ssh'])), \
+             patch.object(isolation_stub, 'remote_exec', return_value=SimpleNamespace(stdout=json.dumps(result)), create=True), \
+             patch.object(management.subprocess, 'run', side_effect=transfer):
+            self.assertEqual(management.fetch_production(args,name=self.args.name),0)
+        receipt_root = self.root / 'workspace/receipts/production' / MODEL
+        metadata = receipt_root / self.args.name / 'observer'
+        self.assertTrue((self.model / ('elinfo_'+MODEL+'.csv')).is_file())
+        self.assertTrue((metadata / 'observer_snapshot_300.json').is_file())
+        self.assertFalse((self.model / 'observer_snapshot_300.json').exists())
+        receipt = json.loads((receipt_root / (self.args.name+'.json')).read_text())
+        self.assertEqual(receipt['local_relative_directory'], '.')
+        self.assertEqual(receipt['local_directory'], str(self.model))
+        self.assertEqual(receipt['local_metadata_directory'], str(metadata))
 
     def test_named_frozen_legacy_run_is_explicit_and_manifest_unchanged(self):
         run = self.root/'workspace'/'analysis'/'historical'

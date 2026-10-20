@@ -234,6 +234,9 @@ IC 文件及原建模诊断图保留；回执仍集中存放在 workspace/receip
 正式模拟也采用精简回传：fetch-model MODEL、pull --name RUN、collect --wait 都只取
 顶层视频和 elinfo_<model>.csv，直接存入本地 <model>/，逐帧 PNG 留在服务器；回执在
 workspace/receipts/production/。下载检查 SHA256 与视频帧数。不会再创建回传专用目录。
+Canonical 观测同样遵守此本地路径规则，不把服务器的 output/analysis/<observer>/
+层级复制到本地。observer_snapshot_*.json 存入回执的 <model>/<run>/observer/，
+视频和 CSV 直接放在 Fornax 对应编号目录顶层。
 旧 workspace/results/remote/ 是历史验证产物，不能随意将不同检查范围的同名视频互相覆盖。
 
 本机原生 isolation 已配置，读 [LOCAL_ISOLATION.md](LOCAL_ISOLATION.md)，使用
