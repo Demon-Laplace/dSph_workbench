@@ -1,0 +1,34 @@
+{
+  "schema_id": "canonical_orbit_recalibration_v1",
+  "canonical_observer_id": "astropy_native_direct_v1",
+  "observer_config_sha256": "e7fd3ff559ba72ba8fed4bc4b149a403cbdd137a4ed4a7b986e5ee357ae9fde2",
+  "sun_position_native_kpc": [-8.1219733661223, 0.0, 0.0208],
+  "sun_velocity_native_kms": [12.9, 245.6, 7.78],
+  "physical_to_icrs": [
+    [-0.05709582033371144, 0.49411076270400506, -0.8675221158451741],
+    [-0.8739415856218075, -0.4448286178025452, -0.19584076619723192],
+    [-0.482665694058799, 0.7469819642829032, 0.4572217982716863]
+  ],
+  "target": {
+    "input_frame": "icrs_heliocentric",
+    "ra_deg": 39.9971,
+    "dec_deg": -34.4492,
+    "D_kpc": 139.4,
+    "vlos_kms": 55.3,
+    "mu_alpha_cosdec_masyr": 0.384,
+    "mu_delta_masyr": -0.364,
+    "morphology_PA_E_of_N_deg": 43.0
+  },
+  "feedback": {
+    "example_only": "All times, scales, tolerances and steps below demonstrate the interface; they are not adopted observational errors or certified orbit settings.",
+    "comparison_time_Gyr": 2.4,
+    "residual_scales": [0.1, 0.1, 5.0, 5.0, 0.02, 0.02],
+    "acceptance_tolerances": [0.1, 0.1, 5.0, 5.0, 0.02, 0.02],
+    "initial_steps": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "damping": 0.01,
+    "trust_radius": 0.5,
+    "maximum_condition_number": 100000000,
+    "freeze_physics_inputs": true
+  },
+  "cases": []
+}

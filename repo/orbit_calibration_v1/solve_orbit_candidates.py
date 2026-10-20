@@ -87,6 +87,12 @@ def independent_point_observables(r, v, config):
                 Vr_gc_kms=float(vector(r) @ vector(v) / np.linalg.norm(r)))
 
 
+def rigid_preview_state(r, v, target_r, target_v):
+    """Rotate a measured anchor; never replace its bulk by a desired velocity."""
+    plane = cm.orbit_plane_rotation(r, v, target_r, target_v)
+    return plane, plane @ vector(r), plane @ vector(v)
+
+
 def point_observables(r, v, config):
     catalogue = API['observables'](vector(r)[None, :], vector(v)[None, :], np.array([0], dtype=np.uint64))
     result = dict(RA_deg=float(catalogue['ra'][0]), Dec_deg=float(catalogue['dec'][0]),
@@ -335,7 +341,7 @@ def render_figure(path, model, frames, shapes):
     vmin = min(float(np.nanmin(grid)) for grid in logs)
     vmax = max(float(np.nanmax(grid)) for grid in logs)
     fig, axes = plt.subplots(1, 3, figsize=(14.8, 5.4), constrained_layout=True)
-    names = ['Matched GC-radius baseline', 'Physical target 6D registration', 'Registration + internal PA=43 deg']
+    names = ['GC-radius baseline', 'Rigid orbit-plane preview', 'Rigid preview + internal PA=43 deg']
     for ax, (projected, _), grid, shape, title in zip(axes, frames, logs, shapes, names):
         mesh = ax.pcolormesh(edges, edges, grid.T, shading='flat', cmap='magma', vmin=vmin, vmax=vmax)
         t = np.linspace(-2.0, 2.0, 2)
@@ -409,21 +415,21 @@ def solve(index_path, source_code=None):
         coefficient = cm.empirical_coefficients(initial['r'], initial['v'], anchor['r'], anchor['v'])
         solved = cm.solve_initial_velocity(initial['r'], initial['v'], target_r, target_v,
                                            coefficient['C_E'], coefficient['k_L'], radial_sign=-1)
-        plane = cm.orbit_plane_rotation(anchor['r'], anchor['v'], target_r, target_v)
-        assert np.max(abs(plane @ anchor['r'] - target_r)) < 1e-8
+        plane, registered_r, registered_v = rigid_preview_state(anchor['r'], anchor['v'], target_r, target_v)
+        assert np.max(abs(registered_r - target_r)) < 1e-8
         baseline_shape, baseline_projection = measure(anchor['r'], anchor['dr'], anchor['mass'], config, Analysis,
                                                      anchor['id'], anchor['v'], anchor['dv'])
         registered_dr = anchor['dr'] @ plane.T
         registered_dv = anchor['dv'] @ plane.T
-        registered_shape, registered_projection = measure(target_r, registered_dr, anchor['mass'], config, Analysis,
-                                                         anchor['id'], target_v, registered_dv)
+        registered_shape, registered_projection = measure(registered_r, registered_dr, anchor['mass'], config, Analysis,
+                                                         anchor['id'], registered_v, registered_dv)
         delta_pa = cm.pa_difference_deg(target_pa, registered_shape['PA_deg'])
         internal = cm.pa_roll_rotation(registered_projection['basis']['n'], delta_pa)
         corrected_dr = registered_dr @ internal.T
         corrected_dv = registered_dv @ internal.T
         assert np.max(abs(np.average(corrected_dv, axis=0, weights=anchor['mass']))) < 1e-8
-        corrected_shape, corrected_projection = measure(target_r, corrected_dr, anchor['mass'], config, Analysis,
-                                                       anchor['id'], target_v, corrected_dv)
+        corrected_shape, corrected_projection = measure(registered_r, corrected_dr, anchor['mass'], config, Analysis,
+                                                       anchor['id'], registered_v, corrected_dv)
         assert abs(cm.pa_difference_deg(target_pa, corrected_shape['PA_deg'])) < .02
         roll_qa = invariants(registered_projection, corrected_projection, registered_shape, corrected_shape)
         new_initial_r, new_initial_v = plane @ initial['r'], plane @ solved['velocity']
@@ -432,6 +438,9 @@ def solve(index_path, source_code=None):
                      model=model, observer_unchanged=True, anchor=compact_anchor(anchor, config),
                      empirical_coefficients=coefficient, initial_velocity_solution=solved,
                      target_point_6D=config['target'], orbital_rotation_native=plane,
+                     preview_semantics_version=2, evolved_6D_match_validated=False,
+                     rigid_preview_measured_COM=point_observables(registered_r, registered_v, config),
+                     static_target_velocity_injected=False,
                      internal_rotation_native=internal, requested_PA_delta_after_registration_deg=delta_pa,
                      baseline_shape=baseline_shape, registered_shape=registered_shape, corrected_shape=corrected_shape,
                      pure_internal_roll_invariants=roll_qa,
@@ -441,7 +450,7 @@ def solve(index_path, source_code=None):
                      q_change_registration=registered_shape['q'] - baseline_shape['q'],
                      rhalf_relative_change_registration=registered_shape['rhalf_major_kpc'] / baseline_shape['rhalf_major_kpc'] - 1,
                      merger=merger, input_offsets=biases, pericentre_measured=False,
-                     limitations=['Final bulk is set exactly only in this static geometry proxy.',
+                     limitations=['Preview bulk is the rotated measured bulk; target velocity is never injected.',
                                   'Empirical C_E/k_L and rigid plane transport do not certify a new live-host trajectory.',
                                   'Changing initial body orientation may change gas interaction and later morphology.',
                                   'Only fixed old stars were interpolated; no claim of a complete new-star catalogue.',
@@ -494,7 +503,8 @@ def solve(index_path, source_code=None):
                       [(baseline_projection, anchor['mass']), (registered_projection, anchor['mass']),
                        (corrected_projection, anchor['mass'])],
                       [baseline_shape, registered_shape, corrected_shape])
-        record = dict(state='PASS', model=model, latest_snapshot=case['latest'], output_dir=str(latest_dir),
+        record = dict(state='UNEVOLVED_CANDIDATES_READY', model=model, latest_snapshot=case['latest'], output_dir=str(latest_dir),
+                      pass_scope='candidate_construction_only', evolved_6D_match_validated=False,
                       primary=joint, Dhel_sensitivity=sensitivity, latest_internal_only=local,
                       no_measured_pericentre=True,
                       latest_old_COM_radial_velocity_kms=cm.decompose_state(latest['r'], latest['v'])['vr'],
@@ -512,8 +522,10 @@ def solve(index_path, source_code=None):
                              baseline_q=baseline_shape['q'], registered_q=registered_shape['q'],
                              baseline_rhalf_kpc=baseline_shape['rhalf_major_kpc'], registered_rhalf_kpc=registered_shape['rhalf_major_kpc'],
                              pericentre_measured=False, re_evolved=False))
-        print('CANDIDATE PASS', model, 'latest PA', latest_shape['PA_deg'], 'target PA', corrected_shape['PA_deg'], flush=True)
-    summary['state'] = 'PASS'
+        print('UNEVOLVED CANDIDATE CONSTRUCTED (not an evolved 6D pass)', model, 'latest PA', latest_shape['PA_deg'], 'preview PA', corrected_shape['PA_deg'], flush=True)
+    summary['state'] = 'UNEVOLVED_CANDIDATES_READY'
+    summary['evolved_6D_match_validated'] = False
+    summary['pass_scope'] = 'candidate_construction_only'
     save(index_path.parent / 'ORBIT_CANDIDATES_SUMMARY.json', summary)
     with (index_path.parent / 'ORBIT_CANDIDATES_SUMMARY.csv').open('x', newline='', encoding='utf-8') as stream:
         writer = csv.DictWriter(stream, fieldnames=list(csv_rows[0]))

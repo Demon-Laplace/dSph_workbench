@@ -40,7 +40,7 @@ def require_close(actual, expected, name, tolerance=1e-10):
         raise ValueError('Incompatible canonical ' + name)
 
 
-def validate_config(config, require_cases=True):
+def validate_config(config, require_cases=True, require_brackets=True):
     """Reject legacy inputs rather than silently translating an old observer."""
     c = copy.deepcopy(config)
     if c.get('schema_id') != SCHEMA_ID:
@@ -78,12 +78,15 @@ def validate_config(config, require_cases=True):
         selected = {case['initial'], case['latest']}
         for key in ['GC_radius_bracket', 'crossing_bracket']:
             pair = case.get(key)
+            if pair is None and not require_brackets:
+                continue
             if (not isinstance(pair, list) or len(pair) != 2
                     or any(not isinstance(n, int) or isinstance(n, bool) or n < 0 for n in pair)
                     or pair[1] != pair[0] + 1):
                 raise ValueError('Use explicit adjacent snapshot brackets: ' + key)
             selected.update(pair)
-        if case['initial'] >= min(case['GC_radius_bracket']) or case['latest'] < max(selected):
+        if (case['initial'] >= case['latest'] or case['latest'] < max(selected)
+                or ('GC_radius_bracket' in case and case['initial'] >= min(case['GC_radius_bracket']))):
             raise ValueError('Initial/anchor/latest snapshots are out of order.')
         requested = case.get('extract_snapshots', sorted(selected))
         if any(not isinstance(n, int) or isinstance(n, bool) or n < 0 for n in requested):
@@ -128,15 +131,35 @@ def verify_observation_source(source, config):
     config['target_conversion_contract']=conversion
 
 
-def capture_inputs(root, cases):
+def capture_inputs(root, cases, freeze_physics_inputs=False):
     out = {'models': {}}
+    fixed_hashes = {}
     for case in cases:
         model = case['model']
         directory = root / model
         record = {'files': {}}
         for name in ['mergegalaxy.par', 'mergecube.par', 'GZWJL.PARAM']:
             path = directory / name
-            record['files'][name] = {'text': path.read_text(encoding='utf-8'), 'sha256': sha(path)}
+            record['files'][name] = {'text': path.read_bytes().decode('utf-8'), 'sha256': sha(path)}
+        case_path = Path(case['run_identity_file']) if case.get('run_identity_file') else directory / 'case.json'
+        if not case_path.is_absolute():
+            case_path = root / case_path
+        if case_path.is_file():
+            record['files']['case.json'] = {'text': case_path.read_bytes().decode('utf-8'), 'sha256': sha(case_path)}
+            record['run_identity_source_path'] = str(case_path)
+        if freeze_physics_inputs:
+            if 'case.json' not in record['files']:
+                raise ValueError('Feedback extraction requires an explicit case.json run identity')
+            identity = json.loads(record['files']['case.json']['text'])
+            record['fixed_input_sha256'] = {}
+            for key in ['mw_ic', 'dwarf_ic', 'cube']:
+                path = Path(identity[key])
+                if not path.is_absolute():
+                    path = directory / path
+                path = path.resolve()
+                if path not in fixed_hashes:
+                    fixed_hashes[path] = sha(path)
+                record['fixed_input_sha256'][key] = fixed_hashes[path]
         for name in ['mergegalaxy.par', 'mergecube.par']:
             rows = [shlex.split(line, comments=True) for line in record['files'][name]['text'].splitlines()]
             rows = [row for row in rows if row]
@@ -212,17 +235,27 @@ def main(argv=None):
     parser.add_argument('--source', type=Path)
     parser.add_argument('--run-directory', type=Path)
     parser.add_argument('--tag')
-    parser.add_argument('--stage', choices=['validate', 'frame-check', 'extract', 'solve', 'all'], default='all')
+    parser.add_argument('--stage', choices=['validate', 'frame-check', 'extract', 'solve', 'all',
+                                         'evaluate', 'plan-feedback', 'update-feedback'], default='all')
+    parser.add_argument('--index', type=Path, help='Frozen extraction index for a single evolved run.')
+    parser.add_argument('--model', help='One model within the frozen index; models are never pooled.')
+    parser.add_argument('--feedback-spec', type=Path, help='Central-difference trial indices for update-feedback.')
+    parser.add_argument('--proposal', type=Path, help='Previously proposed update to verify against this actual evolution.')
     parser.add_argument('--physical-candidates', action='store_true',
                         help='Explicitly request unevolved physical orbit/body candidates; never a reference-frame correction.')
     args = parser.parse_args(argv)
-    config = validate_config(load(args.config),require_cases=args.stage not in ['validate','frame-check'])
+    feedback_stage = args.stage in ['evaluate', 'plan-feedback', 'update-feedback']
+    config = validate_config(load(args.config), require_cases=args.stage not in ['validate','frame-check'] and not feedback_stage,
+                             require_brackets=args.stage in ['solve', 'all'])
     source = args.source.resolve() if args.source else Path(__file__).resolve().parent.parent
     verify_observation_source(source, config)
     if args.stage in ['validate','frame-check']:
         print(json.dumps(dict(state='PASS',canonical_observer_id=OBSERVER_ID,
                               target=config['target'],conversion=config['target_conversion_contract']),indent=2))
         return 0
+    if feedback_stage:
+        from .feedback import run_feedback
+        return run_feedback(args, config)
     if args.stage in ['solve','all'] and not args.physical_candidates:
         parser.error('Candidate solving changes physical initial conditions. Use --physical-candidates explicitly; use --stage frame-check for a frame correction check.')
     if args.workspace_root is None or args.run_directory is None or not args.tag:
@@ -235,7 +268,7 @@ def main(argv=None):
     config['analysis_source'] = str(source)
     config['workspace_root'] = str(root)
     config['run_tag'] = args.tag
-    inputs = capture_inputs(root, config['cases'])
+    inputs = capture_inputs(root, config['cases'], config.get('feedback', {}).get('freeze_physics_inputs', False))
     package = Path(__file__).resolve().parent
     index_path = work / 'frame_state_index.json'
     if args.stage in ['extract', 'all']:
@@ -255,7 +288,8 @@ def main(argv=None):
                                 '--source', str(source), '--tag', args.tag, '--model', model,
                                 '--snapshot', str(number)], cwd=str(package.parent), check=True)
                 directory = root / model / 'output/analysis' / ('snapshot_%03d' % number) / args.tag
-                index['states'][model][str(number)] = dict(state_json=str(directory / 'state.json'), cache_npz=str(directory / 'stars.npz'))
+                index['states'][model][str(number)] = dict(state_json=str(directory / 'state.json'),
+                    state_sha256=sha(directory / 'state.json'), cache_npz=str(directory / 'stars.npz'))
                 (work / 'progress.json').write_text(json.dumps(dict(model=model, snapshot=number, state='extracted'), indent=2))
         if index_path.exists():
             if load(index_path) != index:
