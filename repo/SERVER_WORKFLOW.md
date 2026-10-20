@@ -51,6 +51,15 @@ Provide an explicit, unique uint64 `particle_id` array in `cohort_ids.npz` at
 `DSPH_PREEXISTING_ID_PATH` to an audited frozen cohort. Its definition is
 selected-then-frozen; it is not automatically all initial IC stars. No dynamic
 density fallback is permitted. A new model needs its own documented cohort.
+This frozen cohort identifies the old-star photometric reference, not an age
+cut for velocity statistics. Current dwarf membership adds newly formed stars
+using the existing spatial classification. Sigma (circular/elliptical/fixed
+apertures and XYZ), Walker R5, the velocity profile/map, and R5 motion use all
+current old+new members in their respective apertures. Light and half-light
+radii retain the old-star reference. `sigma_re_nstar` counts all stars in the
+circular half-light aperture; `sigma_re_noldstar` counts its old-star subset.
+The observer config SHA includes this kinematic tracer definition, so outputs
+from the old-only velocity analysis require a fresh analysis directory.
 
 GetInfo and PlotFig write new results beside their snapshots under
 `<snapshotfolder>/analysis/astropy_native_direct_v1/`. An explicit

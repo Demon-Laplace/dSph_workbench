@@ -37,7 +37,7 @@ ELINFO_COLUMNS = [
     'rhalf_circularized', 'rhalf_circular',
     'shape_center_x_kpc', 'shape_center_y_kpc',
     'distance', 'age', 'sigma', 'sigma_re_circular',
-    'sigma_re_elliptical', 'sigma_fixed_500pc', 'sigma_re_noldstar',
+    'sigma_re_elliptical', 'sigma_fixed_500pc', 'sigma_re_nstar', 'sigma_re_noldstar',
     'sigma_gradient_kms_per_kpc', 'tsigma',
     'tsigma_xyz',
     'sigma_x', 'sigma_y', 'sigma_z',
@@ -482,10 +482,11 @@ class GetInfo:
             "# rhalf: projected elliptical half-light semi-major axis of old stars\n",
             "# rhalf_circularized: equal-area value rhalf*sqrt(1-eps)\n",
             "# rhalf_circular: radius directly enclosing half the old-star light in a circular aperture\n",
-            "# sigma and sigma_re_circular: old-star LOS dispersion after removing a planar velocity gradient within circular R<rhalf_circular\n",
-            "# sigma_re_elliptical: same tracer and detrending within the old-star half-light ellipse\n",
+            "# sigma and sigma_re_circular: old+new member-star LOS dispersion after removing a planar velocity gradient within circular R<rhalf_circular\n",
+            "# sigma_re_elliptical: all member stars, detrended within the old-star half-light ellipse\n",
             "# sigma_fixed_500pc: same tracer and detrending within circular R<0.5 kpc\n",
-            "# sigma_re_noldstar: old-star tracers in the circular R<rhalf_circular aperture\n",
+            "# sigma_re_nstar: all member stars in the circular R<rhalf_circular aperture; sigma_re_noldstar is its old-star subset\n",
+            "# Walker R5, velocity maps/profiles, and sigma_x/y/z include old+new member stars; light/size retain the old-star reference cohort\n",
             "# sigma_gradient_kms_per_kpc: fitted planar LOS velocity-gradient amplitude in that aperture\n",
         ]
 

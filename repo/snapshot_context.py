@@ -85,7 +85,8 @@ def prepare_snapshot_context(
     x_kpc,y_kpc=sky['east_kpc'],sky['north_kpc']
     hot_gas_x_kpc,hot_gas_y_kpc=hot_gas_coords['_sky']['east_kpc'],hot_gas_coords['_sky']['north_kpc']
     cold_gas_x_kpc,cold_gas_y_kpc=cold_gas_coords['_sky']['east_kpc'],cold_gas_coords['_sky']['north_kpc']
-    fit_R5=old & sky['fit_R5_mask']
+    # Kinematics include every current dwarf member, including newly formed stars.
+    fit_R5=sky['fit_R5_mask']
     walker=walker61_zero_error(sky,star_coords['vlos'],fit_mask=fit_R5)
     motion=production_motion(star_coords,sky,star_mass,fit_R5)
     observer_metadata_path=write_snapshot_observer_metadata(folder_path,snapshot_num,

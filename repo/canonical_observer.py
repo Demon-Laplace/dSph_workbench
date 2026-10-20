@@ -795,6 +795,7 @@ OBSERVER_FRAME = dict(galcen_distance_kpc=8.122, z_sun_kpc=.0208,
 LENGTH_CODE_TO_KPC = 1.00000064815577
 VELOCITY_CODE_TO_KMS = 1.0
 SKY_FIELD_HALF_WIDTH_DEG = 2.1
+KINEMATIC_TRACER_DEFINITION = "current_dwarf_members_old_and_new"
 
 def observer_contract_sha256():
     import hashlib, json
@@ -802,7 +803,8 @@ def observer_contract_sha256():
         length_code_to_kpc=LENGTH_CODE_TO_KPC,velocity_code_to_kms=VELOCITY_CODE_TO_KMS,
         host_bulk="TP2/3/4 massmean within true 3D r<5kpc of shrink MW centre",
         default_motion="Heliocentric proper motion",display_half_width_deg=2.1,
-        display_projection="raw DeltaRA wrapped and raw DeltaDec",walker="61direction spherical Rproj<5kpc")
+        display_projection="raw DeltaRA wrapped and raw DeltaDec",walker="61direction spherical Rproj<5kpc",
+        kinematic_tracer=KINEMATIC_TRACER_DEFINITION)
     return hashlib.sha256(json.dumps(data,sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
 def require_canonical_csv(path):
@@ -911,6 +913,7 @@ def write_snapshot_observer_metadata(folder_path,snapshot_num,host_state,cohort,
             fingerprint_kind='path_size_mtime_only'))
     result=dict(canonical_observer_id=CANONICAL_OBSERVER_ID,observer_config_sha256=observer_contract_sha256(),
         observer_frame=OBSERVER_FRAME,host=host_state,cohort=cohort,snapshot_num=int(snapshot_num),sources=sources,
+        kinematic_tracer=KINEMATIC_TRACER_DEFINITION,
         implementation_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         input_selected_id_sha256=hashlib.sha256(star_coords['id'].astype('<u8').tobytes()).hexdigest(),
         walker_R5={k:v for k,v in walker.items() if k not in ('fit_particle_id',)},motion_R5=motion)

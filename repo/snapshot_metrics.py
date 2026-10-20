@@ -154,6 +154,17 @@ def old_star_projected_kinematics(snapshot):
     }
 
 
+def member_star_projected_kinematics(snapshot):
+    """LOS kinematics of all current dwarf members, including newly formed stars."""
+    projected = _star_projected_kinematics(
+        snapshot, np.ones(len(snapshot['star_coords']['vlos']), dtype=bool)
+    )
+    gradient = fit_velocity_gradient(
+        projected['x_kpc'], projected['y_kpc'], projected['vlos']
+    )
+    return dict(projected, vlos_detrended=gradient['v_resid'], velocity_gradient=gradient)
+
+
 def detrended_dispersion_in_aperture(
     x_kpc,
     y_kpc,
@@ -235,6 +246,7 @@ def compute_snapshot_summary(snapshot, numsp):
     rotra_dw_cold_gas = snapshot["rotra_dw_cold_gas"]
     rotdec_dw_cold_gas = snapshot["rotdec_dw_cold_gas"]
     old_kinematics = old_star_projected_kinematics(snapshot)
+    member_kinematics = member_star_projected_kinematics(snapshot)
     old_star_local_mask = old_kinematics["old_local_mask"]
 
     x_all = df["x"].to_numpy()
@@ -373,18 +385,18 @@ def compute_snapshot_summary(snapshot, numsp):
                      hot_m[dw_hot_gas_rhalf_mask].sum(dtype=np.float64))
 
     sigma_re_circular_result = detrended_dispersion_in_aperture(
-        old_kinematics["x_kpc"],
-        old_kinematics["y_kpc"],
-        old_kinematics["vlos"],
+        member_kinematics["x_kpc"],
+        member_kinematics["y_kpc"],
+        member_kinematics["vlos"],
         r_half_circular,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
         circular=True,
     )
     sigma_re_elliptical_result = detrended_dispersion_in_aperture(
-        old_kinematics["x_kpc"],
-        old_kinematics["y_kpc"],
-        old_kinematics["vlos"],
+        member_kinematics["x_kpc"],
+        member_kinematics["y_kpc"],
+        member_kinematics["vlos"],
         r_half,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
@@ -393,9 +405,9 @@ def compute_snapshot_summary(snapshot, numsp):
         circular=False,
     )
     sigma_fixed_500pc_result = detrended_dispersion_in_aperture(
-        old_kinematics["x_kpc"],
-        old_kinematics["y_kpc"],
-        old_kinematics["vlos"],
+        member_kinematics["x_kpc"],
+        member_kinematics["y_kpc"],
+        member_kinematics["vlos"],
         r_3d_cut,
         center_x_kpc=shape_center_x_kpc,
         center_y_kpc=shape_center_y_kpc,
@@ -404,7 +416,12 @@ def compute_snapshot_summary(snapshot, numsp):
     sigma_re_circular = sigma_re_circular_result["sigma"]
     sigma_re_elliptical = sigma_re_elliptical_result["sigma"]
     sigma_fixed_500pc = sigma_fixed_500pc_result["sigma"]
-    sigma_re_noldstar = sigma_re_circular_result["nstar"]
+    sigma_re_nstar = sigma_re_circular_result["nstar"]
+    old_radius = np.hypot(obs_x_kpc - shape_center_x_kpc, obs_y_kpc - shape_center_y_kpc)
+    sigma_re_noldstar = int(np.count_nonzero(
+        np.isfinite(old_radius) & np.isfinite(old_kinematics['vlos'])
+        & (old_radius <= r_half_circular) & (r_half_circular > 0)
+    ))
     sigma_gradient_kms_per_kpc = sigma_re_circular_result["gradient"]["grad_amp"]
 
     stellar_region_radius = stellar_region_rhalf_multiplier * r_half
@@ -455,9 +472,9 @@ def compute_snapshot_summary(snapshot, numsp):
     )
 
     dw_star_500pc_mask = Analysis.get_3d_radial_mask(
-        obs_star_x - dw_xc,
-        obs_star_y - dw_yc,
-        obs_star_z - dw_zc,
+        star_x - dw_xc,
+        star_y - dw_yc,
+        star_z - dw_zc,
         r_3d_cut,
     )
 
@@ -479,7 +496,7 @@ def compute_snapshot_summary(snapshot, numsp):
 
 
     # Total gravitating stellar mass includes newly formed stars.  Old stars
-    # remain a separate RGB-like tracer for light and kinematic diagnostics.
+    # remain a separate RGB-like tracer for light, not a kinematic age cut.
     aperture_mass_components = stellar_mass_components(
         star_m, dw_total_star_stellar_region_mask, old_star_local_mask
     )
@@ -501,9 +518,9 @@ def compute_snapshot_summary(snapshot, numsp):
         center_x=shape_center_x_kpc,
         center_y=shape_center_y_kpc,
     )
-    sigma_x = _safe_std(obs_star_vx[dw_star_500pc_mask])
-    sigma_y = _safe_std(obs_star_vy[dw_star_500pc_mask])
-    sigma_z = _safe_std(obs_star_vz[dw_star_500pc_mask])
+    sigma_x = _safe_std(star_vx[dw_star_500pc_mask])
+    sigma_y = _safe_std(star_vy[dw_star_500pc_mask])
+    sigma_z = _safe_std(star_vz[dw_star_500pc_mask])
     sigma_xyz = np.sqrt((sigma_x**2 + sigma_y**2 + sigma_z**2) / 3)
 
     baryon_half_mass = star_half_mass + gas_half_mass
@@ -546,7 +563,7 @@ def compute_snapshot_summary(snapshot, numsp):
         "shape_center_y_kpc": shape_center_y_kpc,
         "distance": d_mean,
         "age": tsnap,
-        # ``sigma`` retains the historical half-light planar-detrending diagnostic: old stars inside
+        # ``sigma`` uses all current member stars inside
         # the directly measured circular half-light aperture, after fitting
         # and removing a planar LOS velocity gradient on that same sample.
         "walker_R5_k_kms_per_deg": snapshot['walker_R5']['k_abs'],
@@ -558,6 +575,7 @@ def compute_snapshot_summary(snapshot, numsp):
         "sigma_re_circular": sigma_re_circular,
         "sigma_re_elliptical": sigma_re_elliptical,
         "sigma_fixed_500pc": sigma_fixed_500pc,
+        "sigma_re_nstar": sigma_re_nstar,
         "sigma_re_noldstar": sigma_re_noldstar,
         "sigma_gradient_kms_per_kpc": sigma_gradient_kms_per_kpc,
         "tsigma": theoretical_sigma,

@@ -129,7 +129,7 @@ class CallerTests(unittest.TestCase):
         context=context_module().prepare_snapshot_context('UNOPENED_SYNTHETIC_ONLY',285,core_radius=5.)
         self.assertEqual(context['simulation'].loader_kwargs['box'],False)
         self.assertEqual(context['canonical_observer_id'],co.CANONICAL_OBSERVER_ID)
-        self.assertEqual(context['walker_R5']['N_fit'],8)
+        self.assertEqual(context['walker_R5']['N_fit'],9)
         self.assertEqual(len(context['star_coords']['id']),9)
         self.assertEqual(int(np.sum(context['fixed_old_local_mask'])),8)
         self.assertEqual(context['motion_R5']['HRF_EN_masyr'].shape,(2,))
@@ -138,6 +138,14 @@ class CallerTests(unittest.TestCase):
             self.assertAlmostEqual(context[key]['_sky']['center_RA_deg'],context['dw_cra'],places=12)
             self.assertAlmostEqual(context[key]['_sky']['center_Dec_deg'],context['dw_cdec'],places=12)
         self.assertAlmostEqual(context['cold_gas_coords']['vlos'][0],context['hot_gas_coords']['vlos'][0],places=12)
+        old_only=co.walker61_zero_error(context['star_coords']['_sky'],
+            context['star_coords']['vlos'],
+            fit_mask=context['fit_R5_mask'] & context['fixed_old_local_mask'])
+        self.assertEqual(old_only['N_fit'],8)
+        self.assertFalse(np.isclose(context['walker_R5']['sigma_raw_mle_kms'],
+            old_only['sigma_raw_mle_kms']))
+        np.testing.assert_array_equal(context['walker_R5']['fit_particle_id'],
+            context['star_coords']['id'][context['fit_R5_mask']])
 
     def test_context_empty_gases(self):
         SyntheticSimulation.include_gas=False
@@ -146,7 +154,7 @@ class CallerTests(unittest.TestCase):
         finally:SyntheticSimulation.include_gas=True
         self.assertEqual(len(context['cold_gas_coords']['ra']),0)
         self.assertEqual(len(context['hot_gas_coords']['pmra']),0)
-        self.assertEqual(context['walker_R5']['N_fit'],8)
+        self.assertEqual(context['walker_R5']['N_fit'],9)
 
     def test_geodesic_arrow_origin_and_field_edge(self):
         direction=np.array([.6,-.8]);length=.65

@@ -89,8 +89,8 @@ display has colour wherever stars exist and +/-12 km/s limits, subtracting a
 declared display constant only. Display window never replaces the measurement
 aperture. No gradient PA or angular-momentum-axis annotations.
 
-Walker ideal-simulation measurement uses true spherical rho in degrees, fixed
-selected-then-frozen uint64 cohort IDs, forward Rproj=D0*tan(rho)<5 kpc, equal
+Walker ideal-simulation measurement uses true spherical rho in degrees, current
+old+new dwarf member stars, forward Rproj=D0*tan(rho)<5 kpc, equal
 stars with Pi=1 and zero measurement error, all 61 directions 0,3,...,180 deg.
 Choose max abs(k) in km/s/deg. Half-light planar detrending remains a separately
 named legacy diagnostic, never a Walker61/R5 replacement. Raw and residual MLE
@@ -105,3 +105,6 @@ or mixed-member continuation. New outputs live beside the snapshot in
 output/analysis/astropy_native_direct_v1; DSPH_CANONICAL_OUTPUT_ROOT explicitly
 selects a fresh validation/output directory. Legacy CSV/images/videos, raw
 snapshots/ICs, GIZMO, user shell launchers, and the paper are preserved.
+The frozen cohort is the old-star photometric reference. Velocity dispersions,
+Walker fits, R5 motion and velocity maps/profiles include newly formed current
+dwarf members; do not restrict these statistics to that initial cohort.

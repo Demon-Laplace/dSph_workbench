@@ -27,7 +27,7 @@ import argparse
 # from multiprocessing import Pool
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
-from snapshot_metrics import old_star_projected_kinematics, hi_particle_masses, hi_fraction
+from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction
 from canonical_observer import require_canonical_csv, angle_velocity_grid, tangent_kpc_to_raw_offsets, raw_sky_pixel_area_arcsec2
 from canonical_display import center_motion_arrow
 
@@ -1115,6 +1115,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     dw_cold_gas_mask = snapshot['dw_cold_gas_mask']
     total_dw_star_mask = snapshot['total_dw_star_mask']
     old_kinematics = old_star_projected_kinematics(snapshot)
+    member_kinematics = member_star_projected_kinematics(snapshot)
     old_star_local_mask = old_kinematics['old_local_mask']
     rotra_dw_star = np.asarray(snapshot['rotra_dw_star'])[old_star_local_mask]
     rotdec_dw_star = np.asarray(snapshot['rotdec_dw_star'])[old_star_local_mask]
@@ -1123,8 +1124,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     d_mean = snapshot['d_mean']
     x_kpc = old_kinematics['x_kpc']
     y_kpc = old_kinematics['y_kpc']
-    vlos_array = old_kinematics['vlos']
-    vlos_detrended = old_kinematics['vlos_detrended']
+    vlos_array = member_kinematics['vlos']
+    vlos_detrended = member_kinematics['vlos_detrended']
     cold_gas_x_kpc = snapshot['cold_gas_x_kpc']
     cold_gas_y_kpc = snapshot['cold_gas_y_kpc']
     dw_elinfo = context['dw_elinfo']
@@ -1141,7 +1142,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         total_dw_star_mask,
         ['m', 'x', 'y', 'z', 'vx', 'vy', 'vz'],
     ].iloc[old_star_local_mask]
-    # Photometric and kinematic tracers intentionally remain restricted to old stars.
+    # The old-star cut applies to photometry; kinematics include all current members.
     star_mass_array = star_df['m'].to_numpy()
     x_star = star_df['x'].to_numpy()
     y_star = star_df['y'].to_numpy()
@@ -1236,13 +1237,17 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         sigma_y = row['sigma_y']
         sigma_z = row['sigma_z']
     else:
-        r = np.sqrt((x_star - dw_xc) ** 2 + (y_star - dw_yc) ** 2 + (z_star - dw_zc) ** 2)
+        members = df.loc[total_dw_star_mask]
+        r = np.sqrt((members['x'].to_numpy() - dw_xc) ** 2
+                    + (members['y'].to_numpy() - dw_yc) ** 2
+                    + (members['z'].to_numpy() - dw_zc) ** 2)
         within_500pc = r <= 0.5
-        sigma_x = np.nan if not np.any(within_500pc) else np.std(vx_star[within_500pc])
-        sigma_y = np.nan if not np.any(within_500pc) else np.std(vy_star[within_500pc])
-        sigma_z = np.nan if not np.any(within_500pc) else np.std(vz_star[within_500pc])
+        sigma_x = np.nan if not np.any(within_500pc) else np.std(members['vx'].to_numpy()[within_500pc])
+        sigma_y = np.nan if not np.any(within_500pc) else np.std(members['vy'].to_numpy()[within_500pc])
+        sigma_z = np.nan if not np.any(within_500pc) else np.std(members['vz'].to_numpy()[within_500pc])
 
-    bin_centers, vlos_dispersion = Analysis.get_vlos_dispersion(x_kpc, y_kpc, vlos_detrended)
+    bin_centers, vlos_dispersion = Analysis.get_vlos_dispersion(
+        member_kinematics['x_kpc'], member_kinematics['y_kpc'], vlos_detrended)
     img, extent = Analysis.surface_brightness_map(
         rotra_dw_star,
         rotdec_dw_star,
@@ -1260,7 +1265,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     old_area=(2.*SKY_FIELD_HALF_WIDTH_DEG/120*3600.)**2
     img=img+2.5*np.log10(actual_area/old_area)[None,:]
     sky_field_half_width_kpc=np.tan(np.radians(SKY_FIELD_HALF_WIDTH_DEG))*d_mean
-    vf,extent_vf=angle_velocity_grid(rotra_dw_star,rotdec_dw_star,vlos_array,
+    vf,extent_vf=angle_velocity_grid(snapshot['rotra_dw_star'],snapshot['rotdec_dw_star'],vlos_array,
         snapshot['walker_R5']['v0_kms'],npix=40)
 
 
@@ -1327,7 +1332,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'adaptive_ml_summary': adaptive_ml_summary,
         'vlos_array': vlos_array,
         'vlos_detrended': vlos_detrended,
-        'velocity_gradient': old_kinematics['velocity_gradient'],
+        'velocity_gradient': member_kinematics['velocity_gradient'],
         'cy': cy,
         'cz': cz,
         'sigma_x': sigma_x,
