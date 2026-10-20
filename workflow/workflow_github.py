@@ -36,7 +36,8 @@ def source_files(source):
     paths = [p for pattern in ('*.py', '*.sh', '*.slurm') for p in source.glob(pattern) if not p.is_symlink()]
     paths += [source / n for n in ('AGENTS.md', 'SERVER_WORKFLOW.md')
               if (source / n).is_file() and not (source / n).is_symlink()]
-    for folder in ('tests', 'build_production_ic', 'check_density_profile', 'evolution_pipeline', 'paper_figures'):
+    for folder in ('tests', 'build_production_ic', 'check_density_profile', 'evolution_pipeline',
+                   'paper_figures', 'orbit_calibration_v1'):
         directory = source / folder
         if directory.is_dir() and not directory.is_symlink():
             paths += [p for p in directory.rglob('*') if p.is_file() and not p.is_symlink()

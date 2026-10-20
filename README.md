@@ -6,6 +6,8 @@ server production fixes. `workflow/` coordinates local preparation, server
 Slurm jobs, result retrieval, source synchronization, and Git-based releases.
 
 Read [the workflow guide](workflow/WORKFLOW.md) for setup and commands.
+For canonical orbit processing, read the [program guide](repo/orbit_calibration_v1/README.md)
+and [reference-frame change log](repo/orbit_calibration_v1/CHANGELOG.md).
 Machine-specific configuration, particle ICs, snapshots, logs, images, and
 videos belong in the simulation workspace and must not enter this repository.
 The remote keeps only `main`, which receives validated, scoped automatic agent

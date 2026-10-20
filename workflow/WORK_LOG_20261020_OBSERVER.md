@@ -1,7 +1,8 @@
 # 工作日志：旧太阳观测代码修正（2026-10-20）
 
 本次更新的范围是旧太阳观测处理的入口和坐标约定。
-轨道分析过程、程序副本、报告和图片留在本地及对应快照的分析目录。
+最初交付时轨道分析程序仅保留本地；用户随后明确要求将更新程序同步 GitHub。
+当前程序、配置示例、测试及说明文档纳入 main；对应快照的数据、报告和图片继续保存在分析目录。
 新轨道候选只以简明交接数据记录在 [下一步工作](NEXT_WORK_7004_7005_ORBIT.md)。
 
 ## 修改与核查
@@ -26,3 +27,12 @@
 - 结果目录为 `<model>/output/analysis/snapshot_NNN/orbit_correction_7004_7005_20261020_v2/`；小型结果已回传对应 F 盘模型目录。
 
 此前提交 `0ccde06` 曾额外纳入轨道分析实现。本次按用户澄清，用后续提交从主分支撤出这些实现及详细分析说明；本地副本与结果保留，既有 Git 历史保留。
+
+## 后续范围变更：轨道程序纳入 GitHub（2026-10-20）
+
+上述撤出是当时的历史决定，已被用户最新指令取代。此次重新纳入的是完成完整六维
+参考系修正后的程序，不是直接恢复 `0ccde06` 的旧版本。入口为
+`repo/orbit_calibration_v1/`，兼容命令为 `repo/calibrate_orbit.py`、
+`repo/analyze_orbit_orientation.py` 和 `repo/run_calibration_from_config.py`。
+使用方法见 [程序说明](../repo/orbit_calibration_v1/README.md)，修改事项与验证范围见
+[修改记录](../repo/orbit_calibration_v1/CHANGELOG.md)。本次 GitHub 发布不启动模拟或更改论文。

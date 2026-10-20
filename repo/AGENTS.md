@@ -43,7 +43,10 @@ After changing source code, documentation, or tests here:
 The sync helper includes top-level Python modules and shell/Slurm launchers, this file,
 `SERVER_WORKFLOW.md`, and source files in the explicit package allowlist
 (`tests`, `build_production_ic`, `check_density_profile`, `evolution_pipeline`,
-`paper_figures`). If introducing another
+`paper_figures`, `orbit_calibration_v1`). Orbit-processing source, examples,
+tests and documentation are versioned on main; the earlier local-only orbit
+source restriction was revoked by the user on 2026-10-20. Snapshot-specific
+results and large inputs remain outside Git. If introducing another
 necessary source directory or file type, explicitly extend and test the
 allowlist before relying on automatic synchronization. Never stage the whole
 simulation workspace. Never push raw data, particle INIs, notebooks with embedded

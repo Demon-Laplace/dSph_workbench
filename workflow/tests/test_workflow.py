@@ -140,6 +140,26 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             github.source_files(source)
 
+    def test_orbit_package_source_allowlist_keeps_code_and_excludes_results(self):
+        source = self.root / 'code'
+        package = source / 'orbit_calibration_v1'
+        for name in ('__init__.py', 'target_frame.py', 'math/candidate_math.py',
+                     'README.md', 'CHANGELOG.md', 'config.frame_check.example.json'):
+            path = package / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{}' if path.suffix == '.json' else '# source\n')
+        for name in ('stars.npz', 'snapshot_285.hdf5', 'CANDIDATES_REPORT.json',
+                     'figure.png', 'mergegalaxy.CANDIDATE.par', '__pycache__/cache.py',
+                     '.private/secret.py'):
+            path = package / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('not publishable')
+        paths = {p.relative_to(source).as_posix() for p in github.source_files(source)}
+        included = {p.removeprefix('orbit_calibration_v1/') for p in paths
+                    if p.startswith('orbit_calibration_v1/')}
+        self.assertEqual(included, {'__init__.py', 'target_frame.py', 'math/candidate_math.py',
+                                   'README.md', 'CHANGELOG.md', 'config.frame_check.example.json'})
+
     def test_tampered_release_cannot_change_active_configuration(self):
         directory = self.root / 'workspace/releases/test/repo'
         directory.mkdir(parents=True)
