@@ -44,9 +44,6 @@ def source_files(source):
                       and (p.suffix != '.json' or p.name.startswith('config'))
                       and not any(part.startswith('.') or part == '__pycache__' for part in p.relative_to(source).parts)
                       and not any(parent.is_symlink() for parent in p.parents if parent != source)]
-    # Canonical orbit tools use the same package policy as analysis prepare;
-    # exporting a release must not include data or omit frozen dependencies.
-    paths += runtime.analysis_package_files(source)
     if not (source / 'GetInfo.py').is_file():
         raise ValueError('Expected the production analysis source directory')
     for path in paths:

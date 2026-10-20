@@ -66,58 +66,6 @@ def sha(path):
     return digest.hexdigest()
 
 
-ANALYSIS_SOURCE_PACKAGES = ('orbit_calibration_v1',)
-SOURCE_PACKAGE_EXCLUDED_DIRS = {
-    '__pycache__', 'cache', 'data', 'figures', 'logs', 'output', 'outputs', 'results',
-}
-
-
-def analysis_package_files(source):
-    """Select small canonical package sources for both export and frozen runs.
-
-    This is deliberately narrower than copying a package directory wholesale:
-    scientific output, local caches, links and unversioned data never become
-    executable frozen inputs. An absent optional package preserves older code.
-    """
-    source = Path(source)
-    paths = []
-
-    def linked(path):
-        return path.is_symlink() or getattr(path, 'is_junction', lambda: False)()
-
-    def visit(directory):
-        for path in sorted(directory.iterdir()):
-            if path.name.startswith('.') or path.name.lower() in SOURCE_PACKAGE_EXCLUDED_DIRS:
-                continue
-            if linked(path):
-                raise ValueError('Linked analysis package source is not allowed: ' + str(path))
-            if path.is_dir():
-                visit(path)
-                continue
-            allowed = (path.suffix == '.py' or path.name.lower() in {'readme', 'readme.md'}
-                       or (path.suffix == '.json' and path.name.startswith('config')))
-            if not allowed or not path.is_file():
-                continue
-            if path.stat().st_size > 2 * 1024**2:
-                raise ValueError('Unexpected large source file: ' + str(path))
-            if path.suffix == '.py':
-                ast.parse(path.read_bytes(), filename=str(path))
-            elif path.suffix == '.json':
-                json.loads(path.read_bytes())
-            paths.append(path)
-
-    for name in ANALYSIS_SOURCE_PACKAGES:
-        directory = source / name
-        if linked(directory):
-            raise ValueError('Linked analysis package source is not allowed: ' + str(directory))
-        if not directory.exists():
-            continue
-        if not directory.is_dir():
-            raise ValueError('Analysis source package must be a directory: ' + str(directory))
-        visit(directory)
-    return sorted(paths)
-
-
 CANONICAL_OBSERVER_ID = 'astropy_native_direct_v1'
 CANONICAL_SCHEMA_ID = 'elinfo_astropy_native_direct_v1'
 TAN_DISPLAY_CONTRACT_ID = 'heliocentric_tan_xi_eta_2p1_v1'
@@ -360,7 +308,6 @@ def prepare(args):
             raise ValueError(f'Missing production code: {code / name}')
     observation = code_observation_metadata(code)
     display = code_display_metadata(code)
-    package_files = analysis_package_files(code)
     cohort_source = Path(os.environ.get('DSPH_PREEXISTING_ID_PATH') or
                          str(snapshot_dir / 'analysis' / CANONICAL_OBSERVER_ID / 'cohort_ids.npz')).resolve()
     if not cohort_source.is_file() or cohort_source.is_symlink() or cohort_source.suffix != '.npz':
@@ -395,11 +342,6 @@ def prepare(args):
                 text = text.replace(old, 'marker_path = os.path.join(os.environ["TMPDIR"], f"dsph_boxsize_{run_id}.flag")')
                 target.write_text(text)
                 manifest['adaptations'].append('snapshot_io: temporary marker follows run TMPDIR')
-        manifest['code_sha256'][str(target.relative_to(destination))] = sha(target)
-    for path in package_files:
-        target = destination / 'code' / path.relative_to(code)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
         manifest['code_sha256'][str(target.relative_to(destination))] = sha(target)
     cohort_target = destination / observation['cohort_relative_path']
     cohort_target.parent.mkdir(exist_ok=True)
