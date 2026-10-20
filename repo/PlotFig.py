@@ -920,7 +920,7 @@ def _plot_velocity_dispersion_panel(ax, bin_centers, vlos_dispersion, tsigma, r_
         ms=3,
         lw=1.4,
         color='black',
-        label='Old stars, detrended',
+        label='Member stars, detrended',
         zorder=3,
     )
     ax.errorbar(
