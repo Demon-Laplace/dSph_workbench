@@ -69,9 +69,18 @@ groups. Preserve already submitted tasks rather than cancelling or repeating the
 Production orbital simulations use astro_fat via existing subastrofat.sh,
 one separate job per model with the launcher's current resource settings.
 Fornax7004/7005 must use snap2csv exports from isolation snapshot 50 and retain
-timescale_fd=16.6. Validate exports and merged ICs before submitting. Preserve
-original snapshots and user shell scripts.
-Fornax7004/7005 orbital and orientation transforms must match Fornax5028.
+timescale_fd=16.6. Reuse the already verified source exports for orbit-only reruns;
+do not regenerate or independently revalidate the same source IC. Keep the
+existing one-pass merge workflow. Preserve source isolation snapshots and user
+shell scripts.
+The user superseded the old Fornax5028 orbit/orientation on 2026-10-20:
+current Fornax7004/7005 use joint_GC_radius_target6D_PA43 from the GitHub memo,
+not the PA-only candidate. See workflow/REORBIT_7004_7005_20261020.md in the checkout.
+The user explicitly authorized permanent deletion of their retired production
+outputs, restarts, old analyses and videos. Only local snapshot 282/289 and
+elinfo remain in each model's reference/orbit5028-20261017/ archive, with metadata.
+Do not reuse old prepared analyses, CSV, PNG or cohort identity with the new
+snapshot numbering. This cleanup authorization does not extend to other models.
 Production startup monitoring is automatic: exit after 140 running seconds and
 nonzero integration progress, leaving the simulation running. Avoid repeated
 manual checks or confirmation requests.

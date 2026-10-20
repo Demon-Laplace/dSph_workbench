@@ -48,7 +48,7 @@ TAN 显示合同 `heliocentric_tan_xi_eta_2p1_v1` 或显示窗口、像元面积
 
 批量验证和发布回执见服务器 `workspace/validation/speed-candidate-20261020/`；
 原版 profile 与候选运行分别为 `workspace/analysis/speed-profile700{4,5}-20261020`
-和 `speed-candidate700{4,5}-20261020`。验证脚本、冻结源码、profile 与逐帧结果保留。
+和 `speed-candidate700{4,5}-20261020`。这些是验证时的位置。随后用户要求删除两个旧正式运行，旧分析数据已清理；本地数值对比回执保留在 `workspace/receipts/analysis-speed-20261020/`，旧 manifest 进入重跑 provenance，见 [重跑交接](REORBIT_7004_7005_20261020.md)。
 作业 236674 是基线单帧，236675 是候选单帧，236676 是 16 进程统计对比。
 所有作业只使用一个节点，各模型顺序处理；不重复运行正式模拟或全量视频。
 
