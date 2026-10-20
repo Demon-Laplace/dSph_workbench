@@ -885,9 +885,11 @@ def frozen_cohort_mask(snapshot_particle_id,folder_path):
         cohort=_ids(data['particle_id'])
     if len(cohort)==0:raise ValueError('Frozen tracer cohort is empty')
     current=_ids(snapshot_particle_id)
-    missing=np.setdiff1d(cohort,current,assume_unique=True)
-    if len(missing):raise ValueError('Snapshot lacks frozen cohort ID(s), count='+str(len(missing)))
-    mask=np.isin(current,cohort)
+    # Both arrays were checked unique by _ids. One membership pass therefore
+    # also proves completeness, without sorting the full snapshot twice more.
+    mask=np.isin(current,cohort,assume_unique=True)
+    missing_count=len(cohort)-int(np.count_nonzero(mask))
+    if missing_count:raise ValueError('Snapshot lacks frozen cohort ID(s), count='+str(missing_count))
     return mask,dict(cohort_definition='selected_then_frozen',cohort_path=str(path),
         cohort_file_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),cohort_N=len(cohort),
         sorted_cohort_id_sha256=hashlib.sha256(np.sort(cohort).astype('<u8').tobytes()).hexdigest(),

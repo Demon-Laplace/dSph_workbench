@@ -159,14 +159,16 @@ class SnapshotLoaderMixin:
                     stop = start + npart
                     slice_idx = slice(start, stop)
 
-                    coords = group['Coordinates']
-                    vels = group['Velocities']
-                    df_data['x'][slice_idx] = coords[:, 0]
-                    df_data['y'][slice_idx] = coords[:, 1]
-                    df_data['z'][slice_idx] = coords[:, 2]
-                    df_data['vx'][slice_idx] = vels[:, 0]
-                    df_data['vy'][slice_idx] = vels[:, 1]
-                    df_data['vz'][slice_idx] = vels[:, 2]
+                    # Read each vector dataset once. Column-wise HDF5 reads
+                    # otherwise scan the same interleaved rows three times.
+                    for dataset, columns in (
+                        ('Coordinates', ('x', 'y', 'z')),
+                        ('Velocities', ('vx', 'vy', 'vz')),
+                    ):
+                        vectors = group[dataset][:]
+                        for axis, column in enumerate(columns):
+                            df_data[column][slice_idx] = vectors[:, axis]
+                        del vectors
                     df_data['id'][slice_idx] = group['ParticleIDs'][:]
                     df_data['tp'][slice_idx] = tp
 
