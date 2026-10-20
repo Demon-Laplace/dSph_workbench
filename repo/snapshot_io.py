@@ -82,7 +82,9 @@ class SnapshotLoaderMixin:
 
         run_id = os.environ.get("DSPH_RUN_ID")
         if run_id:
-            marker_path = f"/tmp/dsph_boxsize_{run_id}.flag"
+            marker_dir = os.environ.get('TMPDIR') or os.path.join(os.getcwd(), '.dsph_tmp')
+            os.makedirs(marker_dir, exist_ok=True)
+            marker_path = os.path.join(marker_dir, f"dsph_boxsize_{run_id}.flag")
             try:
                 fd = os.open(marker_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 os.close(fd)

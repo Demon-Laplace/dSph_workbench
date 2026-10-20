@@ -276,8 +276,9 @@ VSun=(12.9,245.6,7.78) km/s、GC ICRS=(266.4051,-28.936175)度、roll=0。
 相机只换表示；逐星LOS、RA/Dec、距离与PM必须来自同一观察者。
 这套方法本身不证明模型绝对六维已匹配真实Fornax。
 
-默认原始DeltaRA/DeltaDec两轴各±2.1度、北上东左、40×40角度分箱、
-有星即着色、色标±12 km/s；日心自行箭头从(0,0)出发。
+当前显示合同为`heliocentric_tan_xi_eta_2p1_v1`，真实WCS-TAN ξ/η两轴各
+±2.1度、等比例方形、北上东左、40×40分箱，有星即着色、色标±12 km/s；
+日心自行箭头从(0,0)出发，球面方向长度先取tan后显示，不再除cosDec。
 图内不标梯度PA或角动量轴。Walker61仍用真实球面角距与投影圆R<5 kpc，
 不能按显示方窗裁切拟合。测量定义及字段见repo/SERVER_WORKFLOW.md。
 
@@ -286,10 +287,16 @@ VSun=(12.9,245.6,7.78) km/s、GC ICRS=(266.4051,-28.936175)度、roll=0。
 或显式DSPH_PREEXISTING_ID_PATH。无文件直接报错，不猜成员。标记
 selected_then_frozen，不冒称全部初始IC恒星。
 
-新结果保存在对应快照目录旁的`analysis/astropy_native_direct_v1/`；新CSV、
-图与视频不覆盖旧结果。prepare冻结cohort与observer模块SHA；run/collect/fetch
-检查CSV身份并保持版本目录，不能回退旧顶层elinfo。回传仅取已验证的视频和
-CSV，本地也保留`<model>/output/analysis/astropy_native_direct_v1/`路径。
+物理CSV与observer JSON保存在对应快照目录旁的
+`analysis/astropy_native_direct_v1/`；TAN图与视频使用其独立子目录
+`display/heliocentric_tan_xi_eta_2p1_v1/`（帧再入`output_img/`），视频文件名
+包含`tan_xi_eta_2p1_v1`，保留旧raw产物。prepare冻结cohort、observer模块SHA，
+并另记display合同、目录及模块SHA；每帧sidecar绑定PNG SHA，显示manifest列出
+本次帧/视频及物理身份。run/collect/fetch验证身份、SHA和明确视频列表，不从
+磁盘glob取未声明TAN视频，也不回退旧顶层elinfo。回传视频和CSV直接写本地
+`<model>/`；observer JSON进入`workspace/receipts/production/<model>/<run>/observer/`，
+显示manifest进入相邻`display/`。逐帧PNG不自动回传。此处本地回传规则与
+2026-10-20 WORKFLOW.md一致，替代旧的本地嵌套observer目录描述。
 旧prepared分析保留原代码、旧路径并明确legacy身份，不重写冻结运行。
 
 更改正式源码后仍须同步GitHub main、创建并激活新不可变release；只改editable

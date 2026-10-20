@@ -59,11 +59,17 @@ def run_dir(args):
 
 
 def sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 CANONICAL_OBSERVER_ID = 'astropy_native_direct_v1'
 CANONICAL_SCHEMA_ID = 'elinfo_astropy_native_direct_v1'
+TAN_DISPLAY_CONTRACT_ID = 'heliocentric_tan_xi_eta_2p1_v1'
+TAN_DISPLAY_RELATIVE_DIR = 'display/' + TAN_DISPLAY_CONTRACT_ID
 CANONICAL_SUMMARY_COLUMNS = {
     'numsp', 'star_mass', 'distance', 'sigma', 'pmra', 'pmdec',
     'walker_R5_k_kms_per_deg', 'walker_R5_v0_kms',
@@ -96,6 +102,128 @@ def observation_output_directory(model_directory, observation):
             or observation.get('analysis_relative_dir') != 'output/analysis/' + CANONICAL_OBSERVER_ID):
         raise ValueError('Unknown or inconsistent observation manifest; prepare a new run')
     return confined(model_directory, model_directory / observation['analysis_relative_dir'])
+
+
+def code_display_metadata(code):
+    """Read the optional renderer contract; absent constants mean historical raw display."""
+    module = code / 'canonical_display.py'
+    if not module.is_file():
+        return None
+    if module.is_symlink():
+        raise ValueError('Display module must be a regular pinned source file')
+    values = {}
+    def constant(node):
+        if isinstance(node, ast.Name):
+            return values[node.id]
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return constant(node.left) + constant(node.right)
+        return ast.literal_eval(node)
+    for node in ast.parse(module.read_bytes(), filename=str(module)).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in ('TAN_DISPLAY_CONTRACT_ID', 'DISPLAY_RELATIVE_DIR'):
+                    try:
+                        values[target.id] = constant(node.value)
+                    except (ValueError, KeyError, TypeError) as error:
+                        raise ValueError('Display identity must use explicit string constants') from error
+    if 'TAN_DISPLAY_CONTRACT_ID' not in values:
+        return None
+    display = {'display_contract_id': values['TAN_DISPLAY_CONTRACT_ID'],
+               'relative_directory': values.get('DISPLAY_RELATIVE_DIR'),
+               'display_module_sha256': sha(module)}
+    validate_display_metadata(display)
+    return display
+
+
+def validate_display_metadata(display):
+    if (display.get('display_contract_id') != TAN_DISPLAY_CONTRACT_ID
+            or display.get('relative_directory') != TAN_DISPLAY_RELATIVE_DIR
+            or not re.fullmatch(r'[0-9a-f]{64}', display.get('display_module_sha256', ''))):
+        raise ValueError('Unknown or inconsistent display manifest; prepare a new run')
+
+
+def display_output_directory(canonical_root, display):
+    if display is None:
+        return canonical_root
+    validate_display_metadata(display)
+    return confined(canonical_root, canonical_root / display['relative_directory'])
+
+
+def verify_png(path):
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f'PNG must be a regular file: {path}')
+    with path.open('rb') as image:
+        if image.read(8) != b'\x89PNG\r\n\x1a\n':
+            raise ValueError(f'Invalid PNG: {path}')
+        image.seek(-12, 2)
+        if image.read() != b'\x00\x00\x00\x00IEND\xaeB`\x82':
+            raise ValueError(f'Incomplete PNG: {path}')
+
+
+def verify_display_outputs(canonical_root, display, selected=None, *, summary_path, code):
+    """Verify a renderer's explicit artifact list, never glob unproven videos."""
+    root = display_output_directory(canonical_root, display)
+    if display is None:
+        raise ValueError('A display contract is required for versioned output verification')
+    if sha(code / 'canonical_display.py') != display['display_module_sha256']:
+        raise ValueError('Pinned display module changed')
+    path = root / 'display_manifest.json'
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('TAN display manifest is missing or not a regular file')
+    manifest = json.loads(path.read_text(encoding='utf-8'))
+    render_sources = {}
+    for name in ('PlotFig.py', 'canonical_display.py', 'display_outputs.py'):
+        if not (code / name).is_file():
+            raise ValueError('Renderer source is missing: ' + name)
+    for module in sorted(code.glob('*.py')):
+        name = module.name
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+\.py', name):
+            raise ValueError('Unsafe renderer source basename: ' + name)
+        if module.is_symlink() or not module.is_file():
+            raise ValueError('Renderer source must be a regular pinned file: ' + name)
+        render_sources[name] = sha(module)
+    expected_identity = {**display, **canonical_csv_identity(summary_path),
+                         'render_source_sha256': render_sources}
+    for key, expected in expected_identity.items():
+        if manifest.get(key) != expected:
+            raise ValueError('Display manifest identity mismatch: ' + key)
+    frames, videos = manifest.get('frames'), manifest.get('videos')
+    if not isinstance(frames, list) or not frames or not isinstance(videos, list):
+        raise ValueError('Display manifest needs nonempty frames and an explicit videos list')
+    numbers = []
+    def artifact(record, relative):
+        item = confined(root, root / relative)
+        if item.is_symlink() or not item.is_file():
+            raise ValueError('Display artifact is missing or not a regular file: ' + str(item))
+        if item.stat().st_size != record.get('bytes') or sha(item) != record.get('sha256'):
+            raise ValueError('Display artifact checksum mismatch: ' + str(item))
+        return item
+    for frame in frames:
+        number = frame.get('numsp')
+        if type(number) is not int or number < 0:
+            raise ValueError('Invalid display frame snapshot number')
+        numbers.append(number)
+        image = artifact(frame, f'output_img/check_nature_{number:03d}.png')
+        verify_png(image)
+        sidecar = image.with_name(image.name + '.display.json')
+        if sidecar.is_symlink() or not sidecar.is_file():
+            raise ValueError('Frame display sidecar is missing or not a regular file')
+        identity = json.loads(sidecar.read_text(encoding='utf-8'))
+        for key, expected in {**expected_identity, 'png_sha256': frame['sha256'],
+                              'numsp': number, 'bytes': frame['bytes']}.items():
+            if identity.get(key) != expected:
+                raise ValueError('Frame display sidecar mismatch: ' + key)
+    if len(numbers) != len(set(numbers)) or (selected is not None and set(numbers) != set(selected)):
+        raise ValueError('Display manifest has missing, extra or duplicate snapshots')
+    names = set()
+    for video in videos:
+        name = video.get('name', '')
+        if (not re.fullmatch(r'[A-Za-z0-9_.-]+\.mp4', name)
+                or 'tan_xi_eta_2p1_v1' not in name or name in names):
+            raise ValueError('Invalid or duplicate TAN video name')
+        names.add(name)
+        artifact(video, name)
+    return manifest
 
 
 def canonical_csv_identity(path):
@@ -179,6 +307,7 @@ def prepare(args):
         if not (code / name).is_file():
             raise ValueError(f'Missing production code: {code / name}')
     observation = code_observation_metadata(code)
+    display = code_display_metadata(code)
     cohort_source = Path(os.environ.get('DSPH_PREEXISTING_ID_PATH') or
                          str(snapshot_dir / 'analysis' / CANONICAL_OBSERVER_ID / 'cohort_ids.npz')).resolve()
     if not cohort_source.is_file() or cohort_source.is_symlink() or cohort_source.suffix != '.npz':
@@ -199,6 +328,8 @@ def prepare(args):
                 'analysis_source': str(code), 'code_sha256': {}, 'inputs': {}, 'snapshots': {},
                 'adaptations': [], 'status': 'prepared'}
     manifest['observation'] = observation
+    if display is not None:
+        manifest['display'] = display
     # Copy the complete module set; no import from a model's obsolete local scripts.
     for path in sorted(code.glob('*.py')):
         target = destination / 'code' / path.name
@@ -306,7 +437,9 @@ def run(args):
         raise ValueError('--processes must be positive')
     runtime = directory / manifest['model']
     observation = manifest.get('observation')
+    display = manifest.get('display')
     output_root = observation_output_directory(runtime, observation)
+    display_root = display_output_directory(output_root, display)
     summary_path = output_root / f"elinfo_{manifest['model']}.csv"
     cohort_path = confined(directory, directory / observation['cohort_relative_path']) if observation is not None else None
     summary_options = {'observation': observation, 'code': directory / 'code', 'cohort_path': cohort_path}
@@ -325,6 +458,9 @@ def run(args):
     status = {'started_utc': now(), 'status': 'running', 'stages': [], 'range': args.range, 'python': sys.executable}
     status['canonical_observer_id'] = observation['canonical_observer_id'] if observation is not None else 'legacy_unversioned'
     status['analysis_output_directory'] = str(output_root)
+    if display is not None:
+        status['display_contract_id'] = display['display_contract_id']
+        status['display_output_directory'] = str(display_root)
     write_json(directory / 'status.json', status)
     stages = ['info', 'plot'] if args.stage == 'all' else [args.stage]
     try:
@@ -344,14 +480,12 @@ def run(args):
             if stage == 'info':
                 verify_summary(summary_path, selected, **summary_options)
             else:
-                for number in selected:
-                    path = output_root / 'output_img' / f'check_nature_{number:03d}.png'
-                    with path.open('rb') as image:
-                        if image.read(8) != b'\x89PNG\r\n\x1a\n':
-                            raise ValueError(f'Invalid PNG: {path}')
-                        image.seek(-12, 2)
-                        if image.read() != b'\x00\x00\x00\x00IEND\xaeB`\x82':
-                            raise ValueError(f'Incomplete PNG: {path}')
+                if display is not None:
+                    verify_display_outputs(output_root, display, selected,
+                                           summary_path=summary_path, code=directory / 'code')
+                else:
+                    for number in selected:
+                        verify_png(display_root / 'output_img' / f'check_nature_{number:03d}.png')
             record.update(status='complete', finished_utc=now())
         status['status'] = 'complete'
     except BaseException as error:

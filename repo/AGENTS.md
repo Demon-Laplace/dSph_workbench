@@ -82,9 +82,10 @@ gas phases share this contract. Camera changes never redefine bound per-ID LOS.
 
 Default arrows are Heliocentric proper motion, using the same R5 massmean HRF
 velocity at the common image-centre E/N and distance. GRF motion is separate
-and must say Motion relative to the Milky Way. Display axes are raw wrapped
-DeltaRA and raw DeltaDec, both +/-2.1 degrees, north up/east left; arrows start
-at (0,0) with correct spherical/raw-RA endpoint geometry. The 40x40 velocity
+and must say Motion relative to the Milky Way. Display uses WCS-TAN xi/eta,
+both +/-2.1 plane degrees, equal aspect and square sky panels, north up/east
+left. Arrows start at (0,0) with endpoint (180/pi)*tan(0.65 deg)*unit_EN;
+never divide their east component by cos(Dec) again. The 40x40 velocity
 display has colour wherever stars exist and +/-12 km/s limits, subtracting a
 declared display constant only. Display window never replaces the measurement
 aperture. No gradient PA or angular-momentum-axis annotations.
@@ -108,3 +109,15 @@ snapshots/ICs, GIZMO, user shell launchers, and the paper are preserved.
 The frozen cohort is the old-star photometric reference. Velocity dispersions,
 Walker fits, R5 motion and velocity maps/profiles include newly formed current
 dwarf members; do not restrict these statistics to that initial cohort.
+
+Production TAN media use display_contract_id=heliocentric_tan_xi_eta_2p1_v1
+and live under the canonical analysis root's display/<display_contract_id>/.
+Keep physical observer/CSV identity unchanged for display-only migrations.
+Rebin the frozen catalogue in TAN; use integrated 2D TAN pixel solid angles for
+surface brightness and map kpc gas/shape grids linearly by (180/pi)/D0. Preserve
+legacy raw CSV centre fields, transforming their same sky point for display.
+PNG sidecars and display_manifest.json bind media to display/source and physical
+identities. An unlabelled or changed-contract complete PNG cannot be resumed.
+Old raw media and pinned runs remain untouched. Workflow release publication,
+editable-source installation and Linux client synchronization are separate;
+updating one does not update the others. Existing user .sh files stay unchanged.

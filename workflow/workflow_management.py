@@ -147,7 +147,10 @@ def production_results(root, model=None, name=None):
     """Read one observer's verified small outputs; never search legacy fallbacks."""
     import workflow_isolation as isolation
     expected_frames = None
+    selected = None
     observation = None
+    display = None
+    info_only_complete = False
     code = None
     cohort = None
     if name:
@@ -157,16 +160,23 @@ def production_results(root, model=None, name=None):
         model = manifest['model']
         source = runtime.confined(run, run / model)
         observation = manifest.get('observation')
+        display = manifest.get('display')
         if observation is not None:
             code = run / 'code'
             cohort = runtime.confined(run, run / observation['cohort_relative_path'])
         state = json.loads((run / 'status.json').read_text()) if (run / 'status.json').exists() else {}
+        stages = state.get('stages')
+        info_only_complete = (state.get('status') == 'complete' and isinstance(stages, list) and bool(stages)
+                              and all(isinstance(stage, dict) and stage.get('stage') == 'info'
+                                      and stage.get('status') == 'complete' for stage in stages))
         if state.get('status') == 'complete' and state.get('range'):
-            expected_frames = len(runtime.selected_snapshots(manifest, state['range']))
+            selected = runtime.selected_snapshots(manifest, state['range'])
+            expected_frames = len(selected)
     else:
         source = runtime.model_directory(root, model)
         code = (root / runtime.config(root).get('analysis_code', 'tools/server-analysis')).resolve()
         observation = runtime.code_observation_metadata(code)
+        display = runtime.code_display_metadata(code)
         cohort = source / observation['analysis_relative_dir'] / 'cohort_ids.npz'
         if not cohort.is_file():
             raise ValueError('Canonical model fetch needs its verified cohort fixture; old outputs are not a fallback')
@@ -178,7 +188,21 @@ def production_results(root, model=None, name=None):
         if not summary.is_file():
             raise ValueError('Canonical summary is missing; run the new analysis instead of using legacy CSV')
         runtime.verify_summary(summary, [], observation=observation, code=code, cohort_path=cohort)
-    files = sorted(source.glob('*.mp4')) + list(source.glob('elinfo_' + model + '.csv'))
+    display_manifest = None
+    if display is not None:
+        display_root = runtime.display_output_directory(source, display)
+        sidecar = display_root / 'display_manifest.json'
+        if info_only_complete and not sidecar.exists() and not sidecar.is_symlink():
+            files = []
+        else:
+            display_manifest = runtime.verify_display_outputs(source, display, selected,
+                                                              summary_path=summary, code=code)
+            files = [display_root / video['name'] for video in display_manifest['videos']]
+            files.append(sidecar)
+            expected_frames = len(display_manifest['frames'])
+    else:
+        files = sorted(source.glob('*.mp4'))
+    files += list(source.glob('elinfo_' + model + '.csv'))
     if observation is not None:
         files += sorted(source.glob('observer_snapshot_*.json'))
     if not files: raise ValueError('No production videos or summary table available')
@@ -187,13 +211,17 @@ def production_results(root, model=None, name=None):
         runtime.confined(source, path)
         if path.is_symlink() or not path.is_file() or not re.fullmatch(r'[A-Za-z0-9_.-]+', path.name):
             raise ValueError('Invalid production output: ' + str(path))
-        records.append({'name': path.name, 'bytes': path.stat().st_size, 'sha256': isolation.sha(path)})
+        record = {'name': path.name, 'bytes': path.stat().st_size, 'sha256': isolation.sha(path)}
+        if display is not None:
+            record['source_relative_path'] = path.relative_to(source).as_posix()
+        records.append(record)
     return {'model': model, 'directory': str(source), 'files': records, 'expected_frames': expected_frames,
             'canonical_observer_id': observation['canonical_observer_id'] if observation is not None else 'legacy_unversioned',
             'schema_id': observation['schema_id'] if observation is not None else 'legacy_elinfo',
             'local_relative_directory': observation['analysis_relative_dir'] if observation is not None else '.',
             'observer_config_sha256': runtime.canonical_csv_identity(summary)['observer_config_sha256'] if observation is not None else None,
-            'cohort_file_sha256': observation['cohort_file_sha256'] if observation is not None else None}
+            'cohort_file_sha256': observation['cohort_file_sha256'] if observation is not None else None,
+            **({'display': display} if display is not None else {})}
 
 
 def fetch_production(args, model=None, name=None):
@@ -220,23 +248,42 @@ def fetch_production(args, model=None, name=None):
         raise ValueError('Default fetch requires canonical identity; use an explicit frozen run for legacy results')
     receipt_base = runtime.confined(args.root, args.root / 'workspace/receipts/production' / result['model'])
     metadata_directory = receipt_base / runtime.label(name or 'model') / 'observer'
+    display_directory = receipt_base / runtime.label(name or 'model') / 'display'
+    display = result.get('display')
+    if display is not None:
+        if observer != runtime.CANONICAL_OBSERVER_ID:
+            raise ValueError('Versioned display requires a canonical observer')
+        runtime.validate_display_metadata(display)
     transfers = {}
     output_paths = {}
     for record in result['files']:
         filename = record['name']
-        allowed = filename.endswith(('.mp4', '.csv')) or (
+        display_sidecar = display is not None and filename == 'display_manifest.json'
+        allowed = filename.endswith(('.mp4', '.csv')) or display_sidecar or (
             observer == runtime.CANONICAL_OBSERVER_ID and re.fullmatch(r'observer_snapshot_\d+\.json', filename))
         if not re.fullmatch(r'[A-Za-z0-9_.-]+', filename) or not allowed:
             raise ValueError('Invalid production result filename')
-        folder = metadata_directory if filename.endswith('.json') else destination
+        relative = record.get('source_relative_path', filename)
+        expected_relative = filename
+        if display is not None and (filename.endswith('.mp4') or display_sidecar):
+            if filename.endswith('.mp4') and 'tan_xi_eta_2p1_v1' not in filename:
+                raise ValueError('TAN result video must use a versioned display filename')
+            expected_relative = display['relative_directory'] + '/' + filename
+        if relative != expected_relative:
+            raise ValueError('Invalid production source-relative path')
+        source_parent = str(Path(relative).parent).replace('\\', '/')
+        folder = (display_directory if display_sidecar else metadata_directory) if filename.endswith('.json') else destination
         target = runtime.confined(args.root, folder / filename)
         if target.is_symlink() or (target.exists() and not target.is_file()):
             raise ValueError('Production result target is not a regular file')
+        if filename in output_paths:
+            raise ValueError('Duplicate production result filename')
         output_paths[filename] = target
-        transfers.setdefault(folder, []).append('--include=/' + filename)
-    for folder, filters in transfers.items():
+        transfers.setdefault((folder, source_parent), []).append('--include=/' + filename)
+    for (folder, source_parent), filters in transfers.items():
+        remote_directory = result['directory'] + (('/' + source_parent) if source_parent != '.' else '')
         command = ['rsync', '-rt', '--checksum', '--itemize-changes', '-e', shlex.join(ssh), *filters,
-                   '--exclude=*', settings['host'] + ':' + result['directory'] + '/', str(folder) + '/']
+                   '--exclude=*', settings['host'] + ':' + remote_directory + '/', str(folder) + '/']
         if args.dry_run: command.insert(1, '--dry-run')
         else: folder.mkdir(parents=True, exist_ok=True)
         print(shlex.join(command), flush=True)
@@ -258,7 +305,8 @@ def fetch_production(args, model=None, name=None):
     receipt.parent.mkdir(parents=True, exist_ok=True)
     runtime.write_json(receipt, dict(result, source_relative_directory=result['local_relative_directory'],
         local_relative_directory='.', local_directory=str(destination),
-        local_metadata_directory=str(metadata_directory) if metadata_directory in transfers else None,
+        local_metadata_directory=str(metadata_directory) if any(folder == metadata_directory for folder, _ in transfers) else None,
+        local_display_metadata_directory=str(display_directory) if any(folder == display_directory for folder, _ in transfers) else None,
         verified_utc=runtime.now()))
     print('Saved production video/summary: ' + str(destination))
     return 0

@@ -28,8 +28,10 @@ import argparse
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction
-from canonical_observer import require_canonical_csv, angle_velocity_grid, tangent_kpc_to_raw_offsets, raw_sky_pixel_area_arcsec2
-from canonical_display import center_motion_arrow
+from canonical_observer import require_canonical_csv
+from canonical_display import (DISPLAY_RELATIVE_DIR, tangent_coordinates, tangent_velocity_grid40,
+    tangent_motion_arrow, tangent_kpc_to_display, raw_offsets_to_tangent, tangent_pixel_area_arcsec2)
+from display_outputs import display_identity, frame_is_current, record_frame, record_display_manifest
 
 from matplotlib.patches import Ellipse
 from variable import (
@@ -60,7 +62,8 @@ PLOT_CONTEXT = None
 # New contract outputs are isolated from old CSV, PNG and videos.
 _default_canonical_root = Path(folder_path).resolve() / 'analysis' / 'astropy_native_direct_v1'
 CANONICAL_ANALYSIS_ROOT = Path(os.environ.get('DSPH_CANONICAL_OUTPUT_ROOT',str(_default_canonical_root))).resolve()
-output_folder = str(CANONICAL_ANALYSIS_ROOT / 'output_img')
+DISPLAY_OUTPUT_ROOT = CANONICAL_ANALYSIS_ROOT / DISPLAY_RELATIVE_DIR
+output_folder = str(DISPLAY_OUTPUT_ROOT / 'output_img')
 SKY_FIELD_HALF_WIDTH_DEG = 2.1
 GAS_CONTOUR_NBINS = 50
 GAS_CONTOUR_SMOOTH_SIGMA_PIXELS = 2.0
@@ -154,7 +157,7 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
 
     frames_dir = os.path.abspath(output_dir)
     video_dir = os.path.dirname(os.path.normpath(frames_dir))
-    output_name = f"{modelname}_v{PLOT_VIDEO_VERSION}.mp4"
+    output_name = f"{modelname}_tan_xi_eta_2p1_v1_v{PLOT_VIDEO_VERSION}.mp4"
     output_path = os.path.join(video_dir, output_name)
     with tempfile.NamedTemporaryFile(
         suffix='.mp4',
@@ -170,7 +173,7 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         "-i",
         "check_nature_%03d.png",
         "-vf",
-        "scale=3416:1886",
+        "scale=3416:trunc(ow/a/2)*2,setsar=1",
         "-frames:v",
         str(frame_count),
         "-crf",
@@ -204,6 +207,17 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
     return output_path
 
 
+def finalize_display_outputs(output_dir, modelname, snapshots):
+    videos = []
+    if snapshots_are_consecutive(snapshots):
+        video = render_video_from_frames(output_dir, modelname, snapshots[0], len(snapshots))
+        if video is not None:
+            videos.append(video)
+    else:
+        print("[PlotFigVideo] Skip video generation: requested snapshots are not consecutive")
+    record_display_manifest(Path(output_dir).parent, get_plot_context()['display_identity'], snapshots, videos)
+
+
 def build_consecutive_blocks(items, block_size):
     if block_size <= 0:
         raise ValueError("block_size must be positive")
@@ -234,7 +248,7 @@ def validate_plot_outputs(output_dir, requested_numsp):
     invalid_numsp = []
     for numsp in requested_numsp:
         output_file = make_plot_output_path(output_dir, numsp)
-        if is_complete_png(output_file):
+        if is_complete_png(output_file) and frame_is_current(output_file, get_plot_context()['display_identity']):
             continue
         if os.path.exists(output_file):
             invalid_numsp.append(numsp)
@@ -567,6 +581,7 @@ def build_plot_context():
         'inifile': inifile,
         'dw_particles': dw_particles,
         'elinfo_path': elinfo_path,
+        'display_identity': display_identity(elinfo_path),
         'core_radius': core_radius,
         'dw_elinfo': dw_elinfo,
         'elinfo_by_numsp': elinfo_by_numsp,
@@ -852,12 +867,13 @@ def _plot_stellar_sky_panel(
 
     _style_axis(
         ax,
-        r'$\Delta$RA (deg)',
-        r'$\Delta$Dec (deg)',
+        r'$\xi$ (deg)',
+        r'$\eta$ (deg)',
         xlim=(-SKY_FIELD_HALF_WIDTH_DEG, SKY_FIELD_HALF_WIDTH_DEG),
         ylim=(-SKY_FIELD_HALF_WIDTH_DEG, SKY_FIELD_HALF_WIDTH_DEG),
         invert_x=True,
     )
+    ax.set_aspect('equal', adjustable='box')
     ax.legend(loc='lower right', fontsize=10)
 
     if shape_outline is not None:
@@ -869,12 +885,13 @@ def _plot_vlos_panel(fig, ax, vf, extent_vf, arrow_tip=None):
     sc = ax.imshow(vf.T, origin='lower', extent=extent_vf, cmap='coolwarm', vmin=-12, vmax=12)
     _style_axis(
         ax,
-        r'$\Delta$RA (deg)',
-        r'$\Delta$Dec (deg)',
+        r'$\xi$ (deg)',
+        r'$\eta$ (deg)',
         xlim=(extent_vf[0], extent_vf[1]),
         ylim=(extent_vf[2], extent_vf[3]),
         invert_x=True,
     )
+    ax.set_aspect('equal', adjustable='box')
     if arrow_tip is not None:
         ax.arrow(0.,0.,*arrow_tip,head_width=.08,head_length=.1,color='black',lw=2,label='Heliocentric proper motion')
         ax.legend(loc='lower right',fontsize=8)
@@ -1117,8 +1134,10 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     old_kinematics = old_star_projected_kinematics(snapshot)
     member_kinematics = member_star_projected_kinematics(snapshot)
     old_star_local_mask = old_kinematics['old_local_mask']
-    rotra_dw_star = np.asarray(snapshot['rotra_dw_star'])[old_star_local_mask]
-    rotdec_dw_star = np.asarray(snapshot['rotdec_dw_star'])[old_star_local_mask]
+    xi_all, eta_all = tangent_coordinates(snapshot['star_coords']['_sky'])
+    sky_xi_star = xi_all[old_star_local_mask]
+    sky_eta_star = eta_all[old_star_local_mask]
+    photometry_front = np.asarray(snapshot['star_coords']['_sky']['front_mask'])[old_star_local_mask]
     rotra_dw_cold_gas = snapshot['rotra_dw_cold_gas']
     rotdec_dw_cold_gas = snapshot['rotdec_dw_cold_gas']
     d_mean = snapshot['d_mean']
@@ -1170,13 +1189,13 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     shape_center_y_kpc = row['shape_center_y_kpc']
 
     r_half_deg = np.degrees(r_half / d_mean)
-    shape_center_ra,shape_center_dec=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],shape_center_x_kpc,shape_center_y_kpc)
+    shape_center_ra,shape_center_dec=tangent_kpc_to_display(snapshot['star_coords']['_sky'],shape_center_x_kpc,shape_center_y_kpc)
     phi=np.linspace(0,2*np.pi,181)
     major=stellar_region_rhalf_multiplier*r_half
     minor=major*(1-eps)
     xp=shape_center_x_kpc+major*np.cos(phi)*np.cos(pa)-minor*np.sin(phi)*np.sin(pa)
     yp=shape_center_y_kpc+major*np.cos(phi)*np.sin(pa)+minor*np.sin(phi)*np.cos(pa)
-    shape_outline=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],xp,yp)
+    shape_outline=tangent_kpc_to_display(snapshot['star_coords']['_sky'],xp,yp)
 
     if 'cold_gas_center_ra' in row.index and 'cold_gas_center_dec' in row.index:
         cold_gas_center_ra = row['cold_gas_center_ra']
@@ -1195,9 +1214,14 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         else:
             cold_gas_center_ra, cold_gas_center_dec = np.nan, np.nan
 
+    # CSV centre fields retain their historical raw offsets; transform this same
+    # sky point for display, without changing the centre estimator or the CSV.
+    cold_gas_center_ra, cold_gas_center_dec = raw_offsets_to_tangent(
+        snapshot['star_coords']['_sky'], cold_gas_center_ra, cold_gas_center_dec)
+
     # Current snapshot canonical six-vectors, never CSV/legacy PM precedence.
     mean_pmra,mean_pmdec=snapshot['motion_R5']['HRF_EN_masyr']
-    arrow_tip=center_motion_arrow(snapshot['star_coords']['_sky'],snapshot['motion_R5']['HRF_unit_EN'],length_deg=.65)['tip_delta_RA_Dec_deg']
+    arrow_tip=tangent_motion_arrow(snapshot['motion_R5']['HRF_unit_EN'],length_deg=.65)['tip_xi_eta_deg']
 
     obs_r_intervals = _observed_profile_intervals_kpc(context['dprof'])
     profile_kwargs = {'r_intervals': obs_r_intervals} if obs_r_intervals is not None else {'bins': 40}
@@ -1249,9 +1273,9 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     bin_centers, vlos_dispersion = Analysis.get_vlos_dispersion(
         member_kinematics['x_kpc'], member_kinematics['y_kpc'], vlos_detrended)
     img, extent = Analysis.surface_brightness_map(
-        rotra_dw_star,
-        rotdec_dw_star,
-        star_mass_array,
+        sky_xi_star[photometry_front],
+        sky_eta_star[photometry_front],
+        star_mass_array[photometry_front],
         d_mean,
         npix=120,
         coordinate_size=2.0 * SKY_FIELD_HALF_WIDTH_DEG,
@@ -1259,14 +1283,17 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         m_l_relation=sim_plot_mass_to_light_ratio,
         coordinate_unit='deg',
     )
-    # Raw RA/Dec pixels have spherical area varying with Dec; the old square
-    # tangent-pixel area must not be reused after changing the displayed axes.
-    actual_area=raw_sky_pixel_area_arcsec2(snapshot['dw_cdec'],120)
-    old_area=(2.*SKY_FIELD_HALF_WIDTH_DEG/120*3600.)**2
-    img=img+2.5*np.log10(actual_area/old_area)[None,:]
-    sky_field_half_width_kpc=np.tan(np.radians(SKY_FIELD_HALF_WIDTH_DEG))*d_mean
-    vf,extent_vf=angle_velocity_grid(snapshot['rotra_dw_star'],snapshot['rotdec_dw_star'],vlos_array,
-        snapshot['walker_R5']['v0_kms'],npix=40)
+    # Replace the precise planar area used inside surface_brightness_map by
+    # each TAN pixel's integrated solid angle, preserving M/L and zero point.
+    actual_area=tangent_pixel_area_arcsec2(120,half_width_deg=SKY_FIELD_HALF_WIDTH_DEG)
+    old_area=(np.radians(2.*SKY_FIELD_HALF_WIDTH_DEG/120)*206265.)**2
+    img=img+2.5*np.log10(actual_area/old_area)
+    sky_field_half_width_kpc=np.radians(SKY_FIELD_HALF_WIDTH_DEG)*d_mean
+    display_grid=tangent_velocity_grid40(snapshot['star_coords']['_sky'],vlos_array,
+        display_v0_kms=snapshot['walker_R5']['v0_kms'])
+    vf=display_grid['mean_HRF_minus_v0']
+    extent_vf=(-SKY_FIELD_HALF_WIDTH_DEG,SKY_FIELD_HALF_WIDTH_DEG,
+               -SKY_FIELD_HALF_WIDTH_DEG,SKY_FIELD_HALF_WIDTH_DEG)
 
 
     vgsr = np.sqrt(vr**2 + vtheta**2 + vphi**2)
@@ -1278,10 +1305,12 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         [-sky_field_half_width_kpc, sky_field_half_width_kpc],
         [-sky_field_half_width_kpc, sky_field_half_width_kpc],
     ]
+    gas_front = np.concatenate((snapshot['cold_gas_coords']['_sky']['front_mask'],
+                                snapshot['hot_gas_coords']['_sky']['front_mask']))
     cold_gas_mass_contour, x_contour_kpc, y_contour_kpc, cd_smooth = Analysis.est_gas_contour(
-        np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc'])),
-        np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc'])),
-        cold_gas_mass_nh,
+        np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc']))[gas_front],
+        np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc']))[gas_front],
+        cold_gas_mass_nh[gas_front],
         box=None,
         nbins=GAS_CONTOUR_NBINS,
         smooth_sigma=GAS_CONTOUR_SMOOTH_SIGMA_PIXELS,
@@ -1290,12 +1319,15 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         unit="kpc",
         d_mean=d_mean,
     )
-    star_hist, _, _ = np.histogram2d(snapshot['x_kpc'], snapshot['y_kpc'], bins=GAS_CONTOUR_NBINS,
-        range=contour_range_kpc, weights=df.loc[total_dw_star_mask, 'm'].to_numpy())
+    star_front = np.asarray(snapshot['star_coords']['_sky']['front_mask'])
+    star_hist, _, _ = np.histogram2d(np.asarray(snapshot['x_kpc'])[star_front], np.asarray(snapshot['y_kpc'])[star_front], bins=GAS_CONTOUR_NBINS,
+        range=contour_range_kpc, weights=df.loc[total_dw_star_mask, 'm'].to_numpy()[star_front])
     star_mass_contour = star_hist[cd_smooth > cd_threshold].sum(dtype=np.float64)
-    x_contour,y_contour=tangent_kpc_to_raw_offsets(snapshot['star_coords']['_sky'],x_contour_kpc,y_contour_kpc)
+    x_contour,y_contour=tangent_kpc_to_display(snapshot['star_coords']['_sky'],x_contour_kpc,y_contour_kpc)
 
     return {
+        'display_grid': display_grid,
+        'pixel_area_arcsec2': actual_area,
         'row': row,
         'star_mass': star_mass,
         'star_half_mass': star_half_mass,
@@ -1773,6 +1805,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
   
     try:
         save_figure_atomic(fig, output_file)
+        record_frame(output_file, context['display_identity'], numsp)
     finally:
         plt.close(fig)
     after_render = time.perf_counter()
@@ -1877,9 +1910,16 @@ def main():
             + ("..." if len(missing_numsp) > 10 else "")
         )
     output_dir = get_plot_context()['output_folder']
+    identity = get_plot_context()['display_identity']
+    for numsp in requested_numsp:
+        path = make_plot_output_path(output_dir, numsp)
+        if is_complete_png(path) and not frame_is_current(path, identity) and not args.replace:
+            raise ValueError('Existing frame has a different or missing display identity; '
+                             'use a fresh DSPH_CANONICAL_OUTPUT_ROOT: ' + path)
     existing_numsp = [
         numsp for numsp in requested_numsp
         if is_complete_png(make_plot_output_path(output_dir, numsp))
+        and frame_is_current(make_plot_output_path(output_dir, numsp), identity)
     ]
     incomplete_existing_numsp = [
         numsp for numsp in requested_numsp
@@ -1904,20 +1944,10 @@ def main():
         f"existing={len(existing_numsp)}, pending={len(pending_numsp)}, replace={args.replace}"
     )
 
-    can_render_video = snapshots_are_consecutive(requested_numsp)
-
     if not pending_numsp:
         if not validate_plot_outputs(output_dir, requested_numsp):
             sys.exit(2)
-        if can_render_video:
-            render_video_from_frames(
-                output_dir=output_dir,
-                modelname=modelname,
-                start_numsp=requested_numsp[0],
-                frame_count=len(requested_numsp),
-            )
-        else:
-            print("[PlotFigVideo] Skip video generation: requested snapshots are not consecutive")
+        finalize_display_outputs(output_dir, modelname, requested_numsp)
         print("PlotFig completed: plotted=0, skipped=0")
         return
 
@@ -1970,22 +2000,14 @@ def main():
     if not validate_plot_outputs(output_dir, requested_numsp):
         sys.exit(2)
 
-    if can_render_video:
-        render_video_from_frames(
-            output_dir=output_dir,
-            modelname=modelname,
-            start_numsp=requested_numsp[0],
-            frame_count=len(requested_numsp),
-        )
-    else:
-        print("[PlotFigVideo] Skip video generation: requested snapshots are not consecutive")
+    finalize_display_outputs(output_dir, modelname, requested_numsp)
     print(f"PlotFig completed: plotted={plotted}, skipped={skipped}")
 
 
 def plot_if_needed(numsp, show_mem, replace, profile=False, profile_memory=False, verbose=False):
     output_folder = get_plot_context()['output_folder']
     output_file = make_plot_output_path(output_folder, numsp)
-    if (not replace) and is_complete_png(output_file):
+    if (not replace) and is_complete_png(output_file) and frame_is_current(output_file, get_plot_context()['display_identity']):
         return {'numsp': numsp, 'status': 'skipped', 'output_file': output_file}
     return safe_plot(
         numsp,

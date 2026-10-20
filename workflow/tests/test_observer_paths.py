@@ -101,6 +101,156 @@ class ObserverWorkflowTests(unittest.TestCase):
             raise
         return directory, manifest
 
+    def enable_tan(self):
+        (self.code / 'canonical_display.py').write_text(
+            "TAN_DISPLAY_CONTRACT_ID = 'heliocentric_tan_xi_eta_2p1_v1'\n"
+            "DISPLAY_RELATIVE_DIR = 'display/' + TAN_DISPLAY_CONTRACT_ID\n", encoding='utf-8')
+        (self.code / 'display_outputs.py').write_text('# synthetic renderer identity helper\n', encoding='utf-8')
+        plot = ("import os,json,hashlib\nfrom pathlib import Path\n"
+                "from canonical_display import TAN_DISPLAY_CONTRACT_ID,DISPLAY_RELATIVE_DIR\n"
+                "canonical=Path(os.environ['DSPH_CANONICAL_OUTPUT_ROOT'])\n"
+                "root=canonical/DISPLAY_RELATIVE_DIR;images=root/'output_img';images.mkdir(parents=True,exist_ok=True)\n"
+                f"image=images/'check_nature_300.png';image.write_bytes({PNG!r})\n"
+                "sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()\n"
+                "module_sha=sha(Path(__file__).with_name('canonical_display.py'))\n"
+                f"lines=(canonical/'elinfo_{MODEL}.csv').read_text().splitlines()\n"
+                "identity=dict(item.split('=',1) for item in next(l for l in lines if l.startswith('# canonical_observer_id=')).split()[1:])\n"
+                "identity.update(display_contract_id=TAN_DISPLAY_CONTRACT_ID,display_module_sha256=module_sha,relative_directory=DISPLAY_RELATIVE_DIR,render_source_sha256={p.name:sha(p) for p in sorted(Path(__file__).parent.glob('*.py'))})\n"
+                "sidecar=dict(identity,png_sha256=sha(image),numsp=300,bytes=image.stat().st_size)\n"
+                "image.with_name(image.name+'.display.json').write_text(json.dumps(sidecar))\n"
+                "manifest=dict(identity,frames=[dict(numsp=300,bytes=image.stat().st_size,sha256=sha(image))],videos=[])\n"
+                "(root/'display_manifest.json').write_text(json.dumps(manifest))\n")
+        (self.code / 'PlotFig.py').write_text(plot, encoding='utf-8')
+
+    def test_tan_run_pins_display_and_rejects_stale_frame_sidecar(self):
+        self.enable_tan()
+        directory, manifest = self.run_canonical()
+        canonical = directory / MODEL / manifest['observation']['analysis_relative_dir']
+        display = manifest['display']
+        root = runtime.display_output_directory(canonical, display)
+        self.assertEqual(display['display_module_sha256'], runtime.sha(directory/'code/canonical_display.py'))
+        self.assertTrue((root/'output_img/check_nature_300.png').is_file())
+        self.assertFalse((canonical/'output_img').exists())
+        kwargs = dict(summary_path=canonical/f'elinfo_{MODEL}.csv', code=directory/'code')
+        self.assertEqual(runtime.verify_display_outputs(canonical, display, [300], **kwargs)['videos'], [])
+        sidecar = root/'output_img/check_nature_300.png.display.json'
+        original=json.loads(sidecar.read_text())
+        for changed in [dict(original,display_contract_id='raw'),dict(original,numsp=301),
+                        dict(original,bytes=0),dict(original,observer_config_sha256='0'*64),
+                        dict(original,render_source_sha256={})]:
+            sidecar.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, 'sidecar mismatch'):
+                runtime.verify_display_outputs(canonical, display, [300], **kwargs)
+        sidecar.write_text(json.dumps(original))
+        with self.assertRaisesRegex(ValueError, 'missing, extra or duplicate'):
+            runtime.verify_display_outputs(canonical, display, [301], **kwargs)
+
+    def test_tan_results_export_only_manifest_videos_and_keep_flat_local_media(self):
+        self.enable_tan()
+        directory, manifest = self.run_canonical()
+        canonical = directory / MODEL / manifest['observation']['analysis_relative_dir']
+        root = runtime.display_output_directory(canonical, manifest['display'])
+        video = root/(MODEL+'_v6_tan_xi_eta_2p1_v1.mp4')
+        video.write_bytes(b'verified synthetic video')
+        (canonical/'old_raw.mp4').write_bytes(b'old raw video')
+        (root/'unlisted_tan_xi_eta_2p1_v1.mp4').write_bytes(b'unlisted video')
+        (canonical/'observer_snapshot_300.json').write_text('{}')
+        sidecar = root/'display_manifest.json'
+        metadata = json.loads(sidecar.read_text())
+        metadata['videos'] = [dict(name=video.name, bytes=video.stat().st_size, sha256=runtime.sha(video))]
+        sidecar.write_text(json.dumps(metadata))
+        result = management.production_results(self.root, name=self.args.name)
+        names = {record['name'] for record in result['files']}
+        self.assertEqual(names, {video.name, 'display_manifest.json', f'elinfo_{MODEL}.csv', 'observer_snapshot_300.json'})
+        video_record = next(record for record in result['files'] if record['name']==video.name)
+        self.assertEqual(video_record['source_relative_path'], manifest['display']['relative_directory']+'/'+video.name)
+        def transfer(command, **kwargs):
+            source=Path(command[-2].split(':',1)[1]); target=Path(command[-1])
+            for option in command:
+                if option.startswith('--include=/'):
+                    filename=option.removeprefix('--include=/')
+                    shutil.copy2(source/filename,target/filename)
+        args=SimpleNamespace(root=self.root,name=self.args.name,dry_run=False)
+        with patch.object(management,'ssh_config',return_value=({'root':'/remote','host':'fixture'},['ssh'])), \
+             patch.object(isolation_stub,'remote_exec',return_value=SimpleNamespace(stdout=json.dumps(result)),create=True), \
+             patch.object(management.subprocess,'run',side_effect=transfer), \
+             patch.object(management.subprocess,'check_output',return_value=json.dumps({'streams':[{'nb_frames':'1','duration':'1'}]})):
+            self.assertEqual(management.fetch_production(args,name=self.args.name),0)
+        receipt=self.root/'workspace/receipts/production'/MODEL/self.args.name
+        self.assertEqual((self.model/video.name).read_bytes(),video.read_bytes())
+        self.assertTrue((self.model/f'elinfo_{MODEL}.csv').is_file())
+        self.assertTrue((receipt/'display/display_manifest.json').is_file())
+        self.assertTrue((receipt/'observer/observer_snapshot_300.json').is_file())
+        self.assertFalse((self.model/'display_manifest.json').exists())
+
+    def test_tan_contract_and_transfer_paths_reject_overrides(self):
+        self.enable_tan()
+        directory, manifest=self.run_canonical()
+        canonical=directory/MODEL/manifest['observation']['analysis_relative_dir']
+        display=dict(manifest['display'],relative_directory='../../raw')
+        with self.assertRaisesRegex(ValueError,'inconsistent display'):
+            runtime.display_output_directory(canonical,display)
+        result=management.production_results(self.root,name=self.args.name)
+        result['files'][0]['source_relative_path']='../../display_manifest.json'
+        args=SimpleNamespace(root=self.root,name=self.args.name,dry_run=True)
+        with patch.object(management,'ssh_config',return_value=({'root':'/remote','host':'fixture'},['ssh'])), \
+             patch.object(isolation_stub,'remote_exec',return_value=SimpleNamespace(stdout=json.dumps(result)),create=True), \
+             patch.object(management.subprocess,'run') as transfer:
+            with self.assertRaisesRegex(ValueError,'source-relative'):
+                management.fetch_production(args,name=self.args.name)
+            transfer.assert_not_called()
+
+    def test_tan_manifest_rejects_changed_physical_identity(self):
+        self.enable_tan()
+        directory, manifest=self.run_canonical()
+        canonical=directory/MODEL/manifest['observation']['analysis_relative_dir']
+        root=runtime.display_output_directory(canonical,manifest['display'])
+        sidecar=root/'display_manifest.json'; metadata=json.loads(sidecar.read_text())
+        metadata['observer_config_sha256']='0'*64
+        sidecar.write_text(json.dumps(metadata))
+        with self.assertRaisesRegex(ValueError,'identity mismatch'):
+            management.production_results(self.root,name=self.args.name)
+        metadata['observer_config_sha256']=runtime.canonical_csv_identity(canonical/f'elinfo_{MODEL}.csv')['observer_config_sha256']
+        sidecar.write_text(json.dumps(metadata))
+        for name in ['PlotFig.py','data_processing.py']:
+            module=directory/'code'/name; saved=module.read_bytes()
+            module.write_text('# changed rendering source\n')
+            with self.assertRaisesRegex(ValueError,'identity mismatch: render_source_sha256'):
+                management.production_results(self.root,name=self.args.name)
+            module.write_bytes(saved)
+
+    def test_tan_info_only_fetch_requires_explicit_complete_named_run(self):
+        self.enable_tan()
+        self.args.stage='info'
+        directory, manifest=self.run_canonical()
+        result=management.production_results(self.root,name=self.args.name)
+        self.assertEqual([entry['name'] for entry in result['files']],[f'elinfo_{MODEL}.csv'])
+        self.assertEqual(result['display'],manifest['display'])
+        status_path=directory/'status.json'; original=json.loads(status_path.read_text())
+        for state in [dict(original,status='running'),dict(original,status='failed'),
+                      dict(original,stages=[]),dict(original,stages=[dict(stage='plot',status='complete')]),
+                      dict(original,stages=[dict(stage='info',status='failed')])]:
+            status_path.write_text(json.dumps(state))
+            with self.assertRaisesRegex(ValueError,'display manifest is missing'):
+                management.production_results(self.root,name=self.args.name)
+        status_path.write_text(json.dumps(original))
+        canonical=directory/MODEL/manifest['observation']['analysis_relative_dir']
+        model_output=self.model/'output/analysis'/ID
+        shutil.copy2(canonical/f'elinfo_{MODEL}.csv',model_output/f'elinfo_{MODEL}.csv')
+        with self.assertRaisesRegex(ValueError,'display manifest is missing'):
+            management.production_results(self.root,model=MODEL)
+
+    def test_tan_named_fetch_rejects_manifest_from_other_selected_range(self):
+        self.enable_tan()
+        directory, manifest=self.run_canonical()
+        manifest['snapshots'][MODEL+'/output/snapshot_301.hdf5']={}
+        (directory/'manifest.json').write_text(json.dumps(manifest))
+        status=json.loads((directory/'status.json').read_text())
+        status['range']='301,301'
+        (directory/'status.json').write_text(json.dumps(status))
+        with self.assertRaisesRegex(ValueError,'missing, extra or duplicate'):
+            management.production_results(self.root,name=self.args.name)
+
     def test_prepare_and_run_new_paths_and_pinned_cohort(self):
         directory, manifest = self.run_canonical()
         observation = manifest['observation']

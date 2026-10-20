@@ -144,7 +144,13 @@ python3 workflow.py collect --name run7001-example --wait
 
 快照区间为闭区间，`100,102` 包含 100、101、102。省略 `--submit` 时只准备任务并执行 `sbatch --test-only`，不会消耗计算节点运行分析；随后可用 `remote submit --name ... --range ...` 正式提交。任务名必须唯一。
 
-流水线依次执行统计、验证 CSV、画图、验证完整 PNG，并在服务器合成视频。失败时停止后续步骤。每次任务复制当前生产模块并记录 SHA256，快照和粒子 IC 使用链接并记录大小及修改时间。大输入并非冻结副本；源数据改变时会拒绝继续，需重新准备任务。
+流水线依次执行统计、验证 CSV、画图、验证完整 PNG，并在服务器合成视频。失败时停止后续步骤。每次任务复制当前生产模块并记录 SHA256，快照和粒子 IC 使用链接并记录大小及修改时间。大输入并非冻结副本；源数据改变时会拒绝继续，需重新准备任务。`remote pipeline` 在服务器读取其 `workflow.json.analysis_code`；显式 `--code` 优先且指服务器路径。准备后任务使用冻结代码，激活新 release 不会改变旧任务。
+
+当前生产显示合同为 `heliocentric_tan_xi_eta_2p1_v1`：真实 WCS-TAN 平面 ξ、η，两轴各 ±2.1°，等比例方形、北上东左。逐星六维、太阳、成员口径及 Walker 5 kpc 测量仍使用物理 observer 合同。CSV 和 observer JSON 保留在 `output/analysis/astropy_native_direct_v1/`；新帧在其 `display/heliocentric_tan_xi_eta_2p1_v1/output_img/`，视频在同一 display 目录且文件名包含 `tan_xi_eta_2p1_v1`。旧 raw 图与视频保持原位。
+
+`prepare` 在 manifest 中另记显示合同、相对目录及 `canonical_display.py` SHA。每帧的 `.png.display.json` 绑定显示合同、模块 SHA 和 PNG SHA，续跑不能仅凭完整 PNG 跳过；主进程的 `display_manifest.json` 列出本次帧与视频 SHA、字节数以及 CSV 的物理 observer/config/cohort 身份。`run` 验证这些记录；单帧或不连续区间允许视频列表为空。历史 manifest 未声明显示合同时保持其 raw 路径和验收方式，不重写冻结任务。
+
+仅对明确指定名称、状态为 complete 且所有已完成阶段均为 info 的任务，允许没有显示 manifest 时只回传 CSV 和 observer JSON。未完成/失败任务不能使用此例外，`fetch-model` 也始终要求实际的 TAN 显示 manifest。
 
 ```bash
 python3 workflow.py remote status
@@ -154,7 +160,7 @@ python3 workflow.py pull --name run7001-example
 python3 workflow.py fetch-model Fornax5026 --dry-run
 ```
 
-`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 从指定分析任务取回视频和 elinfo 统计表；`fetch-model` 从正式模拟目录取回同类成果。视频和 CSV 直接写入本地 `<model>/`，包括 canonical 分析结果，不复制服务器的 `output/analysis/<observer>/` 层级。逐快照 observer JSON 归入 `workspace/receipts/production/<model>/<run>/observer/`；逐帧图片、代码和参数留在服务器。下载后验证 SHA256；视频验证帧数。
+`collect --wait` 默认最多等待 7200 秒，可用 `--timeout` 调整。它只在任务完成后下载；Slurm 超时、取消或失败会返回错误。`pull` 从指定分析任务取回视频和 elinfo 统计表；`fetch-model` 从正式模拟目录取回同类成果。TAN 视频仅从显示 manifest 的明确列表读取，不以目录搜索夹带旧视频；CSV 从物理 observer 根读取。视频和 CSV 直接写入本地 `<model>/`，包括 canonical 分析结果，不复制服务器的 `output/analysis/<observer>/` 层级。逐快照 observer JSON 归入 `workspace/receipts/production/<model>/<run>/observer/`，显示 manifest 归入相邻 `display/`；`fetch-model` 的回执 run 名为 `model`。逐帧图片、代码和参数留在服务器。下载后验证 SHA256；视频验证帧数。
 
 同一任务目录有进程锁，提交回执防止误重复提交。失败后或希望补做视频时，可以显式续跑：
 

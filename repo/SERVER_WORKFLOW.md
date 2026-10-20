@@ -69,11 +69,29 @@ CSV, images and videos must remain unchanged; do not relabel or append to them.
 Per-snapshot JSON records H/B, units, cohort/selected IDs, frame and helper SHA.
 Its input path/size/mtime fingerprint is explicitly not a full snapshot hash.
 
-The default sky display is north up/east left with raw wrapped DeltaRA and
-DeltaDec each +/-2.1 degrees, 40x40 angular bins, occupied bins coloured and
+The default sky display is north up/east left with WCS-TAN xi and eta,
+each +/-2.1 plane degrees, equal aspect and square sky panels. Use 40x40 TAN
+bins, occupied bins coloured and
 velocity limits +/-12 km/s. Subtract the declared Walker v0 for display only.
 The Heliocentric proper motion arrow starts at (0,0), with exact spherical
-endpoint geometry. No gradient PA or angular-momentum-axis annotation is used.
+endpoint (180/pi)*tan(0.65 deg)*unit_EN on these TAN axes. No additional cos(Dec)
+correction, gradient PA or angular-momentum-axis annotation is used.
+Stellar surface brightness is rebinned from the same old-star catalogue with
+the integrated solid angle of each TAN pixel; M/L and zero points are unchanged.
+H I column density retains its kpc grid and physical area, then its grid and the
+stellar ellipse are displayed via xi=(180/pi)*x_kpc/D0, eta=(180/pi)*y_kpc/D0.
+Raw CSV gas-centre fields retain their meaning and their same point is mapped
+to TAN. These display operations never redefine LOS, R5 or the Walker sample.
+
+Media live in `display/heliocentric_tan_xi_eta_2p1_v1/` beneath the physical
+canonical analysis root; CSV and cohort stay at that root. TAN video filenames
+include `tan_xi_eta_2p1_v1` so local model-root downloads preserve old raw media.
+Each PNG has a `.display.json` sidecar; `display_manifest.json` binds the
+selected frames/videos to physical identity, display identity and source SHA.
+Continuation rejects complete PNGs with missing/mismatched display identity.
+Use a fresh run/output root for a new renderer; never relabel old raw frames.
+The historical observer config SHA remains frozen for this display-only change;
+the separately recorded display SHA establishes the new rendering identity.
 
 Walker61 uses spherical angular distance in degrees and a forward projected
 circle R=D0*tan(rho)<5 kpc, scanning 0,3,...,180 degrees, equal tracer weights,
