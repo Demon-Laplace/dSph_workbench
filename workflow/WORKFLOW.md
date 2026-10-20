@@ -148,6 +148,8 @@ python3 workflow.py collect --name run7001-example --wait
 
 当前生产显示合同为 `heliocentric_tan_xi_eta_2p1_v1`：真实 WCS-TAN 平面 ξ、η，两轴各 ±2.1°，等比例方形、北上东左。逐星六维、太阳、成员口径及 Walker 5 kpc 测量仍使用物理 observer 合同。CSV 和 observer JSON 保留在 `output/analysis/astropy_native_direct_v1/`；新帧在其 `display/heliocentric_tan_xi_eta_2p1_v1/output_img/`，视频在同一 display 目录且文件名包含 `tan_xi_eta_2p1_v1`。旧 raw 图与视频保持原位。
 
+本次发布版本、5026/5028 验收范围和 Linux 客户端待安装步骤见 [TAN 迁移交接说明（2026-10-20）](TAN_SKY_MIGRATION_20261020.md)。文档提交不代表服务器 release 随 GitHub main 自动更新。
+
 `prepare` 在 manifest 中另记显示合同、相对目录及 `canonical_display.py` SHA。每帧的 `.png.display.json` 绑定显示合同、模块 SHA 和 PNG SHA，续跑不能仅凭完整 PNG 跳过；主进程的 `display_manifest.json` 列出本次帧与视频 SHA、字节数以及 CSV 的物理 observer/config/cohort 身份。`run` 验证这些记录；单帧或不连续区间允许视频列表为空。历史 manifest 未声明显示合同时保持其 raw 路径和验收方式，不重写冻结任务。
 
 仅对明确指定名称、状态为 complete 且所有已完成阶段均为 info 的任务，允许没有显示 manifest 时只回传 CSV 和 observer JSON。未完成/失败任务不能使用此例外，`fetch-model` 也始终要求实际的 TAN 显示 manifest。
