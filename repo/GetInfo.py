@@ -6,7 +6,7 @@ import resource
 import time
 from basefunc import DataProcessor, GalaxySimulation
 from snapshot_context import prepare_snapshot_context
-from snapshot_metrics import compute_snapshot_summary
+from snapshot_metrics import compute_snapshot_summary, require_hi_fraction_csv
 from canonical_observer import require_canonical_csv, canonical_csv_comment
 from variable import core_radius_dict, folder_path, gizmo_config, orbit_file
 from pathlib import Path
@@ -107,6 +107,7 @@ def read_elinfo_csv(path, expected_columns=ELINFO_COLUMNS):
     if not path.exists():
         return report
     require_canonical_csv(path)
+    require_hi_fraction_csv(path)
 
     comment_lines = []
     data_lines = []
@@ -477,7 +478,7 @@ class GetInfo:
             f"# Timescale_fd: {fd_value}\n",
             canonical_csv_comment(),
             "# HI: M_HI=0.76*sum(M_gas*NeutralHydrogenAbundance), both temperature phases; coldgas_* are legacy HI aliases\n",
-            "# hi_fraction=M_HI/M_star in the same aperture; gas_mass/gas_half_mass include all gas\n",
+            "# hi_fraction=M_HI/(M_star+M_HI) in the same aperture; gas_mass/gas_half_mass include all gas\n",
             "# star_mass and star_half_mass include old and newly formed dwarf stars within their existing apertures\n",
             "# rhalf: projected elliptical half-light semi-major axis of old stars\n",
             "# rhalf_circularized: equal-area value rhalf*sqrt(1-eps)\n",

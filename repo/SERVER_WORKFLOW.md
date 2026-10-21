@@ -5,14 +5,16 @@ The maintained entry is `workflow.py` in the simulation data root. See
 synchronization, and releases. Follow `AGENTS.md` in this source directory after
 changing code. Historical per-model launchers remain for compatibility.
 
-## H I statistics correction (2026-10-16)
+## H I statistics correction (2026-10-16; fraction updated 2026-10-21)
 
 NeutralHydrogenAbundance is n_HI/n_H. The solver uses HYDROGEN_MASSFRAC=0.76,
 so each gas particle contributes 0.76 * mass * NeutralHydrogenAbundance to H I.
 Both temperature phases contribute; the 20,000 K display split is not an H I cut.
 GetInfo now writes hi_mass, hi_half_mass, hi_fraction, hi_half_fraction,
-gas_mass and gas_half_mass. The user defines HI fraction as M_HI/M_star,
-not M_HI/(M_HI+M_star). Numerator and denominator use identical apertures.
+gas_mass and gas_half_mass. Following the user's 2026-10-21 correction, HI
+fraction is M_HI/(M_star+M_HI), matching the paper. It is dimensionless in
+[0, 1] for non-negative masses; both-zero masses give NaN. Numerator and
+denominator use identical apertures. This supersedes the 2026-10-16 M_HI/M_star convention.
 The legacy coldgas_mass/coldgas_half_mass columns alias the corrected HI masses.
 Gas mass fields contain all gas, including helium and ionized material; the
 baryonic theoretical dispersion uses total gas mass instead of summing HI and
@@ -20,13 +22,17 @@ legacy hotgas columns. hotgas_* retain their legacy ionized-hot-phase definition
 HI contours use both temperature phases and the hydrogen factor; contour HI
 fractions use stellar mass in the same thresholded pixels.
 
-Old elinfo files must be recomputed with GetInfo before using the new PlotFig;
+GetInfo resume and PlotFig require the new fraction declaration in the CSV
+header; PlotFig also checks the stored fractions against the corresponding
+mass columns. Time-series curves, current markers, contour annotations, and IC
+reports all use the same fraction. Old elinfo files must be recomputed with
+GetInfo in a fresh analysis directory before using the new PlotFig;
 old values cannot be corrected by changing labels. Existing frozen analyses and
 immutable releases are preserved; publish/activate a new release for future jobs.
 The build_production_ic report's legacy matched_gas_fraction key now reads the
-explicit HI mass and returns M_HI/M_star; it is NaN for old CSVs without hi_mass.
+explicit HI mass and returns M_HI/(M_star+M_HI); it is NaN for old CSVs without hi_mass.
 
-Validation: all 16 analysis unit tests passed. Fornax7001 snapshots 100–102
+Historical 2026-10-16 validation: all 16 analysis unit tests passed. Fornax7001 snapshots 100–102
 completed GetInfo and PlotFig on astro_thin (job 305985). An independent
 particle/aperture calculation for snapshot 100 (job 305987) matched the new
 HI masses, total gas masses, ratios and CSV values; unaffected summaries
@@ -107,3 +113,10 @@ versioned output directory and verify its identity. Previously prepared runs
 retain their frozen code and legacy paths. Publish and activate a new immutable
 release to select this method for subsequent workflow analyses. User shell
 launchers, snapshots, ICs, simulation settings and manuscripts are preserved.
+
+
+2026-10-21 fraction validation: six focused H I/fraction tests passed, plus direct
+execution of the patched plotting/schema and CSV-header functions and the real
+Fornax5028/285 mass regression (f_HI=0.3963470638529267). Syntax checks passed
+for all five changed Python files. The HDF5-loader unit test and full server
+integration were not run (local h5py unavailable). No release was deployed.

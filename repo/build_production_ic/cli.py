@@ -429,11 +429,14 @@ def summarize_elinfo(case_dir, prefix, model_id, target_distance):
             star_mass = parse_float_field(csv_row, "star_mass")
             hotgas_mass = parse_float_field(csv_row, "hotgas_mass")
             coldgas_mass = parse_float_field(csv_row, "coldgas_mass")
-            # Legacy report key; the requested HI fraction is M_HI/M_star.
+            # Legacy report key; the paper defines HI fraction as M_HI/(M_star+M_HI).
             hi_mass = parse_float_field(csv_row, "hi_mass")
+            hi_denominator = star_mass + hi_mass
             gas_fraction = (
-                hi_mass / star_mass
-                if math.isfinite(hi_mass) and math.isfinite(star_mass) and star_mass > 0.0
+                hi_mass / hi_denominator
+                if (math.isfinite(hi_mass) and math.isfinite(star_mass)
+                    and hi_mass >= 0.0 and star_mass >= 0.0
+                    and math.isfinite(hi_denominator) and hi_denominator > 0.0)
                 else math.nan
             )
 

@@ -23,8 +23,27 @@ def hi_particle_masses(mass, neutral_fraction):
 
 
 def hi_fraction(hi_mass, stellar_mass):
-    """M_HI/M_star, with both masses measured in the same aperture (user definition)."""
-    return float(hi_mass / stellar_mass) if np.isfinite(stellar_mass) and stellar_mass > 0 else np.nan
+    """M_HI/(M_star+M_HI), using matched apertures, as in the paper."""
+    if (not np.isfinite(hi_mass) or not np.isfinite(stellar_mass)
+            or hi_mass < 0 or stellar_mass < 0):
+        return np.nan
+    denominator = float(hi_mass) + float(stellar_mass)
+    return float(hi_mass / denominator) if np.isfinite(denominator) and denominator > 0 else np.nan
+
+
+def require_hi_fraction_csv(path):
+    """Reject unversioned or legacy M_HI/M_star CSVs before plotting/resuming."""
+    expected = "# hi_fraction=M_HI/(M_star+M_HI) in the same aperture;"
+    with open(path, "r", encoding="utf-8-sig") as handle:
+        for line in handle:
+            if not line.lstrip().startswith("#"):
+                break
+            if line.startswith(expected):
+                return
+    raise ValueError(
+        "Re-run GetInfo in a fresh analysis directory: this elinfo does not "
+        "declare hi_fraction=M_HI/(M_star+M_HI). Preserve legacy CSVs."
+    )
 
 
 def _sum_hi_mass(mass, nh, radial_mask):

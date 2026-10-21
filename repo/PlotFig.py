@@ -27,7 +27,7 @@ import argparse
 # from multiprocessing import Pool
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
-from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction
+from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction, require_hi_fraction_csv
 from canonical_observer import require_canonical_csv
 from canonical_display import (DISPLAY_RELATIVE_DIR, tangent_coordinates, tangent_velocity_grid40,
     tangent_motion_arrow, tangent_kpc_to_display, raw_offsets_to_tangent, tangent_pixel_area_arcsec2)
@@ -473,6 +473,13 @@ def _normalize_elinfo_schema(dw_elinfo):
     required_hi = {'hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction'}
     if not required_hi.issubset(dw_elinfo.columns):
         raise ValueError("Re-run GetInfo: this elinfo predates corrected H I mass statistics")
+    for fraction, hi, stars in (
+        ('hi_fraction', 'hi_mass', 'star_mass'),
+        ('hi_half_fraction', 'hi_half_mass', 'star_half_mass'),
+    ):
+        expected = np.array([hi_fraction(h, s) for h, s in zip(dw_elinfo[hi], dw_elinfo[stars])])
+        if not np.allclose(dw_elinfo[fraction], expected, rtol=2e-6, atol=1e-8, equal_nan=True):
+            raise ValueError("Re-run GetInfo: stored H I fractions disagree with M_HI/(M_star+M_HI)")
     legacy_fallbacks = []
 
     if 'rhalf_circularized' not in dw_elinfo.columns:
@@ -514,6 +521,7 @@ def build_plot_context():
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
     require_canonical_csv(elinfo_path)
+    require_hi_fraction_csv(elinfo_path)
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
     dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
     if 'numsp' not in dw_elinfo.columns:
@@ -1097,8 +1105,8 @@ def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_ste
         s=100,
         zorder=5,
     )
-    ax.vlines(tsnap, 0, 12, color='gray', lw=2, ls='--', zorder=0)
-    _style_axis(ax, 'Simulation Time (Gyr)', r'$f_{\mathrm{HI}} = M_{\mathrm{HI}}/M_\star$', xlim=(0, t_peri), ylim=(1e-4, 10.8))
+    ax.vlines(tsnap, 0, 1.05, color='gray', lw=2, ls='--', zorder=0)
+    _style_axis(ax, 'Simulation Time (Gyr)', r'$f_{\mathrm{HI}} = M_{\mathrm{HI}}/(M_\star+M_{\mathrm{HI}})$', xlim=(0, t_peri), ylim=(1e-4, 1.05))
     ax.set_yscale('log')
     ax.legend(loc='lower left', fontsize=15)
 
@@ -1176,8 +1184,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     hot_gas_y = hot_gas_df['y'].to_numpy()
     hot_gas_z = hot_gas_df['z'].to_numpy()
 
-    gas_ratio_stellar_region = np.nan if star_mass == 0 else coldgas_mass / star_mass
-    gas_half_ratio = np.nan if star_half_mass == 0 else coldgas_half_mass / star_half_mass
+    gas_ratio_stellar_region = hi_fraction(coldgas_mass, star_mass)
+    gas_half_ratio = hi_fraction(coldgas_half_mass, star_half_mass)
     gas_frac_stellar_region = hi_fraction(coldgas_mass, star_mass)
     gas_half_frac = hi_fraction(coldgas_half_mass, star_half_mass)
 

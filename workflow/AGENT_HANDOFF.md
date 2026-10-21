@@ -1,7 +1,7 @@
 # dSph 工作流：智能体交接与操作说明
 
 本文件供没有对话上下文的智能体使用。先读本文件，再读相关代码；不要重新设计已稳定的目录结构。
-最后更新：2026-10-20。示例中的运行状态是历史事实，执行前必须重新查询。
+最后更新：2026-10-21。示例中的运行状态是历史事实，执行前必须重新查询。
 
 旧太阳观测代码的修正记录见 [工作日志](WORK_LOG_20261020_OBSERVER.md)；
 用户随后撤销轨道程序“仅保留本地”的范围限制，更新程序、配置、测试和说明现纳入 GitHub main；
@@ -258,7 +258,9 @@ workspace/environments/，计算数据在 workspace/local-isolation/，和服务
 
 ### 正式模拟的 HI 定义与旧结果迁移（2026-10-16）
 
-用户明确选择 HI fraction = M_HI / M_star，可大于 1；分子、分母必须使用相同孔径。
+2026-10-21 用户更正并要求与论文对齐：HI fraction = M_HI / (M_star + M_HI)，
+为 0–1 的无量纲比例；转为百分数时乘 100。此约定覆盖 2026-10-16 的
+M_HI / M_star 定义。分子、分母必须使用相同孔径。
 求解器 NeutralHydrogenAbundance 是 n_HI/n_H，所以单粒子 HI 质量为
 0.76 * m_gas * NeutralHydrogenAbundance；冷、热两种温度成分都要统计。
 新 elinfo 包含 hi_mass、hi_half_mass、hi_fraction、hi_half_fraction、gas_mass、
@@ -311,3 +313,36 @@ selected_then_frozen，不冒称全部初始IC恒星。
 更改正式源码后仍须同步GitHub main、创建并激活新不可变release；只改editable
 source不会改变workflow.json中已经选择的analysis_code。历史release、用户.sh、
 模拟/隔离快照、IC与论文不修改。多模型验证仍合并一个Slurm、顺序执行。
+
+
+### H I fraction 与论文对齐及 Fornax5028 核查（2026-10-21）
+
+- 正式 `snapshot_metrics.hi_fraction`、GetInfo CSV 说明、PlotFig 历史曲线与当前时刻
+  标记、轮廓注释，以及 `build_production_ic` 的兼容字段 `matched_gas_fraction`
+  统一为 `M_HI/(M_star+M_HI)`。CSV 存 0–1 小数，论文表格显示百分数。
+- GetInfo 续写与 PlotFig 拒绝缺少新公式声明的旧 CSV，PlotFig 另核对质量列与比例列。
+  旧 CSV、图和冻结 release 保留，不批量改名或重写历史结果；重新分析使用新目录。
+- 全库检索发现 `evolution_pipeline.hi_fraction_total_stars` 的分母本已与论文一致。
+  `gas_fraction_3d_*` 等总气体比例是不同物理量，不能改名为 H I fraction。
+  `local_tools` 和 `workflow/isolation_python` 中的历史冷气体诊断不能当作正式 H I
+  测量；这些旧工具及旧 mock/evolution 图的温度选择、氢质量因子、孔径仍须在复用时
+  单独审计。本次不改变它们的气体选择，也不宣称全库旧 H I 质量都已迁移。
+- 真实复算：Fornax5028 snapshot 285 的 SHA256 为
+  `bcf43bf668e1ff0fcca9e74e9f5702f8009121c8e5ea8c7ccd412e10325b8abe`，
+  与论文来源记录相同。在论文约 15.32784 kpc 球形孔径内，
+  `M_star=6.2142859184e7 Msun`、`M_HI=4.0801822210e7 Msun`，
+  `f_HI=0.39634706385`，即 39.6347%；原论文 39.6% 算术正确。
+  同孔径总气体比例为 61.2117%，与 H I 比例不同。此处只验证当前时刻，初始快照
+  的 57.1% 本次未从原粒子重算。孔径是几何选择，不等于束缚成员或已扣除背景。
+- 论文目录存在 `CONFLICTS_FOR_AUTHOR_ZH.md`（C01–C26）；论文正文本次未改。
+  统计源码的分母统一不表示更换了论文的空间孔径或粒子成员。
+- 用户再次要求所有新分析脚本、表格、诊断和报告都归档到对应快照所在目录下的
+  `analysis/snapshot_285/gas_fraction_audit_20261021/`。本次 C 盘副本可读，但会话
+  权限拒绝创建该目录，复算在内存完成，未将结果文件散存其他位置；不要误报已归档。
+- 本次修改不自动安装到用户只读的本地 checkout 或服务器，也不激活新 release；
+  部署时遵循原有校验和与 release 流程。历史分析仍使用它们冻结的源码。
+
+验证：6 项 H I/比例单元测试通过；直接执行修改后的绘图和 CSV 函数 AST，核验历史曲线、
+当前标记、旧定义拒绝及注释顺序；真实 snapshot 285 质量代入通过。5 个修改 Python
+文件语法检查通过。本机缺少 h5py，HDF5 loader 单元测试与完整服务器端到端流程未执行；
+原快照使用只读连续 HDF5 数据集读取并核对整文件 SHA 与论文已有质量缓存。
