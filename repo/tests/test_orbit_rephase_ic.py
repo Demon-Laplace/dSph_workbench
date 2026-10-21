@@ -21,7 +21,7 @@ class RephaseTest(unittest.TestCase):
         counts = [3, 1, 3, 0, 0, 0]
         # IDs 4..6: one dwarf gas particle and two dwarf stars.
         ids = np.array([0, 1, 4, 2, 3, 5+(1<<25), 6+(3<<25)], dtype='<u4')
-        p = (np.arange(21).reshape(7, 3) / 8 + 20).astype('<f4')
+        p = (np.arange(21).reshape(7, 3) / 8 + 520).astype('<f4')
         v = (np.arange(21).reshape(7, 3) / 10 - 2).astype('<f4')
         m = np.array([10, 11, 2, 30, 40, 3, 4], dtype='<f4')
         header = bytearray(256)
@@ -61,7 +61,7 @@ class RephaseTest(unittest.TestCase):
                     'destination_binary': str(self.root/'new/new.IC_000'), 'receipt': str(self.root/'new/receipt.json'),
                     'canonical_observer_id': 'astropy_native_direct_v1', 'length_to_kpc': 1.0001,
                     'velocity_to_kms': 2., 'expected_counts': counts, 'expected_cohort_N': 2,
-                    'dwarf_ascii':str(dwarf),'expected_dwarf_counts':[1,0,2,0], 'dwarf_id_offset':4,'box_size_code': 100.,
+                    'dwarf_ascii':str(dwarf),'expected_dwarf_counts':[1,0,2,0], 'dwarf_id_offset':4,'box_size_code': 1000.,
                     'expected_input_sha256': {}}
         self.cfg['expected_input_sha256'] = {name: ic.sha(self.cfg[name]) for name in
                                             ['source_binary', 'cohort_file', 'candidate_file', 'initial_state_file']}

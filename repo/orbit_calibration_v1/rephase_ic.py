@@ -209,7 +209,9 @@ def build(config):
             raise ValueError('Dwarf leaves initial periodic box; wrapping requires separate explicit support')
         writable[dwarf_rows] = requested
         writable.flush()
-        changed[key] = {'max_float32_rounding_error_code': float(np.max(np.abs(writable[dwarf_rows] - requested)))}
+        rounding = np.abs(writable[dwarf_rows] - requested)
+        changed[key] = {'max_float32_rounding_error_code': float(np.max(rounding)),
+                        'max_float32_rounding_error_per_axis_code': np.max(rounding, axis=0).tolist()}
         del writable
     _, _, _, new = binary_arrays(dest)
     for name in old:
@@ -233,7 +235,9 @@ def build(config):
             if a.read(size+8) != b.read(size+8):
                 raise ValueError('Protected binary block changed')
     final = weighted_com(new['position'], new['velocity'], new['mass'], rows, L, V)
-    if not np.allclose(final, target, rtol=0, atol=1e-5):
+    quantization_bound = np.r_[np.asarray(changed['position']['max_float32_rounding_error_per_axis_code'])*L,
+                              np.asarray(changed['velocity']['max_float32_rounding_error_per_axis_code'])*V]
+    if np.any(np.abs(final-target) > quantization_bound + 1e-8):
         raise ValueError('New frozen-cohort COM misses target beyond float32 tolerance')
     if sha(source) != provenance['source_binary']['sha256']:
         raise ValueError('Original IC changed during preparation')
@@ -244,6 +248,7 @@ def build(config):
               'original_frozen_COM_absolute_physical': original.tolist(),
               'requested_frozen_COM_absolute_physical': target.tolist(),
               'actual_frozen_COM_absolute_physical': final.tolist(), 'COM_rounding_error': (final-target).tolist(),
+              'COM_quantization_bound_absolute_physical': quantization_bound.tolist(),
               'coherent_delta_code_position_velocity': delta.tolist(),
               'original_snapshot_full_ID_phase_mass_check': original_check,
               'initial_output_comparison_allowances': {'gas_velocity_absolute_code': gas_atol,
