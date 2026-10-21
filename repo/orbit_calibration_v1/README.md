@@ -3,6 +3,12 @@
 程序与文档现纳入 GitHub main。入口为 `python -m orbit_calibration_v1`；
 具体修改事项和验证层级见 [CHANGELOG.md](CHANGELOG.md)。此前“轨道程序仅保留本地”的约定已撤销。
 
+独立真实演化可用 `python -m orbit_calibration_v1.rephase_ic --config CONFIG.json`
+复用原始合并 IC，仅对全部矮星系粒子施加一致的初始平移和速度增量。配置显式绑定原 IC、
+原 snapshot 000、冻结 cohort、候选绝对物理六维、原 cohort 初始 COM、单位及各文件 SHA。
+目标目录与原目录必须不同且 IC/报告均不存在；按完整 ID 核对原初态并验证所有保护字段。
+新初态的实际 COM、量化误差和新 IC SHA 写入报告。启动仍使用现有工作流，程序不提交作业。
+
 2026-10-21：新增真实演化六维残差、共同时间搜索、有限差分初态响应与独立重演化验收。
 操作与科学边界见 [真实演化反馈说明](FEEDBACK_GUIDE_ZH.md)。旧静态预览已移除目标质心速度置入；
 候选构造完成不能作为演化匹配通过的证据。三个新阶段为 `evaluate/plan-feedback/update-feedback`。
