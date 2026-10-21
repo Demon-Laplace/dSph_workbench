@@ -20,7 +20,7 @@ class RephaseTest(unittest.TestCase):
         self.source = self.root/'old/source.IC_000'
         counts = [3, 1, 3, 0, 0, 0]
         # IDs 4..6: one dwarf gas particle and two dwarf stars.
-        ids = np.array([0, 1, 4, 2, 3, 5, 6], dtype='<u4')
+        ids = np.array([0, 1, 4, 2, 3, 5+(1<<25), 6+(3<<25)], dtype='<u4')
         p = (np.arange(21).reshape(7, 3) / 8 + 20).astype('<f4')
         v = (np.arange(21).reshape(7, 3) / 10 - 2).astype('<f4')
         m = np.array([10, 11, 2, 30, 40, 3, 4], dtype='<f4')
@@ -45,7 +45,9 @@ class RephaseTest(unittest.TestCase):
                     for name, data in [('ParticleIDs', ids), ('Coordinates', p), ('Velocities', v), ('Masses', m)]:
                         g.create_dataset(name, data=data[rows])
                 cursor += n
-        cohort = self.root/'cohort.npz'; np.savez(cohort, particle_id=np.array([5, 6], dtype=np.uint64))
+        dwarf = self.root/'dwarf.ini'
+        dwarf.write_text('1 0 2 0\n0 0\n%d 0\n%d 0\n' % (1+(1<<25), 2+(3<<25)))
+        cohort = self.root/'cohort.npz'; np.savez(cohort, particle_id=ids[-2:].astype(np.uint64))
         old = ic.weighted_com(p, v, m, np.array([5, 6]), 1.0001, 2.)
         target = old + [13, 17, -4, -23, 19, 5]
         candidate = self.root/'candidate.json'
@@ -59,14 +61,14 @@ class RephaseTest(unittest.TestCase):
                     'destination_binary': str(self.root/'new/new.IC_000'), 'receipt': str(self.root/'new/receipt.json'),
                     'canonical_observer_id': 'astropy_native_direct_v1', 'length_to_kpc': 1.0001,
                     'velocity_to_kms': 2., 'expected_counts': counts, 'expected_cohort_N': 2,
-                    'dwarf_id_range': [4, 7], 'box_size_code': 100.,
+                    'dwarf_ascii':str(dwarf),'expected_dwarf_counts':[1,0,2,0], 'dwarf_id_offset':4,'box_size_code': 100.,
                     'expected_input_sha256': {}}
         self.cfg['expected_input_sha256'] = {name: ic.sha(self.cfg[name]) for name in
                                             ['source_binary', 'cohort_file', 'candidate_file', 'initial_state_file']}
 
     def test_complete_dwarf_shift_protects_host_mass_ids_and_gas(self):
         compressed = self.root/'delta_cohort.npz'
-        np.savez(compressed, first=np.array([5], dtype=np.uint64), delta=np.array([1], dtype=np.uint64))
+        np.savez(compressed, first=np.array([5+(1<<25)], dtype=np.uint64), delta=np.array([1+(2<<25)], dtype=np.uint64))
         np.testing.assert_array_equal(ic.cohort_ids(compressed), ic.cohort_ids(self.cfg['cohort_file']))
         self.cfg['cohort_file'] = str(compressed)
         self.cfg['expected_input_sha256']['cohort_file'] = ic.sha(compressed)
@@ -107,13 +109,27 @@ class RephaseTest(unittest.TestCase):
         x = json.loads(state.read_text()); x['old_V_absolute_kms'][0] += 1; state.write_text(json.dumps(x))
         with self.assertRaisesRegex(ValueError, 'COM differs'): ic.build(self.cfg)
 
-    def test_refuses_invalid_origin_range(self):
-        self.cfg['dwarf_id_range'] = [6, 7]
-        with self.assertRaisesRegex(ValueError, 'origin range'): ic.build(self.cfg)
+    def test_refuses_invalid_origin_offset(self):
+        self.cfg['dwarf_id_offset'] = 6
+        with self.assertRaisesRegex(ValueError, 'outside'): ic.build(self.cfg)
 
     def test_refuses_extra_format_blocks(self):
         with self.source.open('ab') as f: f.write(struct.pack('<I', 0)*2)
         with self.assertRaisesRegex(ValueError, 'additional'): ic.binary_arrays(self.source)
+
+    def test_documented_gas_readout_and_periodic_coordinates(self):
+        self.cfg.update(initial_snapshot_gas_velocity_atol_code=2e-5, initial_snapshot_periodic_position_ulps=1.)
+        with h5py.File(self.cfg['source_snapshot'], 'r+') as f:
+            f['PartType0/Velocities'][0, 0] += 1e-5
+            f['PartType0/Coordinates'][0, 0] += self.cfg['box_size_code']
+        result = ic.build(self.cfg)
+        self.assertTrue(result['initial_output_comparison_allowances']['stellar_velocity_and_all_masses_exact'])
+
+    def test_gas_readout_allowance_does_not_relax_stellar_velocity(self):
+        self.cfg.update(initial_snapshot_gas_velocity_atol_code=2e-5, initial_snapshot_periodic_position_ulps=1.)
+        with h5py.File(self.cfg['source_snapshot'], 'r+') as f:
+            f['PartType2/Velocities'][0, 0] += 1e-5
+        with self.assertRaisesRegex(ValueError, 'disagrees'): ic.build(self.cfg)
 
 
 if __name__ == '__main__':

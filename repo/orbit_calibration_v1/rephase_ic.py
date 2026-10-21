@@ -76,16 +76,25 @@ def weighted_com(p, v, m, rows, L, V):
                  np.average(v[rows], axis=0, weights=weights) * V]
 
 
-def validate_snapshot(arrays, counts, snapshot):
-    """Full ID-joined initial phase/mass equality, including host and background."""
+def join_ids(sorted_ids, sorted_rows, wanted):
+    wanted = np.asarray(wanted, dtype=np.uint64)
+    at = np.searchsorted(sorted_ids, wanted)
+    if np.any(at >= len(sorted_ids)) or not np.array_equal(sorted_ids[np.minimum(at, len(sorted_ids)-1)], wanted):
+        raise ValueError('Particle ID missing from initial binary')
+    return sorted_rows[at]
+
+
+def validate_snapshot(arrays, counts, snapshot, box_size, gas_velocity_atol=0., periodic_position_ulps=0.):
+    """Full ID join; explicit audited initial-output allowances, exact mass/stars."""
     import h5py
     n = sum(counts)
     ids = np.asarray(arrays['id'])
-    # The supported merger assigns exactly the integer permutation [0,N).
-    if int(ids.max()) >= n or not np.all(np.bincount(ids, minlength=n) == 1):
-        raise ValueError('Initial IC IDs must be a permutation of [0,N)')
-    inverse = np.empty(n, dtype=np.uint32)
-    inverse[ids] = np.arange(n, dtype=np.uint32)
+    # Isolation star formation already creates generation bits. Full IDs remain
+    # unique but need not be contiguous, nor bounded by the particle count.
+    order = np.argsort(ids)
+    sorted_ids = ids[order]
+    if np.any(sorted_ids[1:] == sorted_ids[:-1]):
+        raise ValueError('Duplicate full particle IDs in initial binary')
     result = {}
     with h5py.File(snapshot, 'r') as f:
         if float(f['Header'].attrs['Time']) != 0 or tuple(f['Header'].attrs['NumPart_Total']) != tuple(counts):
@@ -95,9 +104,9 @@ def validate_snapshot(arrays, counts, snapshot):
                 continue
             g = f['PartType%d' % tp]
             actual_ids = g['ParticleIDs'][:]
-            if len(actual_ids) != count or int(actual_ids.max()) >= n:
+            if len(actual_ids) != count:
                 raise ValueError('Invalid snapshot IDs')
-            rows = inverse[actual_ids]
+            rows = join_ids(sorted_ids, order, actual_ids)
             lo, hi = sum(counts[:tp]), sum(counts[:tp+1])
             if len(np.unique(actual_ids)) != count or np.any(rows < lo) or np.any(rows >= hi):
                 raise ValueError('Snapshot type/ID identity mismatch')
@@ -110,12 +119,21 @@ def validate_snapshot(arrays, counts, snapshot):
                     b = g[key][start:stop]
                     if not np.isfinite(a).all() or (name == 'mass' and np.any(a <= 0)):
                         raise ValueError('Invalid initial phase/mass values')
-                    # Original format-1 -> initial HDF5 must preserve these values exactly.
-                    if not np.array_equal(a, b):
+                    delta = b.astype(np.float64) - a
+                    allowance = 0.
+                    if name == 'position':
+                        delta -= box_size * np.rint(delta / box_size)
+                        allowance = periodic_position_ulps * np.abs(np.spacing(np.maximum(np.abs(a), np.abs(b)).astype(np.float32)))
+                    elif name == 'velocity' and tp == 0:
+                        allowance = gas_velocity_atol
+                    # Initial gas output includes synchronized hydro kicks;
+                    # periodic coordinates can acquire one float32 rounding.
+                    # Such allowances must be audited separately and explicit.
+                    if np.any(np.abs(delta) > allowance):
                         raise ValueError('IC disagrees with original snapshot: type%d/%s' % (tp, key))
-                    worst = max(worst, float(np.max(np.abs(a.astype(np.float64) - b))))
+                    worst = max(worst, float(np.max(np.abs(delta))))
                 result[str(tp)][key + '_max_abs_error'] = worst
-    return inverse, result
+    return (sorted_ids, order), result
 
 
 def build(config):
@@ -130,7 +148,7 @@ def build(config):
     if cfg['canonical_observer_id'] != 'astropy_native_direct_v1':
         raise ValueError('Unsupported observer')
     inputs = {name: Path(cfg[name]).resolve() for name in
-              ['source_binary', 'source_snapshot', 'cohort_file', 'candidate_file', 'initial_state_file']}
+              ['source_binary', 'source_snapshot', 'cohort_file', 'candidate_file', 'initial_state_file', 'dwarf_ascii']}
     for name, expected in cfg['expected_input_sha256'].items():
         if sha(inputs[name]) != expected:
             raise ValueError('Frozen input checksum mismatch: ' + name)
@@ -148,14 +166,31 @@ def build(config):
     ids = cohort_ids(inputs['cohort_file'])
     if len(ids) != cfg['expected_cohort_N']:
         raise ValueError('Cohort count changed')
-    first, stop = cfg['dwarf_id_range']
-    if not (0 <= first < stop == n) or np.any(ids < first) or np.any(ids >= stop):
-        raise ValueError('Invalid dwarf origin range/cohort')
-    inverse, original_check = validate_snapshot(old, counts, inputs['source_snapshot'])
-    rows = inverse[ids]
-    dwarf_rows = np.flatnonzero(old['id'] >= first)
-    if len(dwarf_rows) != stop-first:
-        raise ValueError('Incomplete dwarf population')
+    # Read the actual source IDs; never infer identity from row count or strip
+    # generation bits. The historical merger adds one component ID offset.
+    with inputs['dwarf_ascii'].open() as f:
+        dwarf_counts = [int(x) for x in f.readline().split()]
+    if dwarf_counts != cfg['expected_dwarf_counts']:
+        raise ValueError('Dwarf source counts changed')
+    dwarf_ids = np.loadtxt(inputs['dwarf_ascii'], skiprows=1, usecols=0, dtype=np.uint64, ndmin=1)
+    dwarf_ids += np.uint64(cfg['dwarf_id_offset'])
+    if len(dwarf_ids) != sum(dwarf_counts) or len(np.unique(dwarf_ids)) != len(dwarf_ids):
+        raise ValueError('Invalid complete dwarf source IDs')
+    if not np.isin(ids, dwarf_ids).all():
+        raise ValueError('Frozen cohort is outside the source dwarf ID set')
+    gas_atol = float(cfg.get('initial_snapshot_gas_velocity_atol_code', 0.))
+    pos_ulps = float(cfg.get('initial_snapshot_periodic_position_ulps', 0.))
+    if not (0 <= gas_atol <= 2e-5 and 0 <= pos_ulps <= 1):
+        raise ValueError('Initial-output allowance exceeds independently audited supported bounds')
+    mapping, original_check = validate_snapshot(old, counts, inputs['source_snapshot'],
+                                                float(cfg['box_size_code']), gas_atol, pos_ulps)
+    rows = join_ids(*mapping, ids)
+    dwarf_rows = join_ids(*mapping, dwarf_ids)
+    selected_dwarf = np.zeros(n, dtype=bool)
+    selected_dwarf[dwarf_rows] = True
+    actual_dwarf_counts = [int(selected_dwarf[sum(counts[:tp]):sum(counts[:tp+1])].sum()) for tp in range(4)]
+    if actual_dwarf_counts != dwarf_counts:
+        raise ValueError('Dwarf source IDs/type counts disagree with initial binary')
     original = weighted_com(old['position'], old['velocity'], old['mass'], rows, L, V)
     state = json.loads(inputs['initial_state_file'].read_text())
     expected = np.r_[state['old_P_absolute_kpc'], state['old_V_absolute_kms']]
@@ -183,7 +218,7 @@ def build(config):
             for a in range(0, n, 262144):
                 b = min(n, a + 262144)
                 expected_block = np.array(old[name][a:b], copy=True)
-                selected = old['id'][a:b] >= first
+                selected = selected_dwarf[a:b]
                 expected_block[selected] = expected_block[selected].astype(np.float64) + shift
                 if not np.array_equal(expected_block, new[name][a:b]):
                     raise ValueError('Unexpected position/velocity change')
@@ -204,11 +239,15 @@ def build(config):
         raise ValueError('Original IC changed during preparation')
     result = {'state': 'VALIDATED_NEW_ORBIT_ONLY_IC', 'canonical_observer_id': cfg['canonical_observer_id'],
               'provenance': provenance, 'counts': list(counts), 'dwarf_N': len(dwarf_rows), 'cohort_N': len(ids),
+              'dwarf_counts': actual_dwarf_counts, 'dwarf_selection': 'complete source ASCII full IDs plus historical merger offset',
+              'full_ID_range': [int(old['id'].min()), int(old['id'].max())],
               'original_frozen_COM_absolute_physical': original.tolist(),
               'requested_frozen_COM_absolute_physical': target.tolist(),
               'actual_frozen_COM_absolute_physical': final.tolist(), 'COM_rounding_error': (final-target).tolist(),
               'coherent_delta_code_position_velocity': delta.tolist(),
               'original_snapshot_full_ID_phase_mass_check': original_check,
+              'initial_output_comparison_allowances': {'gas_velocity_absolute_code': gas_atol,
+                  'periodic_position_float32_ulps': pos_ulps, 'stellar_velocity_and_all_masses_exact': True},
               'protected_host_cube_and_nonphase_fields_verified': True, 'internal_rotation_applied': False,
               'quantization': changed, 'new_binary': str(dest), 'new_binary_sha256': sha(dest),
               'source_code_sha256': sha(__file__), 'wall_seconds': time.monotonic()-start,
