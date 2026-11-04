@@ -78,7 +78,7 @@ sbatch/srun、不多申请节点或 CPU；每 15 秒读一次 info.txt，其余�
 1. 读当前目录及目标服务器目录的 AGENTS.md；检查 Git 状态和 `workflow.json`。
 2. `python3 workflow.py --help` 查看实际安装命令；必要时与源码版本比对。
 3. 查 `squeue -M all --me`、目标运行 `status.json` 和 `sacct`，避免重复提交或修改活动目录。
-4. 任何需要删除的运行必须先验证其身份、Slurm 终态和保留副本。查询失败时停止清理。
+4. 需要删除的失败运行须显式指定并验证身份和 Slurm 终态；查询失败时停止清理。
 5. 不读/展示凭据文件。服务器 Python 使用 `. /etc/profile.d/z00_lmod.sh && module load python/3.9.1`；Git 模块为 `git/2.23.0`。
 
 ## 3. 生成或接入 IC 并运行
@@ -104,27 +104,32 @@ TREECOOL 自动从配置模板复制为普通文件，禁止依赖复制后失�
 普通 `default` 模板的 feedback 是 16.6，不能误用于这两个模型。
 模拟精度保持原样；检查工具可沿用已经验证的 float32，不能顺手把模拟数据降为 float16。
 
-## 4. 启动失败、重试和自动替换清理
+## 4. 启动失败与一次性命令清理（2026-11-04 更新）
 
-用户经验标准：正常运行超过 **140 秒（2 分 20 秒）且已进入积分**，判断启动成功；完整模拟仍要求快照达到 TimeMax。
-7002、7003 在 PartAllocFactor=3.5 时均于初始快照后退出码 11；提高到 4.0 后成功。退出码 11 是段错误，不能断言系统物理内存耗尽。
+正常运行超过 140 秒且已进入积分，判断启动成功；完整模拟仍要求达到 TimeMax。
+内存/分配相关启动失败仍按 0.5 步长提高 PartAllocFactor，用原 IC 和新运行名重试；
+保持 feedback、BufferSize 及其他物理参数，不向已有快照的目录盲目重启。
 
-处理新失败：
-
-1. 确认作业已停止，检查 solver.log/slurm 和 sacct。内存/分配相关启动失败按用户授权以 0.5 步长调整 PartAllocFactor；保留 feedback、BufferSize 和其他物理参数。
-2. 基于原配置新增明确的 profile（不要修改其他运行的冻结配置），用相同 IC 和新运行名重试。不要向有快照的目录盲目重启，也不要手改冻结 PARAM 的校验和。
-3. 本地和服务器 `workflow.json` 都启用 `cleanup_failed_isolation: true`。新运行的作业内监视器在运行 140 秒后检查积分进展，并自动删除同模型、同 IC 的旧启动失败目录，包括旧 slurm 输出、初始快照、重复 IC 和自动生成的 run.sh。本地会话退出不影响监视器。
-4. 这是对失败尝试的自动替换：最终只保留成功运行数据；不会永久堆积每次尝试。旧版本已冻结的作业不含监视器时，用以下命令补执行：
+按用户最新要求，取消作业内后台清理、定期扫描和重试。废弃
+cleanup_failed_isolation 开关，不再需要为计算节点维护跨集群客户端配置。
+失败目录用一次性命令明确指定，命令经现有 SSH 在登录节点执行：
 
 ```bash
-python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013 --dry-run
-python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013
+# --name 现在明确指定待删除的失败运行，不是保留的替代运行
+python3 workflow.py isolation-clean-failed Fornax7006 --name FAILED_RUN --dry-run
+python3 workflow.py isolation-clean-failed Fornax7006 --name FAILED_RUN
 ```
 
-`--name` 是保留的替代运行。新运行尚未正常启动时延后清理；查询 Slurm 失败时不删。
-旧运行须为 FAILED/OUT_OF_MEMORY、运行不超过 140 秒，并有内存/退出码 11 证据；正常完成或长时间运行后中断的结果不能按此规则删除。
-仅保留 `workspace/receipts/isolation-cleaned/` 中的小型删除记录；不归档失败的大文件。已验证接收的上传暂存副本也清除。
-已删除的运行名有删除回执保护，不能误用旧命令重新提交；按保留运行名查询当前状态。
+只处理指定目录，核对模型身份、冻结输入、Slurm 已失败且无活动作业使用该目录。
+仍限运行不超过 140 秒、有内存/退出码 11 证据的启动失败；成功运行和长时间运行后
+中断的模拟保留。检查失败立即退出，不在后台循环。通过后原地删除，留下
+workspace/receipts/isolation-cleaned/ 小型回执，禁止误重提已删除运行名。
+
+上传暂存副本在接收、校验和准备/提交成功后立即回收，只处理
+workspace/transfers/isolation/ 下本次已验证的暂存目录，保留运行目录中的 IC。
+旧冻结监视器仍会调用中央 cleanup 入口；在 Slurm 分配内该入口返回
+command-line-only/automatic_cleanup=disabled，不查询、不删除，使旧监视器结束
+重试并继续等待求解器退出。不要改旧冻结代码、已有用户 .sh 或重提活动作业。
 
 ## 5. 完成后处理 isolated 模拟
 
@@ -165,7 +170,7 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 - 不擅改已有用户 `.sh`。2026-10-13 仅授权过无编号 Fornax 模板五个 sub*.sh 的适配；本次仅额外允许删除失败运行目录内自动生成的 run.sh。
 - 模型自身正常的 img/video 保留；不要把检查图和模拟数据混同。
 - 服务器历史归档 `observer_review_delete_20261006` 留给用户检查，不顺手永久清空。
-- 服务器历史完成作业的无用 Slurm 输出曾获授权清理；本次自动策略仅针对被新尝试替代的短时失败，不扩展成删除所有日志。
+- 服务器历史完成作业的无用 Slurm 输出曾获授权清理；一次性清理命令仅针对短时启动失败，不扩展成删除所有日志。
 - 编号、物理参数、路径不明确时先查现有记录，常规可验证操作直接执行，不反复索要已经给出的授权。
 
 ### 多模型密度检查共用一次 Slurm 提交

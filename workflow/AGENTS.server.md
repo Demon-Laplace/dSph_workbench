@@ -49,15 +49,17 @@ isolation/legacy/<model>/ or isolation/<run>/client/ locally. Local transport
 receipts belong in workspace/receipts/isolation/<model>/<run>/. Server isolation
 paths and frozen cases remain separate and are not flattened by this convention.
 
-The user authorized permanent removal of memory/segfault startup failures on
-2026-10-16. Use workflow_isolation_ops cleanup: require a verified replacement
-with identical IC hashes that has completed or run normally for at least 140
-seconds with integration progress, terminal failed Slurm accounting within 140
-seconds, and no
-active job using the failed directory. This narrow exception permits deleting
-its generated run.sh, initial snapshots, logs and IC copies together. Keep only
-a small centralized deletion receipt, not an archived failed run. Never apply
-this policy to successful cases or long-running interrupted simulations.
+The user requested lightweight command-line cleanup on 2026-11-04, superseding
+background replacement cleanup. Use isolation-clean-failed MODEL --name FAILED_RUN
+from the login node; --name identifies the failed directory itself. Query once,
+require terminal FAILED/OUT_OF_MEMORY within 140 seconds, memory/segfault evidence,
+verified inputs and no active job using the directory, then delete only that case.
+Keep a small deletion receipt. Never apply this policy to successful cases or
+long-running interrupted simulations. No background scans, repeated Slurm queries,
+or extra scheduler client configurations. Accepted upload staging copies are
+removed immediately after receipt verification; keep the simulation's IC.
+Old frozen monitors receive automatic_cleanup=disabled from the central cleanup
+entry point inside Slurm, ending their retries without changing the solver.
 Density checks use the shared isoFornax/python/check_density_profile.py and
 central workflow_isolation_ops; preserve existing user shell launchers.
 Checks for multiple simulations must share one Slurm job on one node, including

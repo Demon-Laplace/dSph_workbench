@@ -515,25 +515,21 @@ python3 workflow.py isolation-check Fornax7002 Fornax7003 --name fd25-paf40-2026
 统一入口的资源由服务器 `workflow.json` 的 `isolation_check` 显式配置，包含共享
 `script`、模块 `setup`、`processes` 和 `sbatch` 参数；不改用户已有 .sh。
 
-本地 `workflow.json` 的 `cleanup_failed_isolation: true` 启用重试后的自动清理：
-新运行正常运行至少 140 秒且已进入积分、IC/冻结文件核验通过后，检查同模型、同 IC 的旧失败尝试。
-服务器作业内的监视器自动执行清理；本地断开连接不影响此步骤。已完成的新运行也可触发清理。
-本地与服务器 workflow.json 均启用 cleanup_failed_isolation。
-只有 Slurm 确认 FAILED/OUT_OF_MEMORY、运行不超过 140 秒、且具有内存错误或
-退出码 11 证据的尝试才会删除；任何仍在使用该目录的 Slurm 作业都会阻止删除。
-段错误只作为用户授权的启动失败清理类别，不等于证明物理内存不足。
-长时间运行后中断的模拟仍保留，避免误删可续跑结果。
+失败目录使用一次性命令明确指定；命令经现有 SSH 在登录节点执行，不在作业内
+扫描或反复查询 Slurm。`cleanup_failed_isolation` 开关已废弃。
 
 ```bash
-# --name 指定保留的成功/已提交运行，清理其同 IC 的启动失败尝试
-python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013 --dry-run
-python3 workflow.py isolation-clean-failed Fornax7002 Fornax7003 --name fd25-paf40-20261013
+# --name 指定待删除的失败运行本身，先预览再执行
+python3 workflow.py isolation-clean-failed Fornax7006 --name FAILED_RUN --dry-run
+python3 workflow.py isolation-clean-failed Fornax7006 --name FAILED_RUN
 ```
 
-失败目录内的 IC、初始快照、日志和自动生成的 run.sh 一并直接删除；不移入回收目录。
-仅在 `workspace/receipts/isolation-cleaned/` 记录小型删除回执，禁止意外重提已删除的旧运行名。
-已接收且可由保留运行验证的重复上传副本也删除；参数有变化时仍使用新运行名。
-成功启动标准为正常运行超过 2 分 20 秒；完整完成仍要求最终快照达到 TimeMax。
+命令只删除该目录，核对模型与冻结输入、Slurm 终态及活动目录。仅允许
+FAILED/OUT_OF_MEMORY、运行不超过 140 秒且有内存/退出码 11 证据的启动失败。
+成功或长时间运行后中断的结果保留，任何检查失败立即停止。原地删除后仅保留
+`workspace/receipts/isolation-cleaned/` 的小型回执，防止误重提已删除的运行名。
+上传暂存副本在接收校验和准备/提交成功后立即回收，运行目录中的 IC 保留。
+旧冻结作业内监视器调用中央清理入口时收到已停用结果，结束重试，不影响求解器。
 
 ### 多模型密度检查共用一次 Slurm 提交
 

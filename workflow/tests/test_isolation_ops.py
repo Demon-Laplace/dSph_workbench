@@ -38,64 +38,58 @@ class IsolationOpsTests(unittest.TestCase):
     def clean(self, accounting=None, active=None, dry_run=False):
         record = accounting or {'state': 'FAILED', 'elapsed_seconds': 53, 'exit_code': '1:0'}
         with patch.object(ops, 'accounting', return_value=record), patch.object(ops, 'active_directories', return_value=active or []):
-            return ops.cleanup(self.root, 'Fornax7002', 'success', dry_run)
+            return ops.cleanup(self.root, 'Fornax7002', 'failed', dry_run)
 
-    def test_remove_short_failure_keep_replacement_and_small_tombstone(self):
-        self.assertIn(str(self.old), self.clean(dry_run=True)['removed'])
+    def test_only_named_failure_removed_and_receipt_retained(self):
+        other = self.make_run('another-failure', 'failed', '102')
+        self.assertEqual(self.clean(dry_run=True)['removed'], [str(self.old)])
         self.assertTrue(self.old.exists())
-        self.assertIn(str(self.old), self.clean()['removed'])
+        self.assertEqual(self.clean()['removed'], [str(self.old)])
         self.assertFalse(self.old.exists())
         self.assertTrue(self.keep.exists())
+        self.assertTrue(other.exists())
         receipt = self.root / 'workspace/receipts/isolation-cleaned/Fornax7002/failed.json'
         self.assertEqual(json.loads(receipt.read_text())['accounting']['elapsed_seconds'], 53)
-        self.assertEqual(self.clean()['removed'], [])
 
-    def test_replacement_must_pass_startup_before_cleanup(self):
-        runtime.write_json(self.keep / 'status.json', {'state': 'running', 'job_id': '101'})
-        for elapsed, log in [(100, 'Sync-Point 2, Time: 0.001'), (150, 'initializing')]:
-            (self.keep / 'solver.log').write_text(log)
-            report = self.clean(accounting={'state': 'RUNNING', 'elapsed_seconds': elapsed, 'exit_code': '0:0'})
-            self.assertIn('deferred', report)
-            self.assertTrue(self.old.exists())
-        (self.keep / 'solver.log').write_text('Sync-Point 2, Time: 0.001')
-        with patch.object(ops, 'active_directories', return_value=[self.keep]), patch.object(ops, 'accounting', side_effect=[
-            {'state': 'RUNNING', 'elapsed_seconds': 150, 'exit_code': '0:0'},
-            {'state': 'FAILED', 'elapsed_seconds': 53, 'exit_code': '1:0'}]):
-            ops.cleanup(self.root, 'Fornax7002', 'success')
-        self.assertFalse(self.old.exists())
+    def test_active_long_running_and_unknown_failures_preserved(self):
+        with self.assertRaisesRegex(ValueError, 'active Slurm'):
+            self.clean(active=[self.old / 'output'])
+        for state, elapsed in [('RUNNING', 50), ('FAILED', 141), ('COMPLETED', 50)]:
+            with self.subTest(state=state, elapsed=elapsed), self.assertRaises(ValueError):
+                self.clean(accounting={'state': state, 'elapsed_seconds': elapsed, 'exit_code': '1:0'})
+        (self.old / 'solver.log').write_text('Unknown solver failure')
+        with self.assertRaisesRegex(ValueError, 'No memory/segfault'):
+            self.clean()
+        self.assertTrue(self.old.exists())
 
-    def test_solver_monitor_cleans_after_threshold_and_propagates_failure(self):
-        from unittest.mock import MagicMock
-        proc = MagicMock()
-        proc.__enter__.return_value = proc
-        proc.wait.side_effect = [subprocess.TimeoutExpired('solver', 140), 0]
-        with patch.object(isolation.subprocess, 'Popen', return_value=proc), \
-             patch.object(isolation, 'cleanup_started_replacement', return_value=True) as clean:
-            isolation.monitored_solver(['solver'], self.keep, None, self.root, 'Fornax7002')
-        self.assertEqual(proc.wait.call_args_list[0].kwargs['timeout'], 140)
-        self.assertEqual(proc.wait.call_args_list[1].kwargs['timeout'], None)
-        clean.assert_called_once()
-        proc.wait.side_effect = [11]
-        with patch.object(isolation.subprocess, 'Popen', return_value=proc):
+    def test_successful_or_changed_case_cannot_be_deleted(self):
+        with patch.object(ops, 'active_directories') as query:
+            with self.assertRaisesRegex(ValueError, 'failed run itself'):
+                ops.cleanup(self.root, 'Fornax7002', 'success')
+            query.assert_not_called()
+        (self.old / 'Fornax.ini').write_text('changed')
+        with self.assertRaises(ValueError):
+            self.clean()
+        self.assertTrue(self.old.exists())
+
+    def test_legacy_background_monitor_stops_without_queries_or_deletion(self):
+        import os
+        with patch.dict(os.environ, {'SLURM_JOB_ID': '101'}), \
+             patch.object(ops, 'active_directories') as queue, patch.object(ops, 'accounting') as account:
+            report = ops.cleanup(self.root, 'Fornax7002', 'success')
+        self.assertEqual(report['automatic_cleanup'], 'disabled')
+        self.assertFalse(report['skipped'])
+        self.assertFalse(report['removed'])
+        queue.assert_not_called()
+        account.assert_not_called()
+        self.assertTrue(self.old.exists())
+        self.assertTrue(self.keep.exists())
+
+    def test_scheduler_failure_aborts_deletion(self):
+        with patch.object(ops, 'active_directories', side_effect=subprocess.CalledProcessError(1, 'squeue')):
             with self.assertRaises(subprocess.CalledProcessError):
-                isolation.monitored_solver(['solver'], self.keep, None, self.root, 'Fornax7002')
-
-    def test_verified_transfers_removed_but_other_attempts_retained(self):
-        import shutil
-        transfers = self.root / 'workspace/transfers/isolation'
-        transfers.mkdir(parents=True)
-        shutil.copytree(self.old, transfers / 'failed-upload')
-        shutil.copytree(self.keep, transfers / 'success-upload')
-        pending = self.make_run('pending', 'prepared', '102')
-        shutil.copytree(pending, transfers / 'pending-upload')
-        preview = self.clean(dry_run=True)
-        actual = self.clean()
-        self.assertEqual(preview['removed'], actual['removed'])
-        self.assertEqual(preview['bytes'], actual['bytes'])
-        self.assertFalse((transfers / 'failed-upload').exists())
-        self.assertFalse((transfers / 'success-upload').exists())
-        self.assertTrue((transfers / 'pending-upload').exists())
-        self.assertTrue(pending.exists())
+                ops.cleanup(self.root, 'Fornax7002', 'failed')
+        self.assertTrue(self.old.exists())
 
     def test_model_label_comes_from_receipt_not_run_date(self):
         import ast
@@ -107,32 +101,6 @@ class IsolationOpsTests(unittest.TestCase):
         exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), namespace)
         self.assertEqual(namespace['detect_model_name'](self.keep / 'output'), 'Fornax7002')
         self.assertEqual(namespace['detect_model_number'](self.keep / 'output'), '7002')
-
-    def test_active_long_running_or_unknown_failures_are_preserved(self):
-        self.clean(active=[self.old / 'output'])
-        self.assertTrue(self.old.exists())
-        for state, elapsed in [('RUNNING', 50), ('FAILED', 141), ('COMPLETED', 50)]:
-            self.clean(accounting={'state': state, 'elapsed_seconds': elapsed, 'exit_code': '1:0'})
-            self.assertTrue(self.old.exists())
-        (self.old / 'solver.log').write_text('Unknown solver failure')
-        self.clean()
-        self.assertTrue(self.old.exists())
-
-    def test_other_ics_completed_cases_and_changed_replacement_preserved(self):
-        request = json.loads((self.old / 'request.json').read_text())
-        request['files']['Fornax.ini'] = 'different'
-        runtime.write_json(self.old / 'request.json', request)
-        self.clean()
-        self.assertTrue(self.old.exists())
-        (self.keep / 'Fornax.ini').write_text('changed')
-        with self.assertRaises(ValueError): self.clean()
-        self.assertTrue(self.old.exists())
-
-    def test_scheduler_failure_aborts_deletion(self):
-        with patch.object(ops, 'active_directories', side_effect=subprocess.CalledProcessError(1, 'squeue')):
-            with self.assertRaises(subprocess.CalledProcessError):
-                ops.cleanup(self.root, 'Fornax7002', 'success')
-        self.assertTrue(self.old.exists())
 
     def test_check_selects_three_snapshots_and_deduplicates_submission(self):
         for n in (0, 300, 600): (self.keep / 'output' / f'snapshot_{n:03d}.hdf5').touch()

@@ -9,7 +9,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 from types import SimpleNamespace
 import uuid
@@ -118,6 +117,15 @@ def verify_completion(run):
             'scope': 'time reached; equilibrium and convergence not evaluated'}
 
 
+def discard_received_transfer(root, stage, run, request):
+    """Release only the accepted upload staging copy, never the simulation case."""
+    transfers = runtime.confined(root, root / 'workspace/transfers/isolation')
+    if stage != run and stage.parent == transfers:
+        verify_bundle(run, request)
+        verify_case(run)
+        shutil.rmtree(stage)
+
+
 def receive(root, stage, submit=False):
     stage = runtime.confined(root, stage).resolve()
     request = json.loads((stage / 'request.json').read_text())
@@ -170,6 +178,7 @@ def receive(root, stage, submit=False):
                 prepared.rename(run)
         status = json.loads((run / 'status.json').read_text())
         if status['state'] in ('submitted', 'running', 'complete', 'failed'):
+            discard_received_transfer(root, stage, run, request)
             return dict(status, directory=str(run))
         if status['state'] == 'submitting':
             raise ValueError('Previous submission outcome is uncertain; reconcile Slurm before retrying, to prevent duplicate jobs')
@@ -209,33 +218,8 @@ def receive(root, stage, submit=False):
         else:
             status.update(state='prepared', scheduler_preflight='passed')
         runtime.write_json(run / 'status.json', status)
+        discard_received_transfer(root, stage, run, request)
         return dict(status, directory=str(run))
-
-
-def cleanup_started_replacement(root, run, model):
-    command = [sys.executable, str(root / 'workflow_isolation_ops.py'), 'cleanup',
-               '--root', str(root), '--model', model, '--name', run.name]
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30)
-        report = json.loads(result.stdout)
-        runtime.write_json(run / 'cleanup.json', report)
-        return not report.get('deferred') and not report.get('skipped')
-    except (subprocess.SubprocessError, OSError, ValueError) as error:
-        runtime.write_json(run / 'cleanup.json', {'pending': True, 'error': str(error)})
-        return False  # Cleanup availability must never stop the simulation.
-
-
-def monitored_solver(command, run, log, root, model):
-    with subprocess.Popen(command, cwd=run, stdout=log, stderr=subprocess.STDOUT) as process:
-        timeout = 140
-        while True:
-            try:
-                code = process.wait(timeout=timeout)
-                if code:
-                    raise subprocess.CalledProcessError(code, command)
-                return
-            except subprocess.TimeoutExpired:
-                timeout = None if cleanup_started_replacement(root, run, model) else 30
 
 
 def run_job(root, name, model=None):
@@ -258,10 +242,7 @@ def run_job(root, name, model=None):
         for stage in ('converter', 'solver'):
             command = [arg.format(**substitutions) for arg in settings[stage]]
             with (run / (stage + '.log')).open('w') as log:
-                if stage == 'solver' and runtime.config(root).get('cleanup_failed_isolation', False):
-                    monitored_solver(command, run, log, root, model)
-                else:
-                    subprocess.run(command, cwd=run, stdout=log, stderr=subprocess.STDOUT, check=True)
+                subprocess.run(command, cwd=run, stdout=log, stderr=subprocess.STDOUT, check=True)
             if stage == 'converter' and not (run / 'Fornax.IC_000').is_file():
                 raise ValueError('Converter did not produce the expected binary IC')
         status.update(state='complete', verification=verify_completion(run))
@@ -271,8 +252,6 @@ def run_job(root, name, model=None):
         raise
     status['finished_utc'] = runtime.now()
     runtime.write_json(run / 'status.json', status)
-    if runtime.config(root).get('cleanup_failed_isolation', False):
-        cleanup_started_replacement(root, run, model)
 
 
 def prepare_legacy(root, directory, profile_name='default'):
@@ -377,18 +356,6 @@ def client_directory(root, model, name):
     return runtime.confined(base, base / 'workspace/receipts/isolation' / model / runtime.label(name))
 
 
-def cleanup_after_submission(args, status):
-    if (status['state'] in ('submitted', 'running', 'complete') and
-            runtime.config(args.root).get('cleanup_failed_isolation', False)):
-        remote = runtime.config(args.root)['remote']
-        try:
-            result = remote_exec(args, ['python3', remote['root'] + '/workflow_isolation_ops.py',
-                'cleanup', '--root', remote['root'], '--model', args.model, '--name', args.name], capture=True)
-            print('Isolation cleanup: ' + result.stdout.strip(), flush=True)
-        except subprocess.CalledProcessError as error:
-            print('Submission retained; cleanup could not be verified. Retry isolation-clean-failed: ' + str(error), flush=True)
-
-
 def pipeline_one(args):
     import workflow_models as models
     import workflow_management as management
@@ -482,7 +449,6 @@ def pipeline_one(args):
             status = json.loads(result.stdout)
             runtime.write_json(local / 'server.json', status)
             print(json.dumps(status, indent=2))
-            cleanup_after_submission(args, status)
             return 0
         # Unique staging avoids modifying a previously submitted run on retries.
         remote_stage = remote['root'] + '/workspace/transfers/isolation/' + args.model + '-' + args.name + '-' + uuid.uuid4().hex[:12]
@@ -508,7 +474,6 @@ def pipeline_one(args):
         status = json.loads(result.stdout)
         runtime.write_json(local / 'server.json', status)
         print(json.dumps(status, indent=2))
-        cleanup_after_submission(args, status)
         return 0
 
 

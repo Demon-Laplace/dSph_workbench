@@ -185,7 +185,7 @@ def main():
         p = commands.add_parser(operation)
         p.add_argument('model', nargs='+')
         p.add_argument('--name', required=operation == 'isolation-clean-failed',
-                       help='default retained/successful isolation run name')
+                       help='failed run to delete' if operation == 'isolation-clean-failed' else 'default successful isolation run name')
         if operation == 'isolation-clean-failed':
             p.add_argument('--dry-run', action='store_true')
         if operation == 'isolation-check':

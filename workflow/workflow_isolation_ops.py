@@ -41,81 +41,43 @@ def tree_bytes(path):
                for p in (Path(base) / name for name in files) if not p.is_symlink())
 
 
-def cleanup(root, model, keep, dry_run=False):
-    """Keep a verified replacement; remove only short, terminal memory/segfault failures."""
-    survivor = isolation.case_dir(root, keep, model)
-    request = json.loads((survivor / 'request.json').read_text())
-    status = json.loads((survivor / 'status.json').read_text())
-    if status['state'] not in ('submitted', 'running', 'complete'):
-        raise ValueError('Replacement must be submitted, running or complete')
-    isolation.verify_bundle(survivor, request)
-    isolation.verify_case(survivor)
-    active = active_directories()  # A failed query aborts deletion.
-    report = {'kept': str(survivor), 'removed': [], 'skipped': [], 'bytes': 0, 'dry_run': dry_run}
-    if status['state'] != 'complete':
-        settings = json.loads((survivor / 'profile.json').read_text())
+def cleanup(root, model, name, dry_run=False):
+    """Delete one explicitly named, terminal startup failure from the login node."""
+    run = isolation.case_dir(root, name, model)
+    report = {'directory': str(run), 'removed': [], 'skipped': [], 'bytes': 0, 'dry_run': dry_run}
+    # Old frozen monitors still invoke this entry point inside their allocation.
+    # Return success once so they stop retrying; never query Slurm or delete there.
+    if os.environ.get('SLURM_JOB_ID'):
+        return dict(report, mode='command-line-only', automatic_cleanup='disabled')
+    if run.is_symlink():
+        raise ValueError('Refusing to delete a linked isolation directory')
+    with (run.parent / (run.name + '.lock')).open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        request = json.loads((run / 'request.json').read_text())
+        status = json.loads((run / 'status.json').read_text())
+        if request['model'] != model or request['name'] != name or status['state'] != 'failed':
+            raise ValueError('Specify the failed run itself; active and successful runs are preserved')
+        isolation.verify_bundle(run, request)
+        isolation.verify_case(run)
+        active = active_directories()  # One query on the login node; failure aborts deletion.
+        if any(p == run.resolve() or run.resolve() in p.parents for p in active):
+            raise ValueError('An active Slurm job uses this directory')
+        settings = json.loads((run / 'profile.json').read_text())
         record = accounting(status['job_id'], settings['sbatch']['clusters'])
-        progressing = False
-        if (survivor / 'solver.log').exists():
-            with (survivor / 'solver.log').open(errors='replace') as log:
-                progressing = any(re.search(r'Sync-Point [1-9]\d*, Time:', line) for line in log)
-        if record['state'] != 'RUNNING' or record['elapsed_seconds'] < 140 or not progressing:
-            return dict(report, deferred='Waiting for 140 seconds of running and integration progress')
-    for run in sorted(survivor.parent.iterdir()):
-        if run == survivor or not run.is_dir() or run.is_symlink():
-            continue
-        runtime.confined(root, run)
-        lock = run.parent / (run.name + '.lock')
-        with lock.open('a') as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
-            try:
-                old = json.loads((run / 'request.json').read_text())
-                state = json.loads((run / 'status.json').read_text())
-                if old['model'] != model or old['files'] != request['files']:
-                    continue
-                if state['state'] != 'failed':
-                    continue
-                if any(p == run.resolve() or run.resolve() in p.parents for p in active):
-                    raise ValueError('An active Slurm job uses this directory')
-                settings = json.loads((run / 'profile.json').read_text())
-                record = accounting(state['job_id'], settings['sbatch']['clusters'])
-                if record['state'] not in ('FAILED', 'OUT_OF_MEMORY') or record['elapsed_seconds'] > 140:
-                    raise ValueError('Not a terminal startup failure within 140 seconds')
-                log = (run / 'solver.log').read_text(errors='replace') if (run / 'solver.log').exists() else ''
-                memory_failure = record['state'] == 'OUT_OF_MEMORY' or re.search(
-                    r'EXIT CODE: 11|out of memory|cannot allocate memory|failed to allocate|not enough memory', log, re.I)
-                if not memory_failure:
-                    raise ValueError('No memory/segfault failure evidence')
-                isolation.verify_bundle(run, old)
-                size = tree_bytes(run)
-                tombstone = runtime.confined(root, root / 'workspace/receipts/isolation-cleaned' / model / (run.name + '.json'))
-                if not dry_run:
-                    tombstone.parent.mkdir(parents=True, exist_ok=True)
-                    runtime.write_json(tombstone, {'removed_utc': runtime.now(), 'request': old,
-                        'status': state, 'accounting': record, 'replacement': str(survivor), 'bytes': size})
-                    shutil.rmtree(run)
-                report['removed'].append(str(run)); report['bytes'] += size
-            except (ValueError, KeyError, OSError) as error:
-                report['skipped'].append({'directory': str(run), 'reason': str(error)})
-    # Completed uploads duplicate the exact IC already verified in the retained case.
-    transfers = runtime.confined(root, root / 'workspace/transfers/isolation')
-    if transfers.exists():
-        for stage in transfers.iterdir():
-            if not stage.is_dir() or stage.is_symlink() or not (stage / 'request.json').is_file():
-                continue
-            old = json.loads((stage / 'request.json').read_text())
-            if old.get('model') != model or old.get('files') != request['files']:
-                continue
-            # Never remove a stage for a different pending/prepared attempt.
-            target = isolation.case_dir(root, old['name'], model)
-            tombstone = root / 'workspace/receipts/isolation-cleaned' / model / (old['name'] + '.json')
-            if target != survivor and str(target) not in report['removed'] and not tombstone.is_file():
-                continue
-            isolation.verify_bundle(stage, old)
-            size = tree_bytes(stage)
-            if not dry_run:
-                shutil.rmtree(stage)
-            report['removed'].append(str(stage)); report['bytes'] += size
+        if record['state'] not in ('FAILED', 'OUT_OF_MEMORY') or record['elapsed_seconds'] > 140:
+            raise ValueError('Not a terminal startup failure within 140 seconds')
+        log = (run / 'solver.log').read_text(errors='replace') if (run / 'solver.log').exists() else ''
+        if record['state'] != 'OUT_OF_MEMORY' and not re.search(
+                r'EXIT CODE: 11|out of memory|cannot allocate memory|failed to allocate|not enough memory', log, re.I):
+            raise ValueError('No memory/segfault startup failure evidence')
+        report['bytes'] = tree_bytes(run)
+        report['removed'] = [str(run)]
+        if not dry_run:
+            receipt = runtime.confined(root, root / 'workspace/receipts/isolation-cleaned' / model / (name + '.json'))
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_json(receipt, {'removed_utc': runtime.now(), 'request': request,
+                               'status': status, 'accounting': record, 'bytes': report['bytes']})
+            shutil.rmtree(run)
     return report
 
 

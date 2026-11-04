@@ -66,6 +66,33 @@ class IsolationTests(unittest.TestCase):
         self.assertIn('ResubmitOn 0', params)
         self.assertEqual((self.root / 'template/GZWJL.PARAM').read_text(), self.parameters)
 
+    def test_accepted_upload_is_released_without_removing_simulation_inputs(self):
+        transfers = self.root / 'workspace/transfers/isolation'
+        transfers.mkdir(parents=True)
+        stage = transfers / 'upload'
+        self.stage.rename(stage)
+        self.stage = stage
+        self.receive(submit=True)
+        self.assertFalse(stage.exists())
+        isolation.verify_case(self.run)
+        isolation.verify_bundle(self.run, self.request)
+        with patch.object(isolation.subprocess, 'run') as sbatch:
+            result = isolation.receive(self.root, self.run, submit=True)
+        self.assertEqual(result['job_id'], '12345')
+        sbatch.assert_not_called()
+        self.assertTrue(self.run.exists())
+
+    def test_obsolete_cleanup_setting_does_not_start_background_commands(self):
+        config = runtime.config(self.root)
+        config['cleanup_failed_isolation'] = True
+        runtime.write_json(self.root / 'workflow.json', config)
+        self.receive(submit=True)
+        with patch.dict(os.environ, SLURM_JOB_ID='12345'), \
+             patch.object(isolation, 'verify_completion', return_value={'final_snapshot_time': 1}):
+            isolation.run_job(self.root, self.run.name)
+        self.assertEqual(json.loads((self.run / 'status.json').read_text())['state'], 'complete')
+        self.assertFalse((self.run / 'cleanup.json').exists())
+
     def test_repeat_submission_returns_original_job_without_sbatch(self):
         result, _ = self.receive(submit=True)
         self.assertEqual(result['job_id'], '12345')
@@ -157,7 +184,7 @@ class IsolationTests(unittest.TestCase):
             self.assertEqual(isolation.pipeline(args), 0)
             self.assertEqual(isolation.pipeline(args), 0)
         self.assertEqual((self.root / 'sbatch-count').read_text(), '1')
-        self.assertEqual(len(list((self.root / 'workspace/transfers/isolation').iterdir())), 1)
+        self.assertEqual(list((self.root / 'workspace/transfers/isolation').iterdir()), [])
         receipt = json.loads((local / 'workspace/receipts/isolation/Fornax7003/transport/server.json').read_text())
         self.assertEqual(receipt['job_id'], '45678')
         self.assertEqual(list((local / 'Fornax7003/isolation').iterdir()), [])
