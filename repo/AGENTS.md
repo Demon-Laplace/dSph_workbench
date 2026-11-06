@@ -7,6 +7,13 @@ server, including temporary files, must stay inside the simulation data root.
 Never alter model snapshots, particle initial conditions, or model-owned images
 and videos as part of a code change.
 
+Before implementing or running an internal-orientation search, read the
+[3D orientation search and validation principles](orbit_calibration_v1/README.md#内部姿态搜索与检查原则).
+Use broad SO(3) coverage with local refinement, retain per-star 3D depth in
+projection, compare morphology beyond PA, and recheck projected kinematics.
+Distinguish snapshot previews, initial-condition candidates and re-evolved
+validation; choose reference data explicitly for each task.
+
 ## Required GitHub synchronization after a code change (main only)
 
 The workspace owner explicitly authorizes automatic Git commits and pushes of
