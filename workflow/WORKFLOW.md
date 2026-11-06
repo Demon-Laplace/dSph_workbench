@@ -1,3 +1,62 @@
+## 同模型的轨道入口（2026-11-06）
+
+同一模型的不同轨道使用模型目录下的平铺入口，不再靠全盘查找视频或记忆深层
+`analysis-contexts/.../workspace/analysis/...` 路径。入口由机器配置 `workflow.json`
+的 `orbit_views` 显式登记，真实输入、快照和冻结任务保留原路径。
+
+```text
+Fornax5028/
+  orbit_original/
+  orbit_Li132/
+  orbit_anchor139p4/
+  orbit_orbitcheck_validation/     # 单独标记验证轨道
+```
+
+每个入口按需包含 `inputs/`、`output`、`analysis/`、`videos/`、`logs/`、`receipts/`。
+`output` 直接指向该轨道的求解器输出；其余类别使用明确命名的链接。分析任务的链接
+直达包含 manifest/status 的任务根，视频链接直达 MP4。本地只有视频时只登记视频和
+对应回执，不创建虚假的快照或输入目录。顶层已下载的视频继续可用，不复制一份到入口。
+
+```bash
+python3 workflow.py orbits Fornax5028              # 只读列出轨道和明确来源
+python3 workflow.py orbits Fornax5028 --name Li132
+python3 workflow.py orbits Fornax5028 --refresh    # 核验后创建/补充入口，不提交作业
+python3 workflow.py remote orbits Fornax5028
+```
+
+配置中的路径相对于该机器的工作区根；每个轨道的 `source` 是真实模拟目录，
+`entries` 是入口相对路径与真实路径的映射，例如：
+
+```json
+{
+  "orbit_views": {
+    "Fornax9001": {
+      "trial": {
+        "source": "Fornax9001/trial/Fornax9001",
+        "description": "独立轨道试验",
+        "kind": "validation",
+        "entries": {
+          "inputs/GZWJL.PARAM": "Fornax9001/trial/Fornax9001/GZWJL.PARAM",
+          "output": "Fornax9001/trial/Fornax9001/output",
+          "analysis/preview": "workspace/analysis/trial-preview"
+        }
+      }
+    }
+  }
+}
+```
+
+`analysis/preview` 的 manifest 必须同时匹配模型和实际轨道 `source`，视频必须来自该
+模拟根或已登记且身份一致的分析任务。所有目标须在工作区内。只含本地成果的入口可
+省略 `source`，用 `remote_source` 记录远端真实来源。不要把不同轨道的同名 MP4、
+CSV、cohort 或快照号混为一组；视频范围以该视频的原始回执/manifest 为准，不推断
+它已覆盖后来新增的快照。
+
+新增轨道或分析后先更新显式登记，再用 `--refresh` 补充入口。已有入口冲突、来源
+变更或删除登记项会报错，不能静默改指到另一条轨道；改用新轨道名。入口只用于查看，
+不在链接指向的冻结参数、脚本或快照上改写。这个命令不创建 IC、不执行分析、不提交
+Slurm，也不自动下载文件。
+
 ## 本地归并、服务器分离（2026-10-13）
 
 本地新 IC、隔离运行回执和正式模拟按同一模型 ID 归属。以下本地布局取代旧 generated/ 和

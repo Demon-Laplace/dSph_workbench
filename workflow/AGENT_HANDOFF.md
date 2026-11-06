@@ -3,6 +3,15 @@
 本文件供没有对话上下文的智能体使用。先读本文件，再读相关代码；不要重新设计已稳定的目录结构。
 最后更新：2026-10-21。示例中的运行状态是历史事实，执行前必须重新查询。
 
+2026-11-06 补充：同模型不同轨道先用 `python3 workflow.py orbits MODEL`（服务器加
+`remote`）查看显式登记的来源。`MODEL/orbit_<name>/` 提供平铺入口，输入、输出、
+分析、视频、日志、回执分开；具体规则见 [工作流说明](WORKFLOW.md)。`--refresh`
+只核验并建立导航链接，不搬动冻结文件或提交任务。新轨道及新分析须补登记到机器
+`workflow.json` 的 `orbit_views`，避免继续通过深层目录猜测结果身份。
+Fornax5028 的三份轨道视频分别为 original、Li132、anchor139p4；orbitcheck 是另一个
+验证运行。Li132 的已有视频位于 `workspace/analysis-contexts/` 的独立任务中，范围
+000–328，不在模拟本身的 output/analysis 下。TAN 迁移验证的单帧短片不能当作轨道视频。
+
 旧太阳观测代码的修正记录见 [工作日志](WORK_LOG_20261020_OBSERVER.md)；
 用户随后撤销轨道程序“仅保留本地”的范围限制，更新程序、配置、测试和说明现纳入 GitHub main；
 接手先读 [轨道程序说明](../repo/orbit_calibration_v1/README.md) 与

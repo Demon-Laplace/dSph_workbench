@@ -87,6 +87,103 @@ def organize(args):
     return 0
 
 
+def orbit_views(args):
+    """List or refresh explicit per-orbit navigation, leaving frozen paths intact."""
+    root = args.root.resolve()
+    model = runtime.label(args.model)
+    directory = runtime.model_directory(root, model)
+    if not directory.is_dir():
+        raise ValueError('Model directory is missing: ' + str(directory))
+    registry = runtime.config(root).get('orbit_views', {}).get(model, {})
+    if not registry:
+        raise ValueError('No orbit_views registered for ' + model)
+    names = [args.name] if args.name else list(registry)
+    plans = []
+    for name in names:
+        runtime.label(name)
+        spec = registry[name]
+        view = directory / ('orbit_' + name)
+        runtime.confined(root, view)
+        if view.is_symlink() or (view.exists() and not view.is_dir()):
+            raise ValueError('Orbit entry must be a real navigation directory: ' + str(view))
+        metadata = view / 'orbit.json'
+        old = None
+        if view.exists():
+            if metadata.is_symlink() or not metadata.is_file():
+                raise ValueError('Refusing to change an unmanaged orbit directory: ' + str(view))
+            old = json.loads(metadata.read_text())
+            if (old.get('schema_id'), old.get('model'), old.get('orbit')) != ('orbit_navigation_v1', model, name):
+                raise ValueError('Orbit navigation identity mismatch: ' + str(view))
+        source = spec.get('source')
+        if source is not None:
+            source = runtime.confined(root, root / source).resolve()
+            if not source.is_dir() or not source.is_relative_to(directory.resolve()) or source.name != model:
+                raise ValueError('Orbit source must belong to the declared model: ' + str(source))
+        entries = []
+        analyses = []
+        for relative, value in spec.get('entries', {}).items():
+            role, separator, leaf = relative.partition('/')
+            if role == 'output':
+                if separator or source is None:
+                    raise ValueError('output needs one explicit simulation source')
+            elif role in ('inputs', 'analysis', 'videos', 'logs', 'receipts') and separator:
+                runtime.label(leaf)
+            else:
+                raise ValueError('Invalid orbit entry role: ' + relative)
+            target = runtime.confined(root, root / value).resolve()
+            if not target.exists():
+                raise ValueError('Orbit entry source is missing: ' + str(target))
+            if role == 'output' and target != (source / 'output').resolve():
+                raise ValueError('Output belongs to a different orbit: ' + str(target))
+            if role == 'analysis':
+                if source is None:
+                    raise ValueError('Analysis needs an explicit simulation source')
+                manifest = json.loads((target / 'manifest.json').read_text())
+                if manifest.get('model') != model or Path(manifest['source']).resolve() != source:
+                    raise ValueError('Analysis belongs to a different orbit: ' + str(target))
+                analyses.append(target)
+            if role == 'videos' and (target.suffix.lower() != '.mp4' or not target.is_file()):
+                raise ValueError('Video entry must reference an existing MP4')
+            entry = view / relative
+            parent = entry.parent
+            while parent != directory:
+                if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+                    raise ValueError('Orbit navigation parents must be real directories: ' + str(parent))
+                parent = parent.parent
+            if entry.is_symlink():
+                if entry.resolve() != target:
+                    raise ValueError('Existing orbit link points elsewhere: ' + str(entry))
+            elif entry.exists():
+                raise ValueError('Refusing to replace an existing orbit entry: ' + str(entry))
+            entries.append((relative, entry, target))
+        if not entries:
+            raise ValueError('An orbit view needs explicit entries: ' + name)
+        for relative, _, target in entries:
+            if relative.startswith('videos/') and source is not None:
+                if target.parent != source and not any(target.is_relative_to(run) for run in analyses):
+                    raise ValueError('Video is outside this orbit and its registered analyses: ' + str(target))
+        record = {'schema_id': 'orbit_navigation_v1', 'model': model, 'orbit': name,
+                  'description': spec.get('description', name), 'kind': spec.get('kind', 'production'),
+                  'source': str(source.relative_to(root)) if source is not None else None,
+                  'remote_source': spec.get('remote_source'),
+                  'entries': {relative: str(target.relative_to(root)) for relative, _, target in entries}}
+        if old is not None and (old.get('source') != record['source'] or any(
+                record['entries'].get(key) != value for key, value in old.get('entries', {}).items())):
+            raise ValueError('Existing orbit identity or links changed; use a new orbit name: ' + name)
+        plans.append((view, record, entries))
+    # Validate every selected orbit before creating any navigation entries.
+    for view, record, entries in plans:
+        if args.refresh:
+            view.mkdir(exist_ok=True)
+            for _, entry, target in entries:
+                link(root, entry, target)
+            runtime.write_json(view / 'orbit.json', record)
+        print(f"{record['orbit']} [{record['kind']}] {record['description']}\n  {view}")
+        for relative, _, target in entries:
+            print(f'  {relative} -> {target}')
+    return 0
+
+
 def ssh_config(args):
     remote = runtime.config(args.root)['remote']
     command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
