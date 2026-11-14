@@ -133,6 +133,20 @@ def runComponent(comp,potential,legacy):
         comp.nbodymodel=particles
     comp.weights=weights;comp.densitydata=density;comp.kinemdata=result[1];comp.innerkinemdata=result[2]
 
+def build_components(model):
+    """Construct and export components in the caller's existing build directory."""
+    import agama
+    for name,comp in model.components.items():
+        print('Running '+name,flush=True)
+        try:
+            runComponent(comp,model.potential,model.original_solver)
+        finally:
+            if hasattr(comp,'two_beta_validation'):
+                Path('model_'+name+'_two_beta_validation.json').write_text(json.dumps(comp.two_beta_validation,indent=2))
+        if hasattr(comp,'nbody'):agama.writeSnapshot('model_'+name+'.nbody',comp.nbodymodel)
+        values={k:getattr(comp,k) for k in ('ic','inttime','weights','densitydata','kinemdata','innerkinemdata') if hasattr(comp,k)}
+        np.savez_compressed('model_'+name+'.data',**values)
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('ini',type=Path)
     parser.add_argument('--base-solver',type=Path);parser.add_argument('--output',required=True,type=Path)
@@ -157,15 +171,7 @@ def main():
         receipt.update(original_solver=str(original_path),
             original_solver_sha256=hashlib.sha256(original_path.read_bytes()).hexdigest())
         Path('two_beta_build.json').write_text(json.dumps(receipt,indent=2))
-        for name,comp in model.components.items():
-            try:
-                runComponent(comp,model.potential,model.original_solver)
-            finally:
-                if hasattr(comp,'two_beta_validation'):
-                    Path('model_'+name+'_two_beta_validation.json').write_text(json.dumps(comp.two_beta_validation,indent=2))
-            if hasattr(comp,'nbody'):agama.writeSnapshot('model_'+name+'.nbody',comp.nbodymodel)
-            values={k:getattr(comp,k) for k in ('ic','inttime','weights','densitydata','kinemdata','innerkinemdata') if hasattr(comp,k)}
-            np.savez_compressed('model_'+name+'.data',**values)
+        build_components(model)
     except Exception as error:
         receipt.update(state='failed',error=str(error))
         Path('two_beta_build.json').write_text(json.dumps(receipt,indent=2))

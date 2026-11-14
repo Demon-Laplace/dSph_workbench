@@ -59,7 +59,9 @@ def main():
             components.append((kind, section.lower(), count))
     if not components:
         parser.error('No particle components configured')
-    solver = Path(__file__).with_name('schwarzschild.py')
+    two_beta = any(config.get(section, 'beta', fallback='').strip().lower() == 'two_zone'
+                   for section in config.sections() if section.lower().startswith('component_'))
+    solver = Path(__file__).with_name('schwarzschild_two_beta.py' if two_beta else 'schwarzschild.py')
     output.mkdir(parents=True)
     params = output / 'parameters.ini'
     shutil.copy2(source, params)
@@ -68,12 +70,20 @@ def main():
                 'python': sys.executable, 'source_ini': str(source),
                 'ini_sha256': hashlib.sha256(params.read_bytes()).hexdigest(),
                 'solver_sha256': hashlib.sha256(solver.read_bytes()).hexdigest()}
+    if two_beta:
+        base_solver = solver.with_name('schwarzschild.py')
+        manifest['base_solver_sha256'] = hashlib.sha256(base_solver.read_bytes()).hexdigest()
     receipt = output / 'build.json'
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     env = dict(os.environ, OMP_NUM_THREADS=str(args.threads), OPENBLAS_NUM_THREADS='1')
     worker = ('import sys,runpy,agama,numpy; '
               'numpy.random.seed(int(sys.argv[3])); agama.setRandomSeed(int(sys.argv[3])); '
-              'sys.argv=sys.argv[1:3]; runpy.run_path(sys.argv[0],run_name="__main__")')
+              'sys.argv=sys.argv[1:3]; ')
+    if two_beta:
+        worker += ('reader=runpy.run_path(sys.argv[0]); '
+                   'reader["build_components"](reader["createModel"](sys.argv[1]))')
+    else:
+        worker += 'runpy.run_path(sys.argv[0],run_name="__main__")'
     try:
         with (output / 'build.log').open('w') as log:
             subprocess.run([sys.executable, '-c', worker, str(solver), str(params), str(args.seed)],

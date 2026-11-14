@@ -65,7 +65,16 @@ beta_outer=0.8
 
 ## 使用与当前状态
 
-原 `schwarzschild.py` 只支持单个标量 β。本配置需使用配套的
+原 `schwarzschild.py` 只支持单个标量 β。统一构建入口现按 `beta=two_zone`
+自动选择双区求解器，可从仓库根目录运行：
+
+```bash
+python model_tool.py 5029
+```
+
+构建继续使用独立新目录、冻结参数、粒子导出检查和成功后的 IC 总表登记；
+任一双区约束检查失败都会使构建失败，不登记为成功。原失败目录保留。
+如需直接运行，使用配套的
 [schwarzschild_two_beta.py](../local_tools/ic_generation/schwarzschild_two_beta.py)，
 以及其同目录的原求解器。在装有 NumPy、支持轨道权重优化的 AGAMA 环境中，
 从仓库根目录运行：
@@ -77,8 +86,8 @@ python local_tools/ic_generation/schwarzschild_two_beta.py \
   --seed 42
 ```
 
-输出目录必须尚不存在；应位于模拟工作区。这里直接使用双区读取器，
-`build_ic.py` 尚未集成本配置的双区入口。`beta=two_zone` 会使旧单 β 读取器明确报错，
+输出目录必须尚不存在；应位于模拟工作区。这里直接使用双区读取器。
+`beta=two_zone` 会使旧单 β 读取器明确报错，
 避免静默漏掉外围约束。兼容读取器检查非负权重、总质量、密度残差及两区逐基函数 β；
 未达标则退出，部分输出不能视为完整成功的 IC。
 
