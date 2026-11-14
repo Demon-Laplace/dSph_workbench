@@ -45,7 +45,7 @@ def prepare_config(path,agama_module):
                     beta=float(value['beta_'+region]);radius=grid(value['kinemgrid_'+region],agama_module)
                     if not np.isfinite(beta) or beta>=1:raise ValueError('beta must be finite and below 1.')
                     entry.append(dict(region=region,beta=beta,grid=radius,
-                        degree=int(value.get('kinemdegree','2')),normalize=(region=='inner')))
+                        degree=int(value.get('kinemdegree','2')),normalize=True))
                 if entry[1]['grid'][-1]>=entry[0]['grid'][0]:
                     raise ValueError('Inner and outer supports must leave a non-overlapping transition.')
                 specs[section.lower()]=entry

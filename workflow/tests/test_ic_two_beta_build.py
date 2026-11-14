@@ -22,6 +22,22 @@ def load(name, filename):
 
 
 class TwoBetaBuildTests(unittest.TestCase):
+    def test_both_beta_regions_have_unit_independent_constraint_scales(self):
+        reader = load('two_beta_scaling', 'schwarzschild_two_beta.py')
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'parameters.ini'
+            source.write_text('[Component_stellar]\nbeta=two_zone\n'
+                'beta_inner=-0.2\nkinemgrid_inner=0,.1,.2,.35,.5\n'
+                'beta_outer=0.8\nkinemgrid_outer=1,1.4,2,3\n')
+            _, specs = reader.prepare_config(source, SimpleNamespace())
+        matrix = np.array([[2., 3., 1., 5.], [4., 1., 2., 3.]])
+        for region in specs['component_stellar']:
+            self.assertTrue(region['normalize'])
+            args = (.006, region['beta'], region['normalize'])
+            reference = reader.moment_constraint(matrix, *args)
+            rescaled = reader.moment_constraint(matrix * 1e-9, *args)
+            np.testing.assert_allclose(reference, rescaled, rtol=1e-14)
+
     def test_normal_builder_runs_dual_reader_and_exports_numbered_ic(self):
         self.check_builder(fail=False)
 
