@@ -1,8 +1,12 @@
-# Fornax5028：中心 −0.2、外围 +0.8 的双区 β 候选
+# Fornax5029：中心 −0.2、外围 +0.8 的双区 β 候选
 
-[完整 INI](IC_Fornax5028_betaInner_m02_betaOuter_p08.ini) 基于原始
+[完整 INI](IC_Fornax5029.ini) 基于原始
 [IC_Fornax5028.ini](IC_Fornax5028.ini)，保留恒星与气体结构、质量及粒子数，
 将恒星运动学改为两区约束。它是**尚未实际运行构模的参数候选**。
+
+本模型正式编号为 **Fornax5029**；原发布名
+`Fornax5028_betaInner_m02_betaOuter_p08` 仅作为来源记录。后续新模型在50开头的
+编号序列中按当前最大已用编号顺延，下一号为 **Fornax5030**。
 
 ## 密度与数值参数
 
@@ -68,8 +72,8 @@ beta_outer=0.8
 
 ```bash
 python local_tools/ic_generation/schwarzschild_two_beta.py \
-  IniFile/IC_Fornax5028_betaInner_m02_betaOuter_p08.ini \
-  --output /path/to/simulation-workspace/Fornax5028/ic/beta_m02_p08 \
+  IniFile/IC_Fornax5029.ini \
+  --output /path/to/simulation-workspace/Fornax5029/ic/beta_m02_p08 \
   --seed 42
 ```
 

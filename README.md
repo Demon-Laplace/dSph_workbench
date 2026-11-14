@@ -38,7 +38,7 @@ Server isolation stays separate under `isoFornax/<model>/runs/<run>/`;
 every successful build automatically records and pushes its catalogue row.
 See the workflow guide for layout, batch commands and synchronization retries.
 
-[Fornax5028 dual-beta candidate](IniFile/IC_Fornax5028_betaInner_m02_betaOuter_p08.md)
+[Fornax5029 dual-beta candidate](IniFile/IC_Fornax5029.md)
 summarizes the complete original-structure INI with inner beta=-0.2 and outer
 beta=+0.8, its dedicated reader, and the checks performed. It is a parameter-only
 candidate; no particle build, equilibrium, isolation, or orbital evolution has
