@@ -37,3 +37,9 @@ New particle exports use the model ID (e.g. `Fornax7003.ini`) with a local
 Server isolation stays separate under `isoFornax/<model>/runs/<run>/`;
 every successful build automatically records and pushes its catalogue row.
 See the workflow guide for layout, batch commands and synchronization retries.
+
+[Fornax5028 dual-beta candidate](IniFile/IC_Fornax5028_betaInner_m02_betaOuter_p08.md)
+summarizes the complete original-structure INI with inner beta=-0.2 and outer
+beta=+0.8, its dedicated reader, and the checks performed. It is a parameter-only
+candidate; no particle build, equilibrium, isolation, or orbital evolution has
+been validated for it.
