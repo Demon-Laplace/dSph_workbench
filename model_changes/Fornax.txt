@@ -1,0 +1,7 @@
+记录: FORNAX-NOTES-20261115
+日期: 2026-11-15
+对象: /travail/xhuang/Fornax 模板及上级模型通用约定
+原因: 每次模型变更需要简洁备注，并能从 GitHub 查看同一修改汇总。
+变更: 新建 Fornax/AGENTS.md；在上级 AGENTS.md 和仓库入口中要求各模型追加 MODEL_CHANGES.txt，并同步 model_changes/ 镜像及 SIMULATION_HISTORY.md。
+验证: 服务器两份 AGENTS 与 GitHub main 对应文件逐字节一致。仅更新说明，不改变已有模拟、输入或启动脚本。
+依据: workflow/AGENTS.Fornax.md；workflow/AGENTS.server.md；部署版本 267f6b816b171b6b9ea483c003ae73cefcb4e200。
