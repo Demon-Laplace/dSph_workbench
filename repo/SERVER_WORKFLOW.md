@@ -129,7 +129,8 @@ node allocation and process the runs sequentially. The first snapshot is checked
 with two chunk sizes before the full batch; every frame checks particle/mass,
 phase and temperature-histogram conservation. Outputs never delete sources.
 
-The archive uses the existing TP2/4 shrinking stellar centre, TP2/3/4 R<5 kpc
+The archive first unwraps stellar coordinates about a mass-weighted periodic
+circular reference, then uses the existing TP2/4 shrinking centre and TP2/3/4 R<5 kpc
 bulk, current legacy physical-unit convention and `zim.unitconversion`.
 Positions use the nearest periodic image. Fixed radial and temperature edges,
 per-type mass profiles, mass second/outer quadrupole moments, angular momentum,

@@ -85,6 +85,20 @@ def units(parameters):
                 convention='current_production_legacy_units_v1')
 
 
+def unwrap_stellar_positions(positions, weights, selected, box):
+    """Choose a periodic reference without averaging stars across opposite faces."""
+    positions=np.asarray(positions,dtype=float);weights=np.asarray(weights,dtype=float)
+    phase=np.exp((2j*np.pi/box)*positions[selected])
+    circular=np.average(phase,axis=0,weights=weights[selected])
+    concentration=np.abs(circular)
+    if np.any(concentration<1.e-6):
+        raise ValueError('Stellar periodic reference is unconstrained')
+    reference=(np.angle(circular)%(2*np.pi))*box/(2*np.pi)
+    delta=positions-reference
+    delta-=box*np.rint(delta/box)
+    return reference+delta,reference,concentration
+
+
 def host_frame(path):
     """Use the existing TP2/4 shrinking centre and TP2/3/4 R5 bulk exactly."""
     from basefunc import GalaxySimulation
@@ -95,8 +109,19 @@ def host_frame(path):
     simulation = GalaxySimulation(str(path.parent), int(match[1]))
     with contextlib.redirect_stdout(io.StringIO()):
         simulation.load_snapshot(dftype=1, box=False, gas_fields=(), star_fields=(), particle_types=(2,3,4))
+        with h5py.File(path,'r') as snapshot:box=float(snapshot['Header'].attrs['BoxSize'])
+        df=simulation.df
+        unwrapped,reference,concentration=unwrap_stellar_positions(
+            df[['x','y','z']].to_numpy(),df['m'].to_numpy(),
+            np.isin(df['tp'].to_numpy(),(2,4)),box)
+        for axis,name in enumerate(('x','y','z')):df[name]=unwrapped[:,axis]
         simulation.center_on_MW()
-    return simulation.observer_host_state
+    frame=simulation.observer_host_state
+    frame['unwrapped_host_center_input_code']=frame['host_center_input_code']
+    frame['host_center_input_code']=(np.asarray(frame['host_center_input_code'])%box).tolist()
+    frame.update(periodic_reference_input_code=reference.tolist(),periodic_concentration=concentration.tolist(),
+                 centering_method='periodic_circular_unwrap_then_existing_TP24_shrink_R5_bulk')
+    return frame
 
 
 def temperature(internal_energy, electrons):
@@ -229,6 +254,7 @@ def reduce_snapshot(path, output, parameter_values, chunk_size=262144, frame=Non
         if name!='temperature_edges_K' and not np.isfinite(value).all():
             raise ValueError('Non-finite additive archive field: '+name)
     metadata = dict(schema=SCHEMA,source=str(path),source_fingerprint=before,header=header_saved,
+                    source_module_sha256=sha(Path(__file__)),
                     scale=scale,host_frame=frame,phase_labels=PHASES,gas_sum_fields=GAS_FIELDS,
                     tensor_components=MOMENTS,gas_selection='all PartType0; no guessed source membership',
                     thermodynamics='zim.unitconversion; X_H=0.76; gamma=5/3; hot split 20000 K',
@@ -257,7 +283,22 @@ def worker(task):
                 return dict(path=str(destination),sha256=sha(destination),time_code=float(saved['time_code']),
                             time_Gyr=float(saved['time_Gyr']),mass_balance_passed=True)
         raise ValueError('An existing archive has a different source identity')
-    return reduce_snapshot(source,destination,parameter_values)
+    try:
+        return reduce_snapshot(source,destination,parameter_values)
+    except Exception as error:
+        raise RuntimeError(str(source)+': '+str(error)) from error
+
+
+def check_reusable_frame(metadata):
+    source=metadata['source'];os.chdir(Path(source).parent.parent)
+    if fingerprint(source)!=metadata['source_fingerprint']:
+        raise ValueError('Reusable archive source changed: '+source)
+    frame=host_frame(source);old=metadata['host_frame'];box=float(metadata['header']['BoxSize'])
+    delta=np.asarray(frame['host_center_input_code'])-old['host_center_input_code']
+    delta-=box*np.rint(delta/box)
+    dr=float(np.max(np.abs(delta)))
+    dv=float(np.max(np.abs(np.asarray(frame['host_bulk_input_code'])-old['host_bulk_input_code'])))
+    return dict(source=source,center_difference_code=dr,bulk_difference_code=dv,equivalent=dr<1.e-8 and dv<1.e-8)
 
 
 def combine_run(run,outputs,destination):
@@ -353,8 +394,20 @@ def main():
         write_json(root/'representative-validation.json',dict(passed=True,source=source,chunk_sizes=[131071,262144],
                    additive_arrays_match=True,source_field_hashes_match=True))
         print('REPRESENTATIVE_VALIDATION_PASSED',source,flush=True)
-    completed=[]
-    for run in plan['runs']:
+    completed=[];pending=list(plan['runs'])
+    for reuse in plan.get('reuse_completed_runs',[]):
+        manifest=json.loads(Path(reuse['manifest']).read_text())
+        with ProcessPoolExecutor(max_workers=args.workers) as pool:
+            checks=list(pool.map(check_reusable_frame,manifest['snapshot_metadata']))
+        passed=all(row['equivalent'] for row in checks)
+        write_json(root/(reuse['result']['run']+'_reuse-validation.json'),dict(passed=passed,checks=checks))
+        if passed:
+            completed.append(dict(reuse['result'],reused_after_periodic_center_check=True))
+            print('REUSED_COMPLETE_RUN',reuse['result']['run'],len(checks),flush=True)
+        else:
+            pending.insert(0,reuse['original_run'])
+            print('CHANGED_CENTER_REQUIRES_REDUCTION',reuse['result']['run'],flush=True)
+    for run in pending:
         started=time.monotonic();tasks=[]
         for source in run['snapshots']:
             target=root/'frames'/run['key']/(Path(source['path']).stem+'.npz')

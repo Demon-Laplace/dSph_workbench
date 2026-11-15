@@ -77,5 +77,15 @@ class ShellArchiveTest(unittest.TestCase):
         self.assertEqual(rounded['recorded_unit_values']['UnitLength_in_cm'],3.08568e21)
         with self.assertRaises(ValueError):archive.units(dict(self.parameters,UnitLength_in_cm='3.085679e21'))
 
+    def test_stellar_reference_across_periodic_faces(self):
+        positions=np.array([[.2,.1,99.8],[99.8,99.9,.2]])
+        unwrapped,reference,concentration=archive.unwrap_stellar_positions(
+            positions,np.ones(2),np.ones(2,dtype=bool),100.)
+        center=unwrapped.mean(axis=0)
+        delta=unwrapped-center
+        self.assertTrue(np.all(np.linalg.norm(delta,axis=1)<1.))
+        np.testing.assert_allclose(np.mod(center+50,100)-50,0.,atol=1.e-12)
+        self.assertTrue(np.all(concentration>.99))
+
 
 if __name__=='__main__':unittest.main()
