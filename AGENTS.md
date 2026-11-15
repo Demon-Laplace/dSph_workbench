@@ -47,3 +47,12 @@ Integrate monitoring into the existing batch allocation as a sleeping child,
 without an extra Slurm job or reserved CPU. Use a generated wrapper, preserving
 user launchers. Queue time uses no monitor node resources; local disconnection
 must not stop server detection or simulation.
+ 
+Each actual model change must also append a short UTF-8 MODEL_CHANGES.txt in
+that model's server directory and synchronize the complete note to
+model_changes/<model>.txt (isolation uses model_changes/isolation/<model>.txt).
+Append its record ID and mirror link to SIMULATION_HISTORY.md in the same task.
+This includes analysis/plot changes and run lifecycle/cleanup; group related
+changes from one task, and omit read-only queries. Preserve history, provenance
+and validation limits. Do not claim synchronization until both copies are read
+back consistently. See workflow/AGENTS.server.md and workflow/AGENTS.Fornax.md.
