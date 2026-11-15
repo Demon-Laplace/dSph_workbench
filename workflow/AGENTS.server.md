@@ -97,3 +97,27 @@ wrapper and monitor sources instead. Local report reception is independent.
 
 New agents should first read workspace/code/github-sync/workflow/AGENT_HANDOFF.md
 for the complete local/server/GitHub workflow and the user-approved boundaries.
+
+## 模型变更备注与 GitHub 汇总（2026-11-15）
+
+每次实际变更都要在对应模型根目录的 `MODEL_CHANGES.txt` 追加简洁的 UTF-8 备注，
+并在同一轮工作中同步到 GitHub `Demon-Laplace/dSph_workbench` 的
+`model_changes/<模型名>.txt` 和 `SIMULATION_HISTORY.md`。
+这包括 IC、轨道、姿态、物理或数值参数、程序、分析结果、图件及运行的启动、
+停止、重试、清理；同一任务的相关改动合为一条，纯读取或状态查询不另记。
+Fornax5028 等正式模型的备注放在 `/travail/xhuang/<模型名>/MODEL_CHANGES.txt`；
+孤立模型放在 `/travail/xhuang/isoFornax/<模型名>/MODEL_CHANGES.txt`，
+并使用 `model_changes/isolation/<模型名>.txt` 镜像，避免同编号混淆。
+共用程序或模板变更在所属目录留同名 TXT；影响具体模型时在模型备注中引用。
+
+每条只需：唯一记录号、日期、模型/轨道/运行名、前序来源、改动原因与实际内容、
+验证到哪一步，以及必要的回执路径。使用清楚的名称，不凭模型编号推断来源。
+区分候选、已写入 IC、已提交、启动通过与完整科学验证；图形预测不能写成演化结果。
+删除前先保存必要的小型结构化结果、来源、参数与校验回执，核实无活动作业使用目标，
+只清理用户明确授权的范围。备注记录保留位置和实际删除范围。
+
+GitHub 汇总保留既有条目，并追加同一记录号、简短内容及 TXT 镜像链接；
+镜像保留模型 TXT 的完整备注。修正历史时追加更正，不抹去旧记录。
+不上传粒子数据、完整日志、缓存或凭据。遵守既有 Git 状态检查和并发更新保护，
+不得覆盖他人改动或强推；同步失败时保留本地备注并明确标记“待同步”，
+恢复后补齐，不得声称已经同步。只在两端回读一致后报告同步完成。
