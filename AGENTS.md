@@ -6,6 +6,13 @@ boundary, startup-retry cleanup policy, density analysis and publication steps.
 Use workflow/WORKFLOW.md for further command details. Inspect installed copies
 and Git status before changing code. Do not edit frozen simulation runs.
 
+Local model results use the shallow layout requested on 2026-11-15: production
+inspection images/videos/result tables directly in the model directory;
+isolation results directly in its separate isolation/ directory; supporting
+production analysis files in a flat analysis/ directory with descriptive
+filenames. Preserve frozen IC/run data and legacy compatibility paths. This
+local layout does not relocate server simulations. See workflow/WORKFLOW.md.
+
 Submit checks for multiple simulations as one Slurm job on one node, even when
 their isolation run names differ. Use repeated `--run MODEL=RUN` arguments to
 identify those runs. Process models sequentially with the configured worker count

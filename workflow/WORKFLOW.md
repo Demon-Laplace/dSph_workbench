@@ -1,3 +1,31 @@
+## 本地检查成果采用浅层目录（2026-11-15）
+
+用户要求少层级、按文件名区分成果，并允许 isolation 与正式模拟分开。
+后续本地输出遵循下面的布局；旧文中要求本地结果再套 snapshot/task/method 层级的
+规则由本段替代，服务器运行和 canonical observer 目录合同保持原样。
+
+```text
+Fornax5028/
+  Fornax5028_orbit_original__tan_xi_eta_2p1_v1_v5.mp4
+  Fornax5028_orbit_comparison_orbit_Li132_s260__check_nature.png
+  Fornax5028_orbit_comparison__comparison_at_139p4.csv
+  analysis/                 辅助脚本、配置、缓存和报告，文件名区分轨道/快照/用途
+  isolation/                孤立模拟；检查图片、视频、统计表直接放在此层
+  ic/<build>/               冻结构建输入及其回执，保留原路径
+```
+
+正式检查图/PDF、视频和常读结果表直接放模型顶层。不要为每张图或每种方法新建多层
+包装目录。辅助分析文件使用如 `orbit_anchor139p4_s266_orientation_search__manifest.json`
+的名称放在同一层 `analysis/`。旧轨道入口保留为兼容导航，查看成果优先用顶层文件。
+不为整理重算数据，不把预览或未重新演化候选混称正式结果。
+
+本次本地迁移扫描230个模型，移动21份可直接查看的图表/视频及58份辅助分析文件。
+其余目录已符合布局；既有 isolation 平铺结果未混入正式模拟目录。历史深层记录集中
+收在 `workspace/catalog/model-layout-20261115/legacy_paths/`，原路径保留相对链接。
+`plan.json`、`journal.jsonl`、`metadata-before.json`、`result.json` 记录迁移及原导航配置。
+79个移动文件的SHA256、原路径读取和2142个原有文件的inode/大小/mtime校验通过。
+没有删除数据，没有移动服务器任务，也没有改写IC、快照或用户shell。
+
 ## 同模型的轨道入口（2026-11-06）
 
 同一模型的不同轨道使用模型目录下的平铺入口，不再靠全盘查找视频或记忆深层
