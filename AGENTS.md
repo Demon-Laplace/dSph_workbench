@@ -12,6 +12,12 @@ IC/orbit/predecessor-run provenance, and validation status with an evidence poin
 Keep candidates distinct from applied changes and startup checks distinct from
 complete scientific validation. Append corrections; preserve earlier history.
 
+legacy_code_archive/ is reference-only. Never install or synchronize it into
+active source/model directories or releases. IC/server source checkouts exclude
+it with sparse checkout. Production model compatibility links use the existing
+workspace/code/production entry, not independent module copies. Preserve user
+shells, frozen runs and immutable releases when removing obsolete code.
+
 Local model results use the shallow layout requested on 2026-11-15: production
 inspection images/videos/result tables directly in the model directory;
 isolation results directly in its separate isolation/ directory; supporting

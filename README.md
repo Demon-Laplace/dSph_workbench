@@ -10,6 +10,8 @@ For canonical orbit processing, read the [program guide](repo/orbit_calibration_
 and [reference-frame change log](repo/orbit_calibration_v1/CHANGELOG.md).
 The [simulation history](SIMULATION_HISTORY.md) records concise reasons,
 corrections, predecessor models/runs, and validation status for simulation changes.
+The [legacy code archive](legacy_code_archive/README.md) is reference-only and
+excluded from active source synchronization and release deployment.
 Machine-specific configuration, particle ICs, snapshots, logs, images, and
 videos belong in the simulation workspace and must not enter this repository.
 The remote keeps only `main`, which receives validated, scoped automatic agent
