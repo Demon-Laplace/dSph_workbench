@@ -6,6 +6,12 @@ boundary, startup-retry cleanup policy, density analysis and publication steps.
 Use workflow/WORKFLOW.md for further command details. Inspect installed copies
 and Git status before changing code. Do not edit frozen simulation runs.
 
+For each IC, orbit, internal-pose, physics, or consequential numerical-run change,
+append a concise entry to SIMULATION_HISTORY.md: reason, actual change, explicit
+IC/orbit/predecessor-run provenance, and validation status with an evidence pointer.
+Keep candidates distinct from applied changes and startup checks distinct from
+complete scientific validation. Append corrections; preserve earlier history.
+
 Local model results use the shallow layout requested on 2026-11-15: production
 inspection images/videos/result tables directly in the model directory;
 isolation results directly in its separate isolation/ directory; supporting

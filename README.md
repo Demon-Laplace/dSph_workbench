@@ -8,6 +8,8 @@ Slurm jobs, result retrieval, source synchronization, and Git-based releases.
 Read [the workflow guide](workflow/WORKFLOW.md) for setup and commands.
 For canonical orbit processing, read the [program guide](repo/orbit_calibration_v1/README.md)
 and [reference-frame change log](repo/orbit_calibration_v1/CHANGELOG.md).
+The [simulation history](SIMULATION_HISTORY.md) records concise reasons,
+corrections, predecessor models/runs, and validation status for simulation changes.
 Machine-specific configuration, particle ICs, snapshots, logs, images, and
 videos belong in the simulation workspace and must not enter this repository.
 The remote keeps only `main`, which receives validated, scoped automatic agent
@@ -40,6 +42,6 @@ See the workflow guide for layout, batch commands and synchronization retries.
 
 [Fornax5029 dual-beta candidate](IniFile/IC_Fornax5029.md)
 summarizes the complete original-structure INI with inner beta=-0.2 and outer
-beta=+0.8, its dedicated reader, and the checks performed. It is a parameter-only
-candidate; no particle build, equilibrium, isolation, or orbital evolution has
-been validated for it.
+beta=+0.8, its dedicated reader, and the validated static particle build.
+See the simulation history
+for subsequent isolation startup repairs. Evolution stability remains unvalidated.
