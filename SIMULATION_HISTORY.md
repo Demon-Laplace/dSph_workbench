@@ -25,6 +25,8 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 | 2026-11-15 | Fornax5029 / `orbit_PA43`，`F5029-PA43-20261115` | 用户选定自身孤立模拟snapshot_030；轨道/初始朝向参考本次5028 PA43 | 按自身源质心和bulk调整放置以共用目标质心六维；保留feedback=16.6、3.6 Gyr终点，原孤立模拟继续 | 既有合并流程完成并提交；受同一CPU时数额度限制排队，尚未启动积分，演化形态未验证。[完整备注](model_changes/Fornax5029.txt) |
 | 2026-11-15 | Fornax7006 / 状态核查，`F7006-STATUS-20261115` | 上述fixed_program候选及旧模拟的退役回执 | 补记旧模型已退役，纠正“原始输出仍保留”的过期导航说明 | 当前无活动作业；轨道修改仍为候选和条件预期图，未写新IC或重跑。本次只核查并补记状态。[完整备注](model_changes/Fornax7006.txt) |
 
+| 2026-11-15 | Fornax7006 / `orbit_corrected`，`F7006-CORRECTED-20261115` | 自身孤立第50帧既有独立IC；此前fixed_program目标；用户授权本地复算 | 用既有MW53固定场程序重新求初始质心六维，只改轨道；原内部姿态和完整物理/数值配置保持，feedback=16.6、PartAllocFactor=8.0；不声称逐字恢复已转走的旧候选 | 缓存、共享观察者、闭合/半步及既有一次合并校验通过；正式模拟已提交，受账户CPU时数额度限制排队，尚未积分，末态目标未验证。[完整备注](model_changes/Fornax7006.txt) |
+
 回执索引（相对本地模拟工作区，不将大数据上传 GitHub）：
 
 - ① `workspace/receipts/production/Fornax7006/fornax7006-anchor139p4-pose-density-paf80-20261111-v1/`：`inputs/case.json`、启动/取消回执。
