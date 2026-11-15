@@ -120,3 +120,28 @@ execution of the patched plotting/schema and CSV-header functions and the real
 Fornax5028/285 mass regression (f_HI=0.3963470638529267). Syntax checks passed
 for all five changed Python files. The HDF5-loader unit test and full server
 integration were not run (local h5py unavailable). No release was deployed.
+
+### Standalone Milky Way shell-history archive
+
+`cgm_shell_archive.py --plan PLAN.json --workers 16 --validate-first` streams
+single-file, non-comoving HDF5 snapshots. Batch multiple MW models/runs in one
+node allocation and process the runs sequentially. The first snapshot is checked
+with two chunk sizes before the full batch; every frame checks particle/mass,
+phase and temperature-histogram conservation. Outputs never delete sources.
+
+The archive uses the existing TP2/4 shrinking stellar centre, TP2/3/4 R<5 kpc
+bulk, current legacy physical-unit convention and `zim.unitconversion`.
+Positions use the nearest periodic image. Fixed radial and temperature edges,
+per-type mass profiles, mass second/outer quadrupole moments, angular momentum,
+all/cold/hot gas additive thermodynamic and velocity moments, inflow/outflow
+estimators, HI mass and temperature histograms are stored per snapshot. Shell
+volume density and particle mass-weighted density are distinct quantities.
+Cold/hot means T<20000 K / T>=20000 K; these labels follow current analysis.
+
+All PartType0 gas is retained, including ambient cube gas. Radial CGM diagnostics
+do not claim a recovered initial CGM particle cohort. Source Header, exact centre
+and bulk, unit factors, input fingerprints and hashes of every consumed dataset
+are recorded. Binned statistics cannot restore individual particles or refine
+bins after raw-snapshot retirement. Remove raw data only as a separately
+explicitly authorized action, after the structured archive, source ICs, videos
+and provenance have been verified and safely retained.
