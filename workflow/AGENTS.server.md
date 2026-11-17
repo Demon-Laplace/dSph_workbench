@@ -133,3 +133,13 @@ GitHub 汇总保留既有条目，并追加同一记录号、简短内容及 TXT
 - 本节替代前文中将固定 uint64 ID/cohort 或来源认证作为新主分析必需条件的部分；canonical 物理观察者、太阳、逐星射线和孔径/估计器定义仍保留。源 ID 可仅作附加元数据，不得决定主样本。
 - 此前仅因 ID 重复或来源/parent 编码失败的计算须按空间方法重新计算。旧结果保留原定义与历史身份，不能改列名后冒充新空间成员统计。
 - 本次 `sigma_spatial_parameters_v1` 结构化补算统一一个 Slurm 任务、单节点顺序处理多模型，16 workers；不依赖视频编码。每模型 CSV/JSON/NPZ 回传到 `F:/Fornax_data/Fornax处理/<实际模型编号目录>/` 直接平铺，轨道/分支用文件名前缀区分。暂不绘图或制作 PDF，不监控作业；自动回传只读取交付清单。
+
+## Ordinary scientific transfers (owner update 2026-11-17)
+
+Use normally readable data directly. Do not routinely compare file sizes,
+SHA256/content, reread outputs, or add acceptance/verification gates before
+ordinary scientific processing and transfers. Diagnose actual errors only.
+This supersedes conflicting older verification requirements below/above.
+The current receiver takes an explicit project data root and writes each
+model's machine data into its single flat _support directory. Keep only
+necessary resume state while transfer is active, not per-file audit reports.

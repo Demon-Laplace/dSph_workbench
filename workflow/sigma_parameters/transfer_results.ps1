@@ -2,7 +2,9 @@
 param(
     [string]$Server = 'mesopsl-codex',
     [string]$ServerRoot = '/travail/xhuang/workspace/jobs/sigma-parameters',
-    [string]$DestinationRoot = ('F:\Fornax_data\Fornax' + [char]0x5904 + [char]0x7406),
+    [Parameter(Mandatory=$true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$DestinationRoot,
     [int]$PollSeconds = 300,
     [switch]$Once
 )
@@ -13,7 +15,6 @@ $ErrorActionPreference = 'Stop'
 $TaskId = 'sigma_parameters_structured_v1'
 $LocalRoot = $PSScriptRoot
 $StateFile = Join-Path $LocalRoot 'transfer-state.json'
-$EventLog = Join-Path $LocalRoot 'transfer-events.jsonl'
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $Utf8
 $OutputEncoding = $Utf8
@@ -26,24 +27,7 @@ if ($PollSeconds -lt 15) { throw 'PollSeconds must be at least 15.' }
 
 Add-Type -TypeDefinition @'
 using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-public static class SigmaTransferIdentity {
-    [StructLayout(LayoutKind.Sequential)] private struct Info {
-        public uint attr, ca, cb, aa, ab, wa, wb, volume, high, low, links, indexHigh, indexLow;
-    }
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
-    private static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr sec, uint mode, uint flags, IntPtr template);
-    [DllImport("kernel32.dll", SetLastError=true)]
-    private static extern bool GetFileInformationByHandle(SafeFileHandle file, out Info info);
-    public static string Read(string path) {
-        using (SafeFileHandle file=CreateFile(path,0,7,IntPtr.Zero,3,0x02000000,IntPtr.Zero)) {
-            if(file.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            Info i; if(!GetFileInformationByHandle(file,out i)) throw new Win32Exception(Marshal.GetLastWin32Error());
-            return i.volume.ToString("X8")+":"+i.indexHigh.ToString("X8")+i.indexLow.ToString("X8");
-        }
-    }
+public static class SigmaTransferAtomic {
     // Windows PowerShell 5.1 coerces a directly supplied $null string argument
     // to String.Empty. Keep the actual null backup name inside typed C#.
     public static void Replace(string source, string destination) {
@@ -74,17 +58,9 @@ function Write-AtomicJson([string]$Path, $Value) {
     $temporary = "$pathAbs.partial-$([Guid]::NewGuid().ToString('N'))"
     [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 30), $Utf8)
     $null = Assert-SafePath $temporary
-    $tempId = [SigmaTransferIdentity]::Read($temporary)
     if (Test-Path -LiteralPath $pathAbs) {
-        $targetId = [SigmaTransferIdentity]::Read($pathAbs)
-        if ($targetId -eq $tempId) { throw 'Temporary file aliases the JSON destination.' }
-        [SigmaTransferIdentity]::Replace($temporary, $pathAbs)
+        [SigmaTransferAtomic]::Replace($temporary, $pathAbs)
     } else { [IO.File]::Move($temporary, $pathAbs) }
-}
-
-function Write-Event([string]$Kind, [string]$Message, $Details = $null) {
-    $record = [ordered]@{ time_utc = [DateTime]::UtcNow.ToString('o'); kind = $Kind; message = $Message; details = $Details }
-    [IO.File]::AppendAllText($EventLog, (($record | ConvertTo-Json -Compress -Depth 10) + [Environment]::NewLine), $Utf8)
 }
 
 function Read-RemoteJson([string]$Name) {
@@ -102,7 +78,6 @@ function Read-RemoteJson([string]$Name) {
     } finally {
         if (Test-Path -LiteralPath $errors) {
             $null = Assert-SafePath $errors
-            $null = [SigmaTransferIdentity]::Read($errors)
             Remove-Item -LiteralPath $errors -Force
         }
     }
@@ -147,60 +122,43 @@ function Receive-Delivery($Delivery) {
         $model -notmatch '^Fornax[0-9]+[A-Za-z0-9_.-]*$' -or $model.Contains('..')) { throw 'Invalid run or model identity.' }
     $rootAbs = Assert-SafePath $DestinationRoot
     if (-not (Test-Path -LiteralPath $rootAbs -PathType Container)) { throw "Destination root unavailable: $rootAbs" }
-    $modelPath = Assert-SafePath (Join-Path $rootAbs $model)
-    if ([IO.Directory]::GetParent($modelPath).FullName -ne $rootAbs.TrimEnd('\')) { throw 'Model directory escaped destination root.' }
+    $modelRoot = Assert-SafePath (Join-Path $rootAbs $model)
+    if ([IO.Directory]::GetParent($modelRoot).FullName -ne $rootAbs.TrimEnd('\')) { throw 'Model directory escaped destination root.' }
+    if (-not (Test-Path -LiteralPath $modelRoot)) { $null = New-Item -ItemType Directory -Path $modelRoot }
+    $modelPath = Assert-SafePath (Join-Path $modelRoot '_support')
     if (-not (Test-Path -LiteralPath $modelPath)) { $null = New-Item -ItemType Directory -Path $modelPath }
-    $modelVolume = ([SigmaTransferIdentity]::Read($modelPath)).Split(':')[0]
     $receipt = Read-Receipt $runId
-    $records = @($receipt.files)
+    $records = @($receipt.files | ForEach-Object { [PSCustomObject]@{name=$_.name;path=$_.path;source=$_.source;disposition='downloaded'} })
     $files = @($Delivery.files)
     if ($files.Count -eq 0) { throw "No declared result files for $runId" }
     foreach ($file in $files) {
         $name = [string]$file.name
         $remote = [string]$file.path
-        $expectedSha = ([string]$file.sha256).ToLowerInvariant()
-        $bytes = [long]$file.bytes
         if (-not $name.StartsWith($runId, [StringComparison]::Ordinal) -or
             $name -notmatch '^[A-Za-z0-9_.-]+\.(csv|json|jsonl|npz|npy|parquet|txt)$' -or $name.Contains('..') -or
-            $remote -notmatch '^/travail/xhuang/[A-Za-z0-9_./-]+$' -or $remote.Contains('..') -or
-            $expectedSha -notmatch '^[0-9a-f]{64}$' -or $bytes -lt 0 -or $bytes -gt 2147483648) { throw "Invalid file declaration for $runId" }
+            $remote -notmatch '^/travail/xhuang/[A-Za-z0-9_./-]+$' -or $remote.Contains('..')) { throw "Invalid file declaration for $runId" }
         $target = Assert-SafePath (Join-Path $modelPath $name)
         $previous = @($records | Where-Object { $_.name -eq $name }) | Select-Object -Last 1
-        $currentSha = $null
         if (Test-Path -LiteralPath $target) {
-            $targetInfo = Get-Item -LiteralPath $target
-            $targetId = [SigmaTransferIdentity]::Read($target)
-            $currentSha = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($currentSha -eq $expectedSha -and $targetInfo.Length -eq $bytes) {
-                $records = @($records | Where-Object { $_.name -ne $name }) + [PSCustomObject]@{ name=$name; path=$target; sha256=$expectedSha; bytes=$bytes; source=$remote; time_utc=[DateTime]::UtcNow.ToString('o'); disposition='verified_existing' }
+            if ($null -ne $previous -and $previous.path -eq $target -and $previous.source -eq $remote) {
                 continue
             }
-            if ($null -eq $previous -or $previous.sha256 -ne $currentSha) { throw "Preserved an existing file without matching task ownership: $target" }
+            throw "Existing target conflict; preserved file without matching task ownership: $target"
         }
         $temporary = Assert-SafePath (Join-Path $modelPath ('.' + $name + '.transfer-' + [Guid]::NewGuid().ToString('N')))
         try {
             & $Scp -q -o BatchMode=yes -o UpdateHostKeys=no -o ConnectTimeout=20 ($Server + ':' + $remote) $temporary
             if ($LASTEXITCODE -ne 0) { throw "SCP failed for $name (exit $LASTEXITCODE)" }
             $null = Assert-SafePath $temporary
-            $tempInfo = Get-Item -LiteralPath $temporary
-            $tempId = [SigmaTransferIdentity]::Read($temporary)
-            if ($tempId.Split(':')[0] -ne $modelVolume) { throw 'Temporary and target directory volumes differ.' }
-            $downloadSha = (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($tempInfo.Length -ne $bytes -or $downloadSha -ne $expectedSha) { throw "Size/SHA verification failed for $name" }
             $null = Assert-SafePath $target
             if (Test-Path -LiteralPath $target) {
-                if ([SigmaTransferIdentity]::Read($target) -ne $targetId -or
-                    (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $currentSha) { throw 'Destination changed during transfer.' }
-                if ($targetId -eq $tempId) { throw 'Temporary file aliases the destination.' }
-                [SigmaTransferIdentity]::Replace($temporary, $target)
-            } else { [IO.File]::Move($temporary, $target) }
-            if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedSha) { throw 'Final file SHA verification failed.' }
-            $records = @($records | Where-Object { $_.name -ne $name }) + [PSCustomObject]@{ name=$name; path=$target; sha256=$expectedSha; bytes=$bytes; source=$remote; time_utc=[DateTime]::UtcNow.ToString('o'); disposition='downloaded_verified' }
-            Write-Event 'file_delivered' $target @{run_id=$runId;sha256=$expectedSha;bytes=$bytes}
+                throw "Existing target conflict during transfer; preserved file: $target"
+            }
+            [IO.File]::Move($temporary, $target)
+            $records = @($records | Where-Object { $_.name -ne $name }) + [PSCustomObject]@{ name=$name; path=$target; source=$remote; disposition='downloaded' }
         } finally {
             if (Test-Path -LiteralPath $temporary) {
                 $null = Assert-SafePath $temporary
-                $null = [SigmaTransferIdentity]::Read($temporary)
                 Remove-Item -LiteralPath $temporary -Force
             }
         }
@@ -210,12 +168,6 @@ function Receive-Delivery($Delivery) {
     }
     $receipt = [PSCustomObject]@{task_id=$TaskId;run_id=$runId;model_directory=$model;files=$records;updated_utc=[DateTime]::UtcNow.ToString('o')}
     Write-AtomicJson (Join-Path $LocalRoot ($runId + '_transfer_receipt.json')) $receipt
-    $modelReceipt = Join-Path $modelPath ($runId + '_sigma_parameters_delivery.json')
-    if (Test-Path -LiteralPath $modelReceipt) {
-        $oldReceipt = [IO.File]::ReadAllText((Assert-SafePath $modelReceipt),$Utf8) | ConvertFrom-Json
-        if ($oldReceipt.task_id -ne $TaskId -or $oldReceipt.run_id -ne $runId) { throw 'Preserved an unrelated model receipt.' }
-    }
-    Write-AtomicJson $modelReceipt $receipt
     return $files.Count
 }
 
@@ -223,7 +175,6 @@ $lockPath = Join-Path $LocalRoot 'transfer.lock'
 $null = Assert-SafePath $lockPath
 $lock = [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 try {
-    Write-Event 'started' 'Structured-data receiver started; no scheduler queries.' @{destination=$DestinationRoot;server=$Server}
     while ($true) {
         $errors = @(); $delivered = 0; $fileCount = 0; $final = $null
         try {
@@ -235,7 +186,7 @@ try {
             }
             foreach ($delivery in $deliveries) {
                 try { $fileCount += Receive-Delivery $delivery; $delivered++ }
-                catch { $errors += [PSCustomObject]@{run_id=$delivery.run_id;error=$_.Exception.Message}; Write-Event 'retry_pending' $_.Exception.Message @{run_id=$delivery.run_id} }
+                catch { $errors += [PSCustomObject]@{run_id=$delivery.run_id;error=$_.Exception.Message} }
             }
             $final = Read-RemoteJson 'transfer-final.json'
             $terminal = Test-Terminal $final
@@ -243,10 +194,9 @@ try {
             if ($deliveries.Count -gt 0) { $status = 'receiving' }
             if ($errors.Count -gt 0) { $status = 'retry_pending' }
             if ($terminal -and $errors.Count -eq 0 -and $null -ne $manifest) { $status = 'delivered_all_available' }
-            Write-AtomicJson $StateFile ([ordered]@{task_id=$TaskId;status=$status;updated_utc=[DateTime]::UtcNow.ToString('o');destination_root=$DestinationRoot;declared_runs=$deliveries.Count;delivered_runs=$delivered;verified_files=$fileCount;errors=$errors;server_final=$final})
-            if ($status -eq 'delivered_all_available') { Write-Event 'finished' 'All declared files were verified locally; server computation is terminal.'; break }
+            Write-AtomicJson $StateFile ([ordered]@{task_id=$TaskId;status=$status;updated_utc=[DateTime]::UtcNow.ToString('o');destination_root=$DestinationRoot;declared_runs=$deliveries.Count;delivered_runs=$delivered;delivered_files=$fileCount;errors=$errors;server_final=$final})
+            if ($status -eq 'delivered_all_available') { break }
         } catch {
-            Write-Event 'retry_pending' $_.Exception.Message
             Write-AtomicJson $StateFile ([ordered]@{task_id=$TaskId;status='retry_pending';updated_utc=[DateTime]::UtcNow.ToString('o');destination_root=$DestinationRoot;error=$_.Exception.Message})
         }
         if ($Once) { break }

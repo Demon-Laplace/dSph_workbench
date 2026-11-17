@@ -78,7 +78,11 @@ One Slurm allocation processes models sequentially with16workers. Per-epoch
 checkpoints stay beside each simulation in output/analysis/sigma_spatial_parameters.
 Final run-prefixed CSV, JSONL, NPZ, context and metadata are published to the
 atomic ready-deliveries.json. The local transfer helper only consumes delivery
-manifests, validates file bytes/SHA and atomically writes files to each model
-directory at F:/Fornax_data/Fornax处理/. It never queries Slurm. A terminal
-transfer-final.json ends the helper after all declared deliveries are received.
+manifests and copies files into each model's single _support directory.
+The destination root is an explicit argument, with no drive-specific default.
+Following the current project principles, ordinary transfers do not compare
+file sizes, SHA256 hashes or contents, and do not re-read successfully received
+files. SCP errors remain visible; unknown existing targets are preserved.
+Only the active transfer's resume state is retained. It never queries Slurm.
+A terminal transfer-final.json ends the helper after declared deliveries arrive.
 No plots, PDF production, correlations or causal conclusions are performed here.
