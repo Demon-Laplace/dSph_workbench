@@ -44,6 +44,11 @@ public static class SigmaTransferIdentity {
             return i.volume.ToString("X8")+":"+i.indexHigh.ToString("X8")+i.indexLow.ToString("X8");
         }
     }
+    // Windows PowerShell 5.1 coerces a directly supplied $null string argument
+    // to String.Empty. Keep the actual null backup name inside typed C#.
+    public static void Replace(string source, string destination) {
+        System.IO.File.Replace(source, destination, null);
+    }
 }
 '@
 
@@ -73,7 +78,7 @@ function Write-AtomicJson([string]$Path, $Value) {
     if (Test-Path -LiteralPath $pathAbs) {
         $targetId = [SigmaTransferIdentity]::Read($pathAbs)
         if ($targetId -eq $tempId) { throw 'Temporary file aliases the JSON destination.' }
-        [IO.File]::Replace($temporary, $pathAbs, $null)
+        [SigmaTransferIdentity]::Replace($temporary, $pathAbs)
     } else { [IO.File]::Move($temporary, $pathAbs) }
 }
 
@@ -187,7 +192,7 @@ function Receive-Delivery($Delivery) {
                 if ([SigmaTransferIdentity]::Read($target) -ne $targetId -or
                     (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $currentSha) { throw 'Destination changed during transfer.' }
                 if ($targetId -eq $tempId) { throw 'Temporary file aliases the destination.' }
-                [IO.File]::Replace($temporary, $target, $null)
+                [SigmaTransferIdentity]::Replace($temporary, $target)
             } else { [IO.File]::Move($temporary, $target) }
             if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedSha) { throw 'Final file SHA verification failed.' }
             $records = @($records | Where-Object { $_.name -ne $name }) + [PSCustomObject]@{ name=$name; path=$target; sha256=$expectedSha; bytes=$bytes; source=$remote; time_utc=[DateTime]::UtcNow.ToString('o'); disposition='downloaded_verified' }
