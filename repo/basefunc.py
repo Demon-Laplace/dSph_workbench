@@ -59,9 +59,11 @@ class Analysis(AnalysisCore):
 
     @staticmethod
     def GetSFH_sim(folder_path=folder_path, Tage=None, snapshot_num=None):
+        """Recorded stellar ages, plus an explicitly shifted display lookback epoch.
 
-        if Tage is None:
-            print('Please input the age of the universe at the snapshot (Tage) in Gyr')
+        ``Tage`` retains the existing optional display reference in code time;
+        ``stellar_age_gyr`` always uses the actual snapshot time and properties.
+        """
         
         numsp = (
             DataProcessor.find_snapshot_range(folder_path)
@@ -76,10 +78,15 @@ class Analysis(AnalysisCore):
         df = simulation.center_on_MW()
         _, dw_star_mask = simulation.classify_mw_dwarf(df=df, r_exclude=5, dwarf_radius=3*core_radius, k_density=16)
 
-        df_dw = df.loc[dw_star_mask, ['birth', 'm']].copy()
-        df_dw = df_dw[df_dw['birth'] != 0]
-        df_dw['age'] = Tage - df_dw['birth']
-        dw_sfrmass = df_dw[['age', 'm']].astype(float)
+        df_dw = df.loc[dw_star_mask, ['stellar_age_gyr', 'm']].copy()
+        known = np.isfinite(df_dw['stellar_age_gyr']) & (df_dw['stellar_age_gyr'] >= 0)
+        df_dw = df_dw.loc[known]
+        reference_shift = 0. if Tage is None else (float(Tage) - float(tsnap)) * simulation.stellar_time_code_to_gyr
+        df_dw['age'] = df_dw['stellar_age_gyr'] + reference_shift
+        dw_sfrmass = df_dw[['age', 'm', 'stellar_age_gyr']].astype(float)
+        dw_sfrmass.attrs['age_definition'] = 'display lookback at explicit reference epoch, in Gyr'
+        dw_sfrmass.attrs['stellar_age_gyr_definition'] = 'recorded age or actual snapshot time minus recorded formation time'
+        dw_sfrmass.attrs['time_code_to_gyr'] = float(simulation.stellar_time_code_to_gyr)
 
         return dw_sfrmass
 

@@ -28,10 +28,11 @@ import argparse
 from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction, require_hi_fraction_csv
-from canonical_observer import require_canonical_csv
+from canonical_observer import require_canonical_csv, production_output_root
 from canonical_display import (DISPLAY_RELATIVE_DIR, tangent_coordinates, tangent_velocity_grid40,
     tangent_motion_arrow, tangent_kpc_to_display, raw_offsets_to_tangent, tangent_pixel_area_arcsec2)
-from display_outputs import display_identity, frame_is_current, record_frame, record_display_manifest
+from display_outputs import (display_identity, frame_is_current, record_frame,
+    record_display_manifest, ordinary_media_reuse, prepare_display_directory)
 
 from matplotlib.patches import Ellipse
 from variable import (
@@ -60,8 +61,7 @@ plt.switch_backend('Agg')
 
 PLOT_CONTEXT = None
 # New contract outputs are isolated from old CSV, PNG and videos.
-_default_canonical_root = Path(folder_path).resolve() / 'analysis' / 'astropy_native_direct_v1'
-CANONICAL_ANALYSIS_ROOT = Path(os.environ.get('DSPH_CANONICAL_OUTPUT_ROOT',str(_default_canonical_root))).resolve()
+CANONICAL_ANALYSIS_ROOT = production_output_root(folder_path).resolve()
 DISPLAY_OUTPUT_ROOT = CANONICAL_ANALYSIS_ROOT / DISPLAY_RELATIVE_DIR
 output_folder = str(DISPLAY_OUTPUT_ROOT / 'output_img')
 SKY_FIELD_HALF_WIDTH_DEG = 2.1
@@ -120,6 +120,12 @@ def is_complete_png(path):
         return False
 
 
+def reusable_frame(path, identity):
+    if ordinary_media_reuse():
+        return frame_is_current(path, identity)
+    return is_complete_png(path) and frame_is_current(path, identity)
+
+
 def save_figure_atomic(fig, output_file):
     output_dir = os.path.dirname(os.path.abspath(output_file))
     os.makedirs(output_dir, exist_ok=True)
@@ -134,7 +140,7 @@ def save_figure_atomic(fig, output_file):
             tmp_path = handle.name
 
         fig.savefig(tmp_path)
-        if not is_complete_png(tmp_path):
+        if not ordinary_media_reuse() and not is_complete_png(tmp_path):
             raise RuntimeError(f"Failed to write a complete PNG: {tmp_path}")
         os.replace(tmp_path, output_file)
     finally:
@@ -145,19 +151,24 @@ def save_figure_atomic(fig, output_file):
                 pass
 
 
-def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
+def render_video_from_frames(output_dir, modelname, start_numsp, frame_count,
+                             *, snapshots=None, video_name=None):
     if frame_count <= 0:
         print("[PlotFigVideo] Skip video generation: no frames requested")
         return None
 
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path is None:
+        if ordinary_media_reuse():
+            raise FileNotFoundError('ffmpeg is required to encode the requested video')
         print("[PlotFigVideo] Skip video generation: ffmpeg not found in PATH")
         return None
 
     frames_dir = os.path.abspath(output_dir)
     video_dir = os.path.dirname(os.path.normpath(frames_dir))
-    output_name = f"{modelname}_tan_xi_eta_2p1_v1_v{PLOT_VIDEO_VERSION}.mp4"
+    output_name = video_name or f"{modelname}_tan_xi_eta_2p1_v1_v{PLOT_VIDEO_VERSION}.mp4"
+    if Path(output_name).name != output_name or not output_name.endswith('.mp4'):
+        raise ValueError('--video-name must be a plain .mp4 filename')
     output_path = os.path.join(video_dir, output_name)
     with tempfile.NamedTemporaryFile(
         suffix='.mp4',
@@ -166,16 +177,26 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
         delete=False,
     ) as handle:
         tmp_output_path = handle.name
-    cmd = [
-        ffmpeg_path,
-        "-start_number",
-        str(start_numsp),
-        "-i",
-        "check_nature_%03d.png",
+    sequence_file = None
+    if snapshots is not None:
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', suffix='.txt',
+                                        prefix='.plotfig-sequence-', dir=video_dir,
+                                        delete=False) as handle:
+            sequence_file = handle.name
+            for number in snapshots:
+                name = Path(make_plot_output_path(frames_dir, number)).as_posix()
+                handle.write("file '" + name.replace("'", "'\\''") + "'\n")
+                handle.write('duration 0.04\n')
+        input_args = ['-f', 'concat', '-safe', '0', '-i', sequence_file]
+    else:
+        input_args = ['-start_number', str(start_numsp), '-i', 'check_nature_%03d.png']
+    cmd = [ffmpeg_path] + input_args + [
         "-vf",
         "scale=3416:trunc(ow/a/2)*2,setsar=1",
         "-frames:v",
         str(frame_count),
+        "-r",
+        "25",
         "-crf",
         "18",
         "-pix_fmt",
@@ -189,14 +210,18 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
             cmd,
             cwd=frames_dir,
             check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
+            stdout=None if ordinary_media_reuse() else subprocess.DEVNULL,
+            stderr=None if ordinary_media_reuse() else subprocess.STDOUT,
         )
         os.replace(tmp_output_path, output_path)
     except subprocess.CalledProcessError as exc:
+        if ordinary_media_reuse():
+            raise
         print(f"[PlotFigVideo] ffmpeg failed with exit code {exc.returncode}")
         return None
     finally:
+        if sequence_file is not None:
+            Path(sequence_file).unlink(missing_ok=True)
         if os.path.exists(tmp_output_path):
             try:
                 os.unlink(tmp_output_path)
@@ -207,15 +232,25 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count):
     return output_path
 
 
-def finalize_display_outputs(output_dir, modelname, snapshots):
+def finalize_display_outputs(output_dir, modelname, snapshots, *, identity=None,
+                             video_name=None):
+    if not snapshots:
+        raise ValueError('No snapshots selected for video generation')
+    if identity is None:
+        identity = get_plot_context()['display_identity']
+    if video_name is None and PLOT_CONTEXT is not None:
+        video_name = PLOT_CONTEXT.get('video_name')
     videos = []
-    if snapshots_are_consecutive(snapshots):
-        video = render_video_from_frames(output_dir, modelname, snapshots[0], len(snapshots))
+    if snapshots_are_consecutive(snapshots) or ordinary_media_reuse():
+        video = render_video_from_frames(
+            output_dir, modelname, snapshots[0], len(snapshots),
+            snapshots=snapshots if ordinary_media_reuse() else None,
+            video_name=video_name)
         if video is not None:
             videos.append(video)
     else:
         print("[PlotFigVideo] Skip video generation: requested snapshots are not consecutive")
-    record_display_manifest(Path(output_dir).parent, get_plot_context()['display_identity'], snapshots, videos)
+    record_display_manifest(Path(output_dir).parent, identity, snapshots, videos)
 
 
 def build_consecutive_blocks(items, block_size):
@@ -396,8 +431,20 @@ def _observed_surface_brightness_from_counts(dprof, factor):
 
 def _observed_profile_candidate_paths(dwarf_name):
     filename = OBS_SURFACE_BRIGHTNESS_PROFILE_TEMPLATE.format(dwarf_name=dwarf_name)
-    plotfig_dir = Path(__file__).resolve().parent
-    return [plotfig_dir.parent / filename]
+    explicit = os.environ.get("FORNAX_PREPARED_OBSERVATION_PROFILE")
+    if explicit:
+        return [Path(explicit).expanduser()]
+    code = next((p for p in Path(__file__).resolve().parents if p.name == "Code"), None)
+    if code is not None:
+        if str(code) not in sys.path:
+            sys.path.insert(0, str(code))
+        from project_paths import OBSERVATION_DATA
+        return [OBSERVATION_DATA / "Yang_data" / filename]
+    declared = os.environ.get("FORNAX_OBSERVATION_ROOT")
+    if declared:
+        return [Path(declared).expanduser() / "Yang_data" / filename]
+    # Compatibility for explicitly retained standalone server packages.
+    return [Path(__file__).resolve().parent.parent / filename]
 
 
 def _observed_radius_kpc(dprof):
@@ -511,9 +558,8 @@ def build_plot_context():
     description = model_info['description']
     if description:
         print(f"[PlotFig] Model: {base_modelname}, description: {description}")
-    inifile = DataProcessor.resolve_dwarf_ini_path(dwarf_name)
-    print(f"[PlotFig] Using initial INI file: {inifile}")
-    dw_particles = GalaxySimulation.get_dw_num(inifile)
+    # Retain compatibility context fields without requiring unused IC counts.
+    inifile, dw_particles = None, None
     elinfo_path = str(CANONICAL_ANALYSIS_ROOT / f'elinfo_{modelname}.csv')
 
     core_radius = core_radius_dict.get(dwarf_name, None)
@@ -543,7 +589,8 @@ def build_plot_context():
     else:
         fd_factor_str = f"{fd_factor_raw:.1f}"
 
-    sfh_dw = pd.read_csv(f'../SFH_{dwarf_name}.csv')
+    sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
+    sfh_dw = pd.read_csv(sfh_path)
     factor = obs_surface_brightness_factor_base
     obs_surface_brightness = _load_surface_brightness_observation(dwarf_name, factor)
     dprof = obs_surface_brightness['dprof']
@@ -578,7 +625,8 @@ def build_plot_context():
         Tage=Tage,
         snapshot_num=elinfo_snapshots[-1],
     )
-    lookback_sim, sfr_sim, lookback_obs, sfr_obs = _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri)
+    sfr_t_peri_gyr = t_peri * dw_sfrmass.attrs.get('time_code_to_gyr', 1.)
+    lookback_sim, sfr_sim, lookback_obs, sfr_obs = _compute_sfr_series(sfh_dw, dw_sfrmass, sfr_t_peri_gyr)
 
     return {
         'modelname': modelname,
@@ -617,6 +665,7 @@ def build_plot_context():
         'sigma_mw_theoretical': sigma_mw_theoretical,
         'd_peri': d_peri,
         't_peri': t_peri,
+        'sfr_t_peri_gyr': sfr_t_peri_gyr,
         'Tage': Tage,
         'dw_sfrmass': dw_sfrmass,
         'lookback_sim': lookback_sim,
@@ -1722,7 +1771,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # axes[2, 2].vlines(tsnap, 0, 1e11, color='gray', lw=2, ls='--')
     # axes[2, 2].hlines(dw_cold_gas_lower_limit, -0.1, T_peri*2, lw=2, ls='--', color='paleturquoise', label='lower limit of HI mass')
 
-    _plot_sfr_panel(axes[2, 1], lookback_sim, sfr_sim, lookback_obs, sfr_obs, t_peri)
+    _plot_sfr_panel(axes[2, 1], lookback_sim, sfr_sim, lookback_obs, sfr_obs, context.get('sfr_t_peri_gyr', t_peri))
 
     if verbose:
         print('SFR plotted.')
@@ -1868,27 +1917,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
 def main():
     global PLOT_CONTEXT
     os.environ.setdefault("DSPH_RUN_ID", str(os.getpid()))
-    PLOT_CONTEXT = build_plot_context()
-    modelname = PLOT_CONTEXT['modelname']
-
-    print('CubePath: ' + str(cube_path))
-
-    available_snapshots = DataProcessor.list_snapshot_numbers(folder_path)
-    if not available_snapshots:
-        raise FileNotFoundError(f"No snapshots found under {folder_path}")
-
-    elinfo_snapshots = PLOT_CONTEXT['elinfo_snapshots']
-
-    drawable_snapshots = sorted(set(available_snapshots) & set(elinfo_snapshots))
-    if not drawable_snapshots:
-        raise FileNotFoundError(
-            "No snapshot numbers are present in both the output directory and the elinfo file"
-        )
-
     parser = argparse.ArgumentParser(description='Process some integers.')
-    default_range = f'{elinfo_snapshots[0]},{elinfo_snapshots[-1]}'
-    
-    parser.add_argument('--range', type=str, default=default_range, help='the range of snapshots, e.g., "1,20"')
+    parser.add_argument('--range', type=str, default=None, help='the range of snapshots, e.g., "1,20"')
+    parser.add_argument('--snapshot-numbers', type=str, help='explicit comma-separated snapshot numbers, including actual gaps')
+    parser.add_argument('--video-only', action='store_true', help='encode current frames without loading particle snapshots or the plotting context')
+    parser.add_argument('--video-name', type=str, help='plain output .mp4 filename within the current display directory')
     parser.add_argument('--processes', type=int, default=1, help='number of processes to use')
     parser.add_argument('--chunksize', type=int, default=1, help='chunksize for pool.imap_unordered')
     parser.add_argument('--dispatch', choices=('blocks', 'dynamic'), default='blocks', help='task dispatch strategy: contiguous snapshot blocks or per-snapshot dynamic scheduling')
@@ -1903,8 +1936,57 @@ def main():
     parser.add_argument('--replace', action='store_true', help='replace existing .png files')
     args = parser.parse_args()
 
-    start, end = map(int, args.range.split(','))
+    explicit_numbers = None
+    if args.snapshot_numbers is not None:
+        explicit_numbers = sorted(set(int(n) for n in args.snapshot_numbers.split(',') if n.strip()))
+        if not explicit_numbers:
+            raise ValueError('--snapshot-numbers must contain at least one snapshot')
+
+    if args.video_only:
+        modelname = DataProcessor.parse_model_name_details()['modelname']
+        summary = CANONICAL_ANALYSIS_ROOT / f'elinfo_{modelname}.csv'
+        identity = display_identity(summary)
+        summary_rows = pd.read_csv(summary, comment='#', usecols=['numsp'])
+        summary_numbers = sorted(set(summary_rows['numsp'].astype(int).tolist()))
+        if not summary_numbers:
+            raise ValueError('The summary contains no snapshot rows')
+        start, end = map(int, (args.range or f'{summary_numbers[0]},{summary_numbers[-1]}').split(','))
+        selected = filter_available_snapshots(start, end, summary_numbers)
+        if explicit_numbers is not None:
+            missing = set(explicit_numbers) - set(selected)
+            if missing:
+                raise ValueError('Requested snapshots absent from the current summary: ' + format_limited_ints(sorted(missing)))
+            selected = explicit_numbers
+        prepare_display_directory(DISPLAY_OUTPUT_ROOT, identity)
+        video_name = args.video_name
+        if video_name is None and ordinary_media_reuse():
+            video_name = f"{modelname}_{identity['member_selection_id']}_tan_xi_eta_2p1_v1_v{PLOT_VIDEO_VERSION}.mp4"
+        finalize_display_outputs(output_folder, modelname, selected,
+                                 identity=identity, video_name=video_name)
+        print(f'PlotFig video-only completed: {len(selected)} existing frames encoded')
+        return
+
+    PLOT_CONTEXT = build_plot_context()
+    modelname = PLOT_CONTEXT['modelname']
+    PLOT_CONTEXT['video_name'] = args.video_name
+    if args.video_name is None and ordinary_media_reuse():
+        member_id = PLOT_CONTEXT['display_identity']['member_selection_id']
+        PLOT_CONTEXT['video_name'] = f'{modelname}_{member_id}_tan_xi_eta_2p1_v1_v{PLOT_VIDEO_VERSION}.mp4'
+    print('CubePath: ' + str(cube_path))
+    available_snapshots = DataProcessor.list_snapshot_numbers(folder_path)
+    if not available_snapshots:
+        raise FileNotFoundError(f"No snapshots found under {folder_path}")
+    elinfo_snapshots = PLOT_CONTEXT['elinfo_snapshots']
+    drawable_snapshots = sorted(set(available_snapshots) & set(elinfo_snapshots))
+    if not drawable_snapshots:
+        raise FileNotFoundError('No snapshots are present in both the output directory and the elinfo file')
+    start, end = map(int, (args.range or f'{elinfo_snapshots[0]},{elinfo_snapshots[-1]}').split(','))
     requested_numsp = filter_available_snapshots(start, end, drawable_snapshots)
+    if explicit_numbers is not None:
+        unavailable = set(explicit_numbers) - set(requested_numsp)
+        if unavailable:
+            raise ValueError('Requested snapshots absent from available data: ' + format_limited_ints(sorted(unavailable)))
+        requested_numsp = explicit_numbers
     missing_numsp = [numsp for numsp in range(start, end + 1) if numsp not in set(requested_numsp)]
     if not requested_numsp:
         raise FileNotFoundError(
@@ -1919,20 +2001,22 @@ def main():
         )
     output_dir = get_plot_context()['output_folder']
     identity = get_plot_context()['display_identity']
-    for numsp in requested_numsp:
-        path = make_plot_output_path(output_dir, numsp)
-        if is_complete_png(path) and not frame_is_current(path, identity) and not args.replace:
-            raise ValueError('Existing frame has a different or missing display identity; '
-                             'use a fresh DSPH_CANONICAL_OUTPUT_ROOT: ' + path)
+    prepare_display_directory(Path(output_dir).parent, identity)
+    if not ordinary_media_reuse():
+        for numsp in requested_numsp:
+            path = make_plot_output_path(output_dir, numsp)
+            if is_complete_png(path) and not frame_is_current(path, identity) and not args.replace:
+                raise ValueError('Existing frame has a different or missing display identity; '
+                                 'use a fresh DSPH_CANONICAL_OUTPUT_ROOT: ' + path)
     existing_numsp = [
         numsp for numsp in requested_numsp
-        if is_complete_png(make_plot_output_path(output_dir, numsp))
-        and frame_is_current(make_plot_output_path(output_dir, numsp), identity)
+        if reusable_frame(make_plot_output_path(output_dir, numsp), identity)
     ]
     incomplete_existing_numsp = [
         numsp for numsp in requested_numsp
         if (
-            os.path.exists(make_plot_output_path(output_dir, numsp))
+            not ordinary_media_reuse()
+            and os.path.exists(make_plot_output_path(output_dir, numsp))
             and not is_complete_png(make_plot_output_path(output_dir, numsp))
         )
     ]
@@ -1953,7 +2037,7 @@ def main():
     )
 
     if not pending_numsp:
-        if not validate_plot_outputs(output_dir, requested_numsp):
+        if not ordinary_media_reuse() and not validate_plot_outputs(output_dir, requested_numsp):
             sys.exit(2)
         finalize_display_outputs(output_dir, modelname, requested_numsp)
         print("PlotFig completed: plotted=0, skipped=0")
@@ -2005,7 +2089,7 @@ def main():
         finally:
             progress.close()
 
-    if not validate_plot_outputs(output_dir, requested_numsp):
+    if not ordinary_media_reuse() and not validate_plot_outputs(output_dir, requested_numsp):
         sys.exit(2)
 
     finalize_display_outputs(output_dir, modelname, requested_numsp)
@@ -2015,7 +2099,7 @@ def main():
 def plot_if_needed(numsp, show_mem, replace, profile=False, profile_memory=False, verbose=False):
     output_folder = get_plot_context()['output_folder']
     output_file = make_plot_output_path(output_folder, numsp)
-    if (not replace) and is_complete_png(output_file) and frame_is_current(output_file, get_plot_context()['display_identity']):
+    if (not replace) and reusable_frame(output_file, get_plot_context()['display_identity']):
         return {'numsp': numsp, 'status': 'skipped', 'output_file': output_file}
     return safe_plot(
         numsp,

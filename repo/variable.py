@@ -95,9 +95,23 @@ hot_gas_color = 'orangered'
 cold_gas_color = 'aquamarine'
 stars_color = 'royalblue' 
 
-Sname = './Sample1_'
-fcat =Sname+'candidates.csv'
-fndens = Sname+'density.csv'
+# Shared observational inputs stay in the data tree after code consolidation.
+_code_root = next((p for p in Path(__file__).resolve().parents if p.name == "Code"), None)
+if _code_root is not None:
+    import sys as _sys
+    if str(_code_root) not in _sys.path:
+        _sys.path.insert(0, str(_code_root))
+    from project_paths import OBSERVATION_DATA as _observation_data
+    _yang_data = _observation_data / "Yang_data"
+elif os.environ.get("FORNAX_OBSERVATION_ROOT"):
+    _yang_data = Path(os.environ["FORNAX_OBSERVATION_ROOT"]).expanduser() / "Yang_data"
+else:
+    # Explicit legacy standalone run directories retain their relative inputs.
+    _yang_data = Path(".")
+Sname = str(_yang_data / "Sample1_")
+fcat = Sname + 'candidates.csv'
+fndens = Sname + 'density.csv'
+
 # Isolation converters do not use a Milky Way cube configuration.
 cube_path = None if os.environ.get('DSPH_SKIP_CUBE_PATH') == '1' else get_cube_path()
 

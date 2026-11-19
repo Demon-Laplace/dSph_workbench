@@ -7,7 +7,8 @@ import time
 from basefunc import DataProcessor, GalaxySimulation
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import compute_snapshot_summary, require_hi_fraction_csv
-from canonical_observer import require_canonical_csv, canonical_csv_comment
+from canonical_observer import require_canonical_csv, canonical_csv_comment, production_output_root
+from display_outputs import ordinary_media_reuse
 from variable import core_radius_dict, folder_path, gizmo_config, orbit_file
 from pathlib import Path
 import sys
@@ -43,6 +44,9 @@ ELINFO_COLUMNS = [
     'sigma_x', 'sigma_y', 'sigma_z',
     'pmra', 'pmdec', 'cold_gas_center_ra', 'cold_gas_center_dec',
     'hi_mass', 'hi_half_mass', 'hi_fraction', 'hi_half_fraction', 'gas_mass', 'gas_half_mass',
+    'star_mass_3d5', 'gas_mass_3d5', 'hi_mass_3d5', 'hi_fraction_3d5', 'gas_npart_3d5',
+    'star_mass_3d15', 'gas_mass_3d15', 'hi_mass_3d15', 'hi_fraction_3d15', 'gas_npart_3d15',
+    'star_mass_3d5to15', 'gas_mass_3d5to15', 'hi_mass_3d5to15',
     'walker_R5_k_kms_per_deg', 'walker_R5_v0_kms', 'walker_R5_sigma_raw_mle_kms',
     'walker_R5_sigma_after_mle_kms', 'walker_R5_nstar',
     'numsp',
@@ -265,22 +269,17 @@ class GetInfo:
                 f"description: {self.description}"
             )
         
-        # Set up file paths using Path objects
-        self.inifile = DataProcessor.resolve_dwarf_ini_path(self.dwarf_name)
-        print(f"[GetInfo] Using initial INI file: {self.inifile}")
-        
-        # Get dwarf parameters
-        self.dw_particles = GalaxySimulation.get_dw_num(self.inifile)
-        if self.dw_particles <= 0:
-            raise ValueError(f"Invalid number of dwarf particles: {self.dw_particles}")
+        # Snapshot properties and positions select members. Historical initial
+        # particle counts are not required by any current summary calculation.
+        self.inifile = None
+        self.dw_particles = None
             
         self.core_radius = core_radius_dict.get(self.dwarf_name)
         if self.core_radius is None:
             raise ValueError(f"Core radius not found for dwarf: {self.dwarf_name}")
             
         # Set output file path
-        default_root=Path(folder_path).resolve() / 'analysis' / 'astropy_native_direct_v1'
-        self.output_csv_file = Path(os.environ.get('DSPH_CANONICAL_OUTPUT_ROOT',str(default_root))) / f'elinfo_{self.modelname}.csv'
+        self.output_csv_file = production_output_root(folder_path) / f'elinfo_{self.modelname}.csv'
         self.output_csv_file.parent.mkdir(parents=True,exist_ok=True)
         self.profile = False
         self.profile_memory = False
@@ -479,6 +478,8 @@ class GetInfo:
             canonical_csv_comment(),
             "# HI: M_HI=0.76*sum(M_gas*NeutralHydrogenAbundance), both temperature phases; coldgas_* are legacy HI aliases\n",
             "# hi_fraction=M_HI/(M_star+M_HI) in the same aperture; gas_mass/gas_half_mass include all gas\n",
+            "# *_3d5 and *_3d15: strict spherical r<5/15 kpc around the same current spatial dwarf centre, all gas origins and both temperature phases; hi_fraction_3d*=M_HI/(M_star+M_HI) in that same sphere\n",
+            "# *_3d5to15: 5<=r<15 kpc; any larger requested gas radius is preselection only. Legacy unsuffixed projected/half-mass estimators retain their named apertures\n",
             "# star_mass and star_half_mass include old and newly formed dwarf stars within their existing apertures\n",
             "# rhalf: projected elliptical half-light semi-major axis of old stars\n",
             "# rhalf_circularized: equal-area value rhalf*sqrt(1-eps)\n",
@@ -494,15 +495,23 @@ class GetInfo:
         # 断点续写：读取已完成的numsp。读取时会清理历史中断留下的乱序、重复或坏行。
         finished_numsp = set()
         try:
-            cleanup_report = self.merge_rows_sorted([], comments=output_comments)
-            self.warn_about_csv_report(cleanup_report)
-            existing_report = read_elinfo_csv(self.output_csv_file)
+            if ordinary_media_reuse():
+                # Normal resume parsing supplies the work list; do not reread
+                # or rewrite an otherwise reusable CSV as an acceptance step.
+                existing_report = read_elinfo_csv(self.output_csv_file)
+                self.warn_about_csv_report(existing_report)
+            else:
+                cleanup_report = self.merge_rows_sorted([], comments=output_comments)
+                self.warn_about_csv_report(cleanup_report)
+                existing_report = read_elinfo_csv(self.output_csv_file)
             finished_numsp = set(existing_report['rows_by_numsp'])
         except ValueError as e:
             print(str(e))
             print("Please rebuild elinfo from scratch before resuming with the refactored GetInfo.py.")
             sys.exit(1)
         except Exception as e:
+            if ordinary_media_reuse():
+                raise
             print(f"Warning: Failed to read existing csv: {e}")
 
         # 只处理未完成的快照
@@ -532,9 +541,10 @@ class GetInfo:
         else:
             print("All snapshots in the specified range have already been processed.")
 
-        self.sort_csv_by_numsp(comments=output_comments)
-        if not self.validate_output(requested_numsp):
-            sys.exit(2)
+        if not ordinary_media_reuse():
+            self.sort_csv_by_numsp(comments=output_comments)
+            if not self.validate_output(requested_numsp):
+                sys.exit(2)
 
     def sort_csv_by_numsp(self, comments=None):
         report = self.merge_rows_sorted([], comments=comments or [])

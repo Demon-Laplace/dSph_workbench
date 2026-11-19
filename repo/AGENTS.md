@@ -108,17 +108,26 @@ named legacy diagnostic, never a Walker61/R5 replacement. Raw and residual MLE
 dispersion are separately named. Do not reuse legacy observer search/probability
 results as canonical without remeasurement.
 
-Canonical analysis requires cohort_ids.npz (particle_id unique uint64) at
-output/analysis/astropy_native_direct_v1 or explicit DSPH_PREEXISTING_ID_PATH.
-Record selected_then_frozen, not all initial IC stars. Missing or changed
-cohorts fail closed. CSV observer/config/cohort SHA guards prevent mixed-frame
-or mixed-member continuation. New outputs live beside the snapshot in
-output/analysis/astropy_native_direct_v1; DSPH_CANONICAL_OUTPUT_ROOT explicitly
-selects a fresh validation/output directory. Legacy CSV/images/videos, raw
-snapshots/ICs, GIZMO, user shell launchers, and the paper are preserved.
-The frozen cohort is the old-star photometric reference. Velocity dispersions,
-Walker fits, R5 motion and velocity maps/profiles include newly formed current
-dwarf members; do not restrict these statistics to that initial cohort.
+Current production membership uses particle properties and the current spatial
+density-centre aperture, under member_selection_id=current_spatial_properties_seeded_v2.
+Source particle IDs and initial origin never gate the primary sample. Repeated
+IDs retain every physical row. Explicit analysis_row labels align working arrays;
+optional source IDs remain separately named, in their original non-object dtype.
+No cohort_ids.npz or ID-origin certification is required. TP2/3 remain the
+separately named light tracer; all current member stars enter the kinematics.
+Formation times or recorded ages are read for every stellar type independently
+of the light-tracer label. Missing fields are NaN; recorded zero or negative
+formation time is not replaced by an unknown-age assumption. Units come from
+the actual run parameters, an explicit override or the declared canonical units.
+Gas inventories include all TP0 rows within strict 3D r<5 and r<15 kpc, plus
+5<=r<15 kpc. HI fractions use stellar and HI mass in the same sphere. A larger
+gas radius is preselection only; the legacy projected and half-mass estimators
+keep their existing names and apertures. Observer and measurement definitions
+remain unchanged. New outputs add current_spatial_properties_seeded_v2 beneath the
+canonical observer directory; CSV membership identity prevents appending to
+old-member results. DSPH_CANONICAL_OUTPUT_ROOT remains an explicit output option.
+Legacy results, raw snapshots/ICs, frozen releases, user launchers and the paper
+are preserved. Historical ID-reference helpers are outside the primary path.
 
 Production TAN media use display_contract_id=heliocentric_tan_xi_eta_2p1_v1
 and live under the canonical analysis root's display/<display_contract_id>/.
@@ -131,3 +140,5 @@ identities. An unlabelled or changed-contract complete PNG cannot be resumed.
 Old raw media and pinned runs remain untouched. Workflow release publication,
 editable-source installation and Linux client synchronization are separate;
 updating one does not update the others. Existing user .sh files stay unchanged.
+
+The seeded_v2 centre follows an existing geometric trajectory only as a local search seed and remeasures physical stars per snapshot using the shared spatial helpers. DSPH_SPATIAL_CONTEXT and DSPH_SPATIAL_HELPERS_DIRECTORY provide the job-package inputs. Source IDs never gate the current sample.

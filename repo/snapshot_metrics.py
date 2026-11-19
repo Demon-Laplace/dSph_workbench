@@ -31,6 +31,46 @@ def hi_fraction(hi_mass, stellar_mass):
     return float(hi_mass / denominator) if np.isfinite(denominator) and denominator > 0 else np.nan
 
 
+def spatial_aperture_inventory(snapshot):
+    """All physical stellar/gas rows in matched strict 3D5/15-kpc apertures."""
+    df = snapshot['df']
+    mass = df['m'].to_numpy()
+    tp = df['tp'].to_numpy()
+    neutral = df['nh'].to_numpy()
+    needs_geometry = any('dw_' + component + '_mask_3d' + str(radius) not in snapshot
+                         for component in ('gas', 'star') for radius in (5, 15))
+    if needs_geometry:
+        center = (snapshot['dw_xc'], snapshot['dw_yc'], snapshot['dw_zc'])
+        radius_squared = np.zeros(len(df), dtype=np.float64)
+        for axis, center_component in zip(('x', 'y', 'z'), center):
+            offset = df[axis].to_numpy(dtype=np.float64) - center_component
+            radius_squared += offset * offset
+    result = {}
+    gas_masks = {}
+    star_masks = {}
+    for radius in (5, 15):
+        gas_key, star_key = 'dw_gas_mask_3d' + str(radius), 'dw_star_mask_3d' + str(radius)
+        gas = np.asarray(snapshot[gas_key] if gas_key in snapshot else
+                         (tp == 0) & (radius_squared < radius ** 2), dtype=bool)
+        stars = np.asarray(snapshot[star_key] if star_key in snapshot else
+                           np.isin(tp, [2, 3, 4]) & (radius_squared < radius ** 2), dtype=bool)
+        gas_masks[radius], star_masks[radius] = gas, stars
+        stellar_mass = float(np.sum(mass[stars], dtype=np.float64))
+        hi_mass = float(np.sum(hi_particle_masses(mass[gas], neutral[gas]), dtype=np.float64))
+        suffix = '_3d' + str(radius)
+        result['star_mass' + suffix] = stellar_mass
+        result['gas_mass' + suffix] = float(np.sum(mass[gas], dtype=np.float64))
+        result['hi_mass' + suffix] = hi_mass
+        result['hi_fraction' + suffix] = hi_fraction(hi_mass, stellar_mass)
+        result['gas_npart' + suffix] = int(np.count_nonzero(gas))
+    outer_gas = gas_masks[15] & ~gas_masks[5]
+    outer_stars = star_masks[15] & ~star_masks[5]
+    result['gas_mass_3d5to15'] = float(np.sum(mass[outer_gas], dtype=np.float64))
+    result['hi_mass_3d5to15'] = float(np.sum(hi_particle_masses(mass[outer_gas], neutral[outer_gas]), dtype=np.float64))
+    result['star_mass_3d5to15'] = float(np.sum(mass[outer_stars], dtype=np.float64))
+    return result
+
+
 def require_hi_fraction_csv(path):
     """Reject unversioned or legacy M_HI/M_star CSVs before plotting/resuming."""
     expected = "# hi_fraction=M_HI/(M_star+M_HI) in the same aperture;"
@@ -81,19 +121,17 @@ def stellar_mass_components(masses, aperture_mask, old_star_mask):
 
 def old_dwarf_star_local_mask(snapshot):
     """Return a local mask selecting old dwarf stars from total_dw_star_mask arrays."""
+    if "old_star_local_mask" in snapshot:
+        return np.asarray(snapshot["old_star_local_mask"], dtype=bool)
     if "fixed_old_local_mask" in snapshot:
         return np.asarray(snapshot["fixed_old_local_mask"],dtype=bool)
     df = snapshot["df"]
     total_dw_star_mask = np.asarray(snapshot["total_dw_star_mask"], dtype=bool)
 
-    if "birth" in df.columns:
-        birth = df.loc[total_dw_star_mask, "birth"].to_numpy(dtype=float)
-        return birth == 0
-
     # In the current snapshots, pre-existing collisionless dwarf stars are
     # particle types 2/3; newly formed stars are type 4 and carry birth times.
     tp = df.loc[total_dw_star_mask, "tp"].to_numpy(dtype=int)
-    return tp != 4
+    return np.isin(tp, [2, 3])
 
 
 def fit_velocity_gradient(x_kpc, y_kpc, vlos, mask=None):
@@ -549,6 +587,7 @@ def compute_snapshot_summary(snapshot, numsp):
         theoretical_sigma = np.sqrt(baryon_half_mass / 930.0 / (r_half_3d * 1000.0))
 
     return {
+        **spatial_aperture_inventory(snapshot),
         "star_mass": star_mass,
         "star_mass_old_tracer": star_mass_old_tracer,
         "star_mass_new": star_mass_new,

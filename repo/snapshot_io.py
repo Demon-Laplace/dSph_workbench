@@ -7,14 +7,134 @@ import h5py
 
 import readsnap as giz
 import zim
+from canonical_observer import LENGTH_CODE_TO_KPC, VELOCITY_CODE_TO_KMS
 
 AUTO_BOXSIZE_PRINTED_LOCAL = False
 
 
 class SnapshotLoaderMixin:
     GAS_FIELD_ORDER = ('temp', 'rho', 'nh', 'sfr', 'ugas')
-    STAR_FIELD_ORDER = ('birth',)
+    STAR_FIELD_ORDER = ('birth', 'stellar_age_gyr')
     DEFAULT_PARTICLE_TYPES = (0, 1, 2, 3, 4)
+    # Noncosmological production units, matching the explicit position/velocity
+    # conversion. Dataset time-unit attributes take precedence for stored fields.
+    stellar_time_code_to_gyr = LENGTH_CODE_TO_KPC * 3.0856775814913673e16 / VELOCITY_CODE_TO_KMS / (365.25 * 86400 * 1.e9)
+    stellar_age_default_unit = 'code_time'
+
+    @staticmethod
+    def _source_particle_ids(source, key, count):
+        """Optional source labels: a metadata read cannot invalidate physical rows."""
+        if key not in source:
+            return None, False, 'field_absent'
+        try:
+            values = np.asarray(source[key][:])
+            if values.ndim != 1 or len(values) != count:
+                return None, False, 'source_label_shape_does_not_align_with_particle_rows'
+            if values.dtype.kind == 'O':
+                if not all(isinstance(value, (str, bytes)) for value in values):
+                    return None, False, 'unsupported_object_source_label_dtype'
+                values = np.asarray([value.decode('utf-8') if isinstance(value, bytes) else value
+                                     for value in values], dtype=str)
+            return values, True, 'recorded_source_labels'
+        except (OSError, TypeError, ValueError, KeyError, RuntimeError) as error:
+            return None, False, 'source_label_read_error: ' + str(error)
+
+    def _attach_source_ids(self, frame):
+        """Keep optional source arrays in their original non-object dtype."""
+        blocks = self.source_particle_id_blocks
+        complete = sum(len(block['values']) for block in blocks) == len(frame)
+        same_dtype = bool(blocks) and all(block['values'].dtype == blocks[0]['values'].dtype for block in blocks)
+        self.source_particle_ids = None
+        if complete and same_dtype:
+            labels = np.empty(len(frame), dtype=blocks[0]['values'].dtype)
+            for block in blocks:
+                labels[block['start']:block['stop']] = block['values']
+            self.source_particle_ids = labels
+            frame['source_particle_id'] = labels
+            # Historical alias remains actual source metadata, never row labels.
+            frame['id'] = labels
+
+    def _configure_stellar_time_units(self, header):
+        """Resolve physical time units from explicit input or the actual run parameters."""
+        from pathlib import Path
+        seconds_per_gyr = 365.25 * 86400 * 1.e9
+        if 'DSPH_STELLAR_TIME_CODE_TO_GYR' in os.environ:
+            self.stellar_time_code_to_gyr = float(os.environ['DSPH_STELLAR_TIME_CODE_TO_GYR'])
+            self.stellar_time_unit_source = 'explicit DSPH_STELLAR_TIME_CODE_TO_GYR'
+        elif 'stellar_time_code_to_gyr' in self.__dict__:
+            self.stellar_time_unit_source = getattr(self, 'stellar_time_unit_source', 'explicit loader time-unit parameter')
+        elif 'UnitTime_in_s' in header:
+            self.stellar_time_code_to_gyr = float(header['UnitTime_in_s']) / seconds_per_gyr
+            self.stellar_time_unit_source = 'snapshot Header/UnitTime_in_s'
+        else:
+            parameter_units = {}
+            folder = getattr(self, 'folder_path', None)
+            if folder is not None:
+                run = Path(folder)
+                candidates = [directory / name for name in ('GZWJL.PARAM-usedvalues', 'GZWJL.PARAM')
+                              for directory in (run, run.parent)]
+                for path in candidates:
+                    if not path.is_file():
+                        continue
+                    parameter_units = {}
+                    for line in path.read_text(encoding='utf-8').splitlines():
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[0] in ('UnitLength_in_cm', 'UnitVelocity_in_cm_per_s'):
+                            parameter_units[parts[0]] = float(parts[1])
+                    if len(parameter_units) == 2:
+                        self.stellar_time_code_to_gyr = (parameter_units['UnitLength_in_cm'] /
+                            parameter_units['UnitVelocity_in_cm_per_s'] / seconds_per_gyr)
+                        self.stellar_time_unit_source = str(path)
+                        break
+            if not hasattr(self, 'stellar_time_unit_source'):
+                self.stellar_time_unit_source = 'explicit canonical production length/velocity units'
+        if not np.isfinite(self.stellar_time_code_to_gyr) or self.stellar_time_code_to_gyr <= 0:
+            raise ValueError('Stellar time unit must be a finite positive number of Gyr per code time')
+
+    def _stellar_time_factor(self, dataset, default_unit):
+        annotated = next((dataset.attrs[key] for key in ('Units', 'Unit', 'units', 'unit')
+                          if key in dataset.attrs), default_unit)
+        if isinstance(annotated, bytes):
+            annotated = annotated.decode('utf-8')
+        unit = str(annotated).lower().replace(' ', '').replace('_', '')
+        factors = {'gyr': 1., 'myr': 1.e-3, 'kyr': 1.e-6, 'yr': 1.e-9,
+                   'year': 1.e-9, 'years': 1.e-9, 's': 1. / (365.25 * 86400 * 1.e9),
+                   'sec': 1. / (365.25 * 86400 * 1.e9),
+                   'codetime': self.stellar_time_code_to_gyr,
+                   'codeunits': self.stellar_time_code_to_gyr}
+        return factors.get(unit), str(annotated)
+
+    def _stellar_age_fields(self, group, count):
+        """Read recorded ages/formation times independently of type, ID or origin."""
+        birth = np.full(count, np.nan, dtype=np.float32)
+        age = np.full(count, np.nan, dtype=np.float32)
+        formation = next((name for name in ('StellarFormationTime', 'BirthTime', 'FormationTime')
+                          if name in group), None)
+        explicit_age = next((name for name in ('StellarAge', 'StellarAges', 'Age', 'Ages')
+                             if name in group), None)
+        info = dict(formation_field=formation, age_field=explicit_age,
+                    snapshot_time_code=float(self.time),
+                    time_code_to_Gyr=float(self.stellar_time_code_to_gyr),
+                    time_unit_source=getattr(self, 'stellar_time_unit_source', 'explicit loader time-unit parameter'))
+        if formation is not None:
+            factor, unit = self._stellar_time_factor(group[formation], 'code_time')
+            info['formation_unit'] = unit
+            if factor is not None:
+                birth[:] = np.asarray(group[formation][:], dtype=np.float32) * (factor / self.stellar_time_code_to_gyr)
+        if explicit_age is not None:
+            factor, unit = self._stellar_time_factor(group[explicit_age], self.stellar_age_default_unit)
+            info.update(age_unit=unit, method='recorded_age' if factor is not None else 'unsupported_recorded_age_unit')
+            if factor is not None:
+                age[:] = np.asarray(group[explicit_age][:], dtype=np.float32) * factor
+        elif formation is not None:
+            # Zero and negative formation times are actual recorded values;
+            # negative times can describe formation before simulation start.
+            age[:] = (float(self.time) - birth) * self.stellar_time_code_to_gyr
+            info['method'] = 'snapshot_time_minus_recorded_formation_time'
+        else:
+            info['method'] = 'recorded_age_and_formation_time_absent'
+        info['available_N'] = int(np.count_nonzero(np.isfinite(age) & (age >= 0)))
+        return birth, age, info
 
     @staticmethod
     def _readsnap_quiet(*args, **kwargs):
@@ -39,6 +159,10 @@ class SnapshotLoaderMixin:
                 star_columns = [field for field in cls.STAR_FIELD_ORDER if field in set(star_fields)]
         else:
             star_columns = []
+
+        if star_columns:
+            # Keep both field definitions available whenever stellar times are requested.
+            star_columns = list(cls.STAR_FIELD_ORDER)
 
         return gas_columns, star_columns
 
@@ -107,6 +231,7 @@ class SnapshotLoaderMixin:
         with h5py.File(fname, 'r') as first_file:
             header = first_file['Header'].attrs
             self.time = float(header['Time'])
+            self._configure_stellar_time_units(header)
             npart_total = np.asarray(header['NumPart_Total'], dtype=np.int64)
             mass_table = np.asarray(header['MassTable'], dtype=np.float64)
             numfiles = int(header['NumFilesPerSnapshot'])
@@ -120,7 +245,8 @@ class SnapshotLoaderMixin:
         )
 
         df_data = {
-            'id': np.zeros(total_particles, dtype=np.uint64),
+            'analysis_row': np.arange(total_particles, dtype=np.uint64),
+            'source_id_available': np.zeros(total_particles, dtype=bool),
             'x': np.zeros(total_particles, dtype=np.float32),
             'y': np.zeros(total_particles, dtype=np.float32),
             'z': np.zeros(total_particles, dtype=np.float32),
@@ -138,8 +264,11 @@ class SnapshotLoaderMixin:
             df_data['ags'] = np.zeros(total_particles, dtype=np.float32)
         if dftype >= 3:
             for col in star_columns:
-                df_data[col] = np.zeros(total_particles, dtype=np.float32)
+                df_data[col] = np.full(total_particles, np.nan, dtype=np.float32)
 
+        self.stellar_age_metadata = []
+        self.source_id_metadata = []
+        self.source_particle_id_blocks = []
         offsets = {tp: 0 for tp in selected_types}
         running_offset = 0
         for tp in selected_types:
@@ -169,7 +298,11 @@ class SnapshotLoaderMixin:
                         for axis, column in enumerate(columns):
                             df_data[column][slice_idx] = vectors[:, axis]
                         del vectors
-                    df_data['id'][slice_idx] = group['ParticleIDs'][:]
+                    labels, available, id_status = self._source_particle_ids(group, 'ParticleIDs', npart)
+                    df_data['source_id_available'][slice_idx] = available
+                    self.source_id_metadata.append(dict(particle_type=tp, status=id_status))
+                    if labels is not None:
+                        self.source_particle_id_blocks.append(dict(start=start, stop=stop, values=labels))
                     df_data['tp'][slice_idx] = tp
 
                     if mass_table[tp] > 0.0:
@@ -206,8 +339,11 @@ class SnapshotLoaderMixin:
                         if dftype == 4 and 'AGS-Softening' in group:
                             df_data['ags'][slice_idx] = group['AGS-Softening'][:]
 
-                    if 'birth' in star_columns and tp == 4 and dftype >= 3 and 'StellarFormationTime' in group:
-                        df_data['birth'][slice_idx] = group['StellarFormationTime'][:]
+                    if star_columns and tp in (2, 3, 4):
+                        birth, age, info = self._stellar_age_fields(group, npart)
+                        df_data['birth'][slice_idx] = birth
+                        df_data['stellar_age_gyr'][slice_idx] = age
+                        self.stellar_age_metadata.append(dict(particle_type=tp, **info))
 
                     offsets[tp] = stop
 
@@ -224,6 +360,7 @@ class SnapshotLoaderMixin:
             print("Box centering skipped. Ensure coordinates are already centered if needed.")
 
         df = pd.DataFrame(df_data, copy=False)
+        self._attach_source_ids(df)
         self.df = df
         return df, self.time
 
@@ -231,16 +368,13 @@ class SnapshotLoaderMixin:
         """Load snapshot data into a DataFrame."""
         try:
             selected_types = self._resolve_particle_types(particle_types)
-            try:
-                direct_result = self._load_snapshot_direct_hdf5(
-                    dftype=dftype,
-                    box=box,
-                    gas_fields=gas_fields,
-                    star_fields=star_fields,
-                    particle_types=selected_types,
-                )
-            except Exception:
-                direct_result = None
+            direct_result = self._load_snapshot_direct_hdf5(
+                dftype=dftype,
+                box=box,
+                gas_fields=gas_fields,
+                star_fields=star_fields,
+                particle_types=selected_types,
+            )
             if direct_result is not None:
                 return direct_result
 
@@ -250,6 +384,7 @@ class SnapshotLoaderMixin:
                 raise ValueError(f"Failed to read snapshot {self.snapshot_num} from {self.folder_path}")
 
             self.time = hdr['time']
+            self._configure_stellar_time_units(hdr)
             npart_total = hdr['npartTotal']
             total_particles = int(sum(int(npart_total[tp]) for tp in selected_types))
 
@@ -260,7 +395,8 @@ class SnapshotLoaderMixin:
             )
 
             df_data = {
-                'id': np.zeros(total_particles, dtype=np.uint64),
+                'analysis_row': np.arange(total_particles, dtype=np.uint64),
+                'source_id_available': np.zeros(total_particles, dtype=bool),
                 'x': np.zeros(total_particles, dtype=np.float32),
                 'y': np.zeros(total_particles, dtype=np.float32),
                 'z': np.zeros(total_particles, dtype=np.float32),
@@ -278,8 +414,11 @@ class SnapshotLoaderMixin:
                 df_data['ags'] = np.zeros(total_particles, dtype=np.float32)
             if dftype >= 3:
                 for col in star_columns:
-                    df_data[col] = np.zeros(total_particles, dtype=np.float32)
+                    df_data[col] = np.full(total_particles, np.nan, dtype=np.float32)
 
+            self.stellar_age_metadata = []
+            self.source_id_metadata = []
+            self.source_particle_id_blocks = []
             offset = 0
             for tp in selected_types:
                 data = self._readsnap_quiet(
@@ -299,7 +438,11 @@ class SnapshotLoaderMixin:
                 pos = data['p'].astype(np.float32, copy=False)
                 vel = data['v'].astype(np.float32, copy=False)
 
-                df_data['id'][slice_idx] = data['id'].astype(np.uint64, copy=False)
+                labels, available, id_status = self._source_particle_ids(data, 'id', npart)
+                df_data['source_id_available'][slice_idx] = available
+                self.source_id_metadata.append(dict(particle_type=tp, status=id_status))
+                if labels is not None:
+                    self.source_particle_id_blocks.append(dict(start=offset, stop=offset + npart, values=labels))
                 df_data['x'][slice_idx] = pos[:, 0]
                 df_data['y'][slice_idx] = pos[:, 1]
                 df_data['z'][slice_idx] = pos[:, 2]
@@ -324,8 +467,15 @@ class SnapshotLoaderMixin:
                     if dftype == 4 and 'ags' in data:
                         df_data['ags'][slice_idx] = data['ags'].astype(np.float32, copy=False)
 
-                if 'birth' in star_columns and tp == 4 and dftype >= 3:
-                    df_data['birth'][slice_idx] = data['age'].astype(np.float32, copy=False)
+                if star_columns and tp in (2, 3, 4):
+                    # readsnap's ``age`` key denotes StellarFormationTime, not age.
+                    if 'age' in data:
+                        formed = np.asarray(data['age'], dtype=np.float32)
+                        df_data['birth'][slice_idx] = formed
+                        df_data['stellar_age_gyr'][slice_idx] = (float(self.time) - formed) * self.stellar_time_code_to_gyr
+                    self.stellar_age_metadata.append(dict(particle_type=tp,
+                        method='readsnap_recorded_formation_time' if 'age' in data else 'recorded_time_absent',
+                        time_code_to_Gyr=float(self.stellar_time_code_to_gyr)))
 
                 offset += npart
 
@@ -342,6 +492,7 @@ class SnapshotLoaderMixin:
                 print("Box centering skipped. Ensure coordinates are already centered if needed.")
 
             df = pd.DataFrame(df_data, copy=False)
+            self._attach_source_ids(df)
             self.df = df
             return df, self.time
 

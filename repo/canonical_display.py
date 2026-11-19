@@ -78,7 +78,7 @@ def tangent_coordinates(projected):
 
 
 def tangent_velocity_grid40(projected, vlos_kms, *, display_v0_kms):
-    """Rebin frozen per-ID LOS in the +/-2.1-degree square TAN display.
+    """Rebin the aligned per-row LOS in the +/-2.1-degree square TAN display.
 
     Every occupied bin has a number-weighted mean.  Returned value/count arrays
     are [xi_bin, eta_bin]; transpose once when using the XY vertex meshes.
@@ -88,12 +88,12 @@ def tangent_velocity_grid40(projected, vlos_kms, *, display_v0_kms):
     xi, eta = tangent_coordinates(projected)
     front = np.asarray(projected['front_mask'])
     v0 = _finite_scalar(display_v0_kms, 'display_v0_kms')
-    if ids.ndim != 1 or ids.dtype != np.dtype('uint64') or len(np.unique(ids)) != len(ids):
-        raise ValueError('particle_id must be a one-dimensional unique uint64 array')
+    if ids.ndim != 1:
+        raise ValueError('catalogue labels must be one-dimensional and row-aligned')
     if (velocity.shape != ids.shape or xi.shape != ids.shape or eta.shape != ids.shape
             or front.shape != ids.shape or front.dtype != np.dtype('bool')
             or not np.all(np.isfinite(velocity))):
-        raise ValueError('one finite frozen LOS and sky position per ID are required')
+        raise ValueError('one finite LOS and sky position per physical catalogue row are required')
     edges = np.linspace(-2.1, 2.1, 41)
     use = (front & np.isfinite(xi) & np.isfinite(eta)
            & (np.abs(xi) <= 2.1) & (np.abs(eta) <= 2.1))
