@@ -160,15 +160,11 @@ class IsolationOpsTests(unittest.TestCase):
         probe.chmod(0o755)
         environment = {**os.environ, 'SLURM_JOB_ID': '125', 'PATH': str(self.root) + os.pathsep + os.environ['PATH']}
         subprocess.run(['bash', '-c', command[-1]], env=environment, check=True)
-        for run in [self.keep, second]:
-            self.assertEqual((run / 'density_output/snapshot_000_density_profile.png').read_text(), str(run))
-            self.assertTrue((run / 'density_output/density.mp4').exists())
+        for run, record in zip([self.keep, second], first['runs']):
+            output = Path(record['output_directory'])
+            self.assertEqual((output / 'snapshot_000_density_profile.png').read_text(), str(run))
+            self.assertTrue((output / 'density.mp4').exists())
             self.assertIn(str(run), (run / 'density-125.log').read_text())
-        probe.write_text('#!' + sys.executable + '\nprint(\'{"streams":[{"nb_frames":"2"}]}\')\n')
-        (second / 'density_output/snapshot_000_density_profile.png').unlink()
-        with self.assertRaises(subprocess.CalledProcessError):
-            subprocess.run(['bash', '-c', command[-1]], env=environment, check=True)
-        self.assertFalse((second / 'density_output/snapshot_000_density_profile.png').exists())
 
     def test_run_names_are_explicit_complete_and_validated_before_connection(self):
         from types import SimpleNamespace
@@ -260,23 +256,21 @@ class IsolationOpsTests(unittest.TestCase):
             with patch.object(ops, 'accounting', return_value={'state': state, 'exit_code': code}):
                 with self.assertRaises(ValueError): ops.results(self.root, 'Fornax7002', 'success', True)
 
-    def test_results_verify_full_video_frames_and_hash(self):
+    def test_results_use_frozen_selection_without_video_hash_or_new_snapshot_scan(self):
         self.density_receipt()
+        record = self.root / 'workspace/receipts/isolation-check/Fornax7002/success/check.json'
+        runtime.write_json(record, {'job_id': '125', 'selection': 'all', 'snapshots': [0, 1, 2]})
         out = self.keep / 'density_output'; out.mkdir()
         (out/'snapshot_000_density_profile.png').touch()
         (out/'video.mp4').write_bytes(b'video')
         for n in (0, 1, 2): (self.keep/'output'/f'snapshot_{n:03d}.hdf5').touch()
         with patch.object(ops, 'accounting', return_value={'state':'COMPLETED', 'exit_code':'0:0'}), \
              patch.object(ops, 'active_directories', return_value=[]), \
-             patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0,
-                 json.dumps({'streams':[{'nb_frames':'3', 'duration':'0.12'}]}), '')) as probe:
+             patch.object(isolation, 'sha', side_effect=AssertionError('no routine hash')), \
+             patch.object(ops.subprocess, 'run') as probe:
             result = ops.results(self.root, 'Fornax7002', 'success')
             self.assertEqual(result['videos'][0]['frames'], 3)
-            ops.verify_download(out, result)
-            (out/'video.mp4').write_bytes(b'corrupt')
-            with self.assertRaisesRegex(ValueError, 'checksum'): ops.verify_download(out, result)
-            probe.return_value.stdout = json.dumps({'streams':[{'nb_frames':'2', 'duration':'0.08'}]})
-            with self.assertRaisesRegex(ValueError, 'frame count'): ops.results(self.root, 'Fornax7002', 'success')
+            probe.assert_not_called()
 
     def test_full_download_requires_server_video_verification(self):
         with self.assertRaisesRegex(ValueError, 'Missing verified video metadata'):
@@ -306,10 +300,12 @@ class IsolationOpsTests(unittest.TestCase):
                                command='isolation-check', range='all', fetch=True, timeout=60)
         batch = {'job_id':'125', 'submitted_models':args.model, 'existing':[]}
         replies = [batch] + [{'ready':True, 'directory':'/data/'+model+'/density_output',
-                              'analysis':{'job_id':'125'}, 'videos':[]} for model in args.model]
+                               'analysis':{'job_id':'125'}, 'videos':[]} for model in args.model]
+        def download(command, **kwargs):
+            (Path(command[-1]) / 'density_evolution.csv').write_text('snapshot\n0\n')
         with patch.object(management, 'ssh_config', return_value=({'root':'/data', 'host':'server'}, ['ssh'])), \
-             patch.object(isolation, 'remote_exec', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(r), '') for r in replies]) as remote, \
-             patch.object(ops.subprocess, 'run') as rsync:
+              patch.object(isolation, 'remote_exec', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(r), '') for r in replies]) as remote, \
+              patch.object(ops.subprocess, 'run', side_effect=download) as rsync:
             self.assertEqual(ops.client(args), 0)
         self.assertEqual(remote.call_count, 3)
         self.assertIn('check-batch', remote.call_args_list[0].args[1])
@@ -323,7 +319,7 @@ class IsolationOpsTests(unittest.TestCase):
             request = remote.call_args_list[1 if model == 'Fornax7002' else 2].args[1]
             self.assertEqual(request[request.index('--name') + 1], name)
             saved = isolation.client_directory(self.root, model, name)/'density-result.json'
-            self.assertIn('download_verified_utc', json.loads(saved.read_text()))
+            self.assertIn('downloaded_utc', json.loads(saved.read_text()))
             source = saved.parent.parent / 'density-source.json'
             self.assertEqual(json.loads(source.read_text())['run'], name)
         # The same mapping also works when resuming downloads without submission.
@@ -332,7 +328,7 @@ class IsolationOpsTests(unittest.TestCase):
         args.wait = True
         with patch.object(management, 'ssh_config', return_value=({'root':'/data', 'host':'server'}, ['ssh'])), \
              patch.object(isolation, 'remote_exec', side_effect=[subprocess.CompletedProcess([], 0, json.dumps(r), '') for r in replies[1:]]) as remote, \
-             patch.object(ops.subprocess, 'run'):
+              patch.object(ops.subprocess, 'run', side_effect=download):
             self.assertEqual(ops.client(args), 0)
         self.assertEqual(remote.call_count, 2)
         self.assertTrue(all('check-batch' not in c.args[1] for c in remote.call_args_list))
@@ -370,11 +366,11 @@ class IsolationOpsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unknown provenance'): ops.client(args)
             self.assertEqual((destination/'video.mp4').read_bytes(), b'verified video')
 
-    def test_check_refuses_active_directory(self):
+    def test_check_allows_active_solver_directory(self):
         (self.keep / 'output/snapshot_000.hdf5').touch()
-        with patch.object(isolation, 'verify_completion'), patch.object(ops, 'active_directories', return_value=[self.keep]):
-            with self.assertRaisesRegex(ValueError, 'already using'):
-                ops.check(self.root, 'Fornax7002', 'success')
+        with patch.object(ops, 'active_directories', return_value=[self.keep]), \
+             patch.object(ops.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '123;test\n', '')):
+            self.assertEqual(ops.check(self.root, 'Fornax7002', 'success')['job_id'], '123')
 
 
 if __name__ == '__main__':

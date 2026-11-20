@@ -264,7 +264,7 @@ def write_report(report, prefix, target_time=None):
                   old['prograde_mass_fraction']), flush=True)
 
 
-def startup_evidence(directory, elapsed):
+def startup_evidence(directory, elapsed, after_time=0.):
     """Small in-allocation progress check; never open particle/snapshot data."""
     info = directory/'output/info.txt'
     if elapsed < 140 or not info.is_file():
@@ -273,14 +273,14 @@ def startup_evidence(directory, elapsed):
         stream.seek(max(0, info.stat().st_size-16384))
         text = stream.read().decode(errors='replace')
     times = re.findall(r'Sync-Point\s+\d+,\s*Time:\s*([0-9.eE+-]+)', text)
-    if not times or float(times[-1]) <= 0:
+    if not times or float(times[-1]) <= after_time:
         return None
     return {'state': 'started', 'elapsed_seconds': elapsed, 'time_code': float(times[-1]),
             'job_id': os.environ.get('SLURM_JOB_ID'),
             'scope': 'At least 140 running seconds and nonzero integration, not equilibrium validation.'}
 
 
-def run_solver(parameters, solver, monitor=False):
+def run_solver(parameters, solver, monitor=False, rerun=None, restart_time=0.):
     directory = parameters.resolve().parent
     started = time.monotonic()
     stop = threading.Event()
@@ -288,7 +288,7 @@ def run_solver(parameters, solver, monitor=False):
 
     def watch():
         while not stop.wait(15):
-            evidence = startup_evidence(directory, time.monotonic()-started)
+            evidence = startup_evidence(directory, time.monotonic()-started, restart_time)
             if evidence is not None:
                 temporary = record.with_suffix('.json.tmp')
                 temporary.write_text(json.dumps(evidence, indent=2)+'\n')
@@ -299,7 +299,10 @@ def run_solver(parameters, solver, monitor=False):
     if thread is not None:
         thread.start()
     try:
-        return subprocess.run(['mpirun', str(solver), str(parameters)]).returncode
+        command = ['mpirun', str(solver), str(parameters)]
+        if rerun == '1':
+            command.append('1')
+        return subprocess.run(command).returncode
     finally:
         stop.set()
         if thread is not None:
@@ -314,6 +317,8 @@ def main():
     source.add_argument('--run-solver', type=Path, metavar='PARAMETERS',
                         help='Within the existing allocation: run MPI solver, then measure its new snapshots.')
     parser.add_argument('--solver', type=Path)
+    parser.add_argument('--rerun', choices=('1',))
+    parser.add_argument('--restart-time', type=float, default=0.)
     parser.add_argument('--monitor-startup', action='store_true',
                         help='Lightweight monitor in this allocation; stops after startup evidence.')
     parser.add_argument('--disk-metrics', action='store_true',
@@ -327,7 +332,7 @@ def main():
     if args.run_solver:
         if args.solver is None:
             parser.error('--run-solver needs --solver')
-        code = run_solver(args.run_solver, args.solver, args.monitor_startup)
+        code = run_solver(args.run_solver, args.solver, args.monitor_startup, args.rerun, args.restart_time)
         if code:
             return code
         args.snapshots = args.run_solver.resolve().parent/'output'

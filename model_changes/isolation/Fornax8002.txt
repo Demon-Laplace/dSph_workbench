@@ -54,3 +54,10 @@ components/central_components标题注明整体±5/中心±1.5kpc；每图两行
 Yang输入mu、误差、标定与CSV不变，显示半径按角坐标统一；不把两者当独立绝对光度约束。
 CODE_VERSION=ic-figures-v4-munoz-published-profile，63项定向测试与真实出图通过。
 资料与旧图留工作区munoz2018_reference_20261120；未改冷盘IC、其它图或Job313997。
+
+[F8002-AVAILABLE-DENSITY-20261120] 2026-11-20
+用户要求处理已有数据并回传，使用原密度分析脚本、与8001共用Job236887单节点16进程顺序处理。
+来源：cold-disk-test的000-050及cold-disk-test-IC001-P002-01的051-225；
+共226帧，固定范围约到2.20 Gyr，未把进行中的模拟标为完成。
+视频和density_evolution.csv已回传本地Fornax8002/isolation，文件前缀Fornax8002_available_s000-225_。
+原始快照不复制、不迁移，模拟不中断；回传清单Fornax_workspace/isolation_available_20261120/returned.json。

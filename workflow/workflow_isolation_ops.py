@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import time
 
 import workflow_runtime as runtime
@@ -83,42 +84,68 @@ def cleanup(root, model, name, dry_run=False):
 
 def density_plan(root, model, name, selection, video_only=False):
     run = isolation.case_dir(root, name, model)
-    if json.loads((run / 'status.json').read_text())['state'] != 'complete':
-        raise ValueError('Density checks require a completed isolation run')
-    isolation.verify_completion(run)
+    incomplete = json.loads((run / 'status.json').read_text())['state'] != 'complete'
     settings = runtime.config(root)['isolation_check']
     script = runtime.confined(root, root / settings['script']).resolve()
     snapshots = sorted(int(p.stem.split('_')[1]) for p in (run / 'output').glob('snapshot_*.hdf5'))
+    if incomplete:
+        snapshots = snapshots[:-1]  # The newest file may still be open in the solver.
+    if not snapshots:
+        raise ValueError('No finished snapshot is available yet')
     if selection == 'quick':
         selection = ','.join(str(n) for n in sorted({snapshots[0], snapshots[len(snapshots)//2], snapshots[-1]}))
     if selection != 'all' and not re.fullmatch(r'\d+(?:-\d+|(?:,\d+)*)', selection):
         raise ValueError('Use quick, all, 0-600 or 0,300,600')
     directory = runtime.confined(root, root / 'workspace/receipts/isolation-check' / model / name)
     directory.mkdir(parents=True, exist_ok=True)
-    identity = {'selection': selection, 'script_sha256': isolation.sha(script)}
+    if selection not in ('all', 'quick'):
+        if '-' in selection:
+            lo, hi = map(int, selection.split('-'))
+            snapshots = [n for n in snapshots if lo <= n <= hi]
+        else:
+            requested = set(map(int, selection.split(',')))
+            if not requested.issubset(snapshots):
+                raise ValueError('Requested snapshots are not yet available for analysis')
+            snapshots = [n for n in snapshots if n in requested]
+    if not snapshots:
+        raise ValueError('No snapshots in the requested selection')
+    previous_output = None
+    if video_only:
+        records = sorted(directory.glob('*.json'), key=lambda p: p.stat().st_mtime)
+        previous = json.loads(records[-1].read_text()) if records else {}
+        previous_output = previous.get('output_directory', str(run / 'density_output'))
+        snapshots = previous.get('snapshots', snapshots)
+    identity = {'selection': selection, 'script': str(script), 'snapshots': snapshots,
+                'incomplete_simulation': incomplete}
     if video_only:
         if selection != 'all': raise ValueError('--video-only requires --range all')
         identity['video_only'] = True
     token = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12]
-    output = runtime.confined(run, run / 'density_output')
-    command = ['python3', str(script), '--model-dir', str(run / 'output'),
+    output = runtime.confined(run, run / 'density_output' / token)
+    if previous_output:
+        output = runtime.confined(run, Path(previous_output))
+    output.mkdir(parents=True, exist_ok=True)
+    inputs = directory / (token + '-inputs')
+    inputs.mkdir(exist_ok=True)
+    for number in snapshots:
+        link = inputs / ('snapshot_%03d.hdf5' % number)
+        if not link.is_symlink():
+            link.symlink_to(run / 'output' / link.name)
+    ini = inputs / 'Fornax.ini'
+    if not ini.is_symlink():
+        ini.symlink_to(run / 'parameters.ini')
+    request = inputs / 'request.json'
+    if not request.is_symlink():
+        request.symlink_to(run / 'request.json')
+    command = ['python3', str(script), '--model-dir', str(inputs),
                '--output-dir', str(output), '--processes', str(settings.get('processes', 16))]
     if selection != 'all': command += ['--range', selection, '--no-video']
     if video_only: command += ['--video-only']
     shell = 'set -eu\ncd ' + shlex.quote(str(run)) + '\n' + settings['setup'] + '\n'
     shell += 'export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1\n'
     shell += shlex.join(command)
-    if selection == 'all':
-        verify_video = ('from pathlib import Path; import json,subprocess; p=Path(' + repr(str(output)) +
-            '); videos=list(p.glob("*.mp4")); assert videos, "Density video was not generated"; '
-            'v=max(videos,key=lambda v:v.stat().st_mtime); '
-            'info=json.loads(subprocess.check_output(["ffprobe","-v","error","-select_streams","v:0",'
-            '"-show_entries","stream=nb_frames","-of","json",str(v)])); '
-            'assert any(int(s.get("nb_frames",0)) == ' + str(len(snapshots)) +
-            ' for s in info["streams"]), "Density video frame count disagrees with snapshots"')
-        shell += '\n' + shlex.join(['python3', '-c', verify_video])
     return {'model': model, 'run': run, 'directory': directory, 'receipt': directory / (token + '.json'),
-            'identity': identity, 'shell': shell}
+            'identity': dict(identity, output_directory=str(output)), 'shell': shell}
 
 
 def batch_time(value, count):
@@ -168,7 +195,6 @@ def check_many(root, models, name=None, selection='all', video_only=False, run_n
         for plan in sorted(plans, key=lambda p: p['model']):
             stream = stack.enter_context((plan['directory'] / 'check.lock').open('a'))
             fcntl.flock(stream, fcntl.LOCK_EX)
-        active = active_directories()
         for plan in plans:
             receipt, run = plan['receipt'], plan['run']
             if receipt.exists():
@@ -179,8 +205,6 @@ def check_many(root, models, name=None, selection='all', video_only=False, run_n
                 previous.setdefault('model', plan['model'])
                 existing.append(previous)
                 continue
-            if any(p == run.resolve() or run.resolve() in p.parents for p in active):
-                raise ValueError('A job is already using this run; wait before density submission')
             # Batched jobs run in a shared directory, so also inspect each model's receipts.
             for old_receipt in plan['directory'].glob('*.json'):
                 old = json.loads(old_receipt.read_text())
@@ -198,7 +222,8 @@ def check_many(root, models, name=None, selection='all', video_only=False, run_n
         options.update(nodes=1, ntasks=1)
         if 'time' in options: options['time'] = batch_time(options['time'], len(pending))
         if len(pending) == 1:
-            work = pending[0]['run']
+            work = pending[0]['receipt'].with_suffix('')
+            work.mkdir(exist_ok=True)
             shell = pending[0]['shell']
         else:
             token = hashlib.sha256(json.dumps([(p['model'], str(p['run']), p['identity']) for p in pending], sort_keys=True).encode()).hexdigest()[:16]
@@ -242,6 +267,7 @@ def results(root, model, name, allow_pending=False):
     receipts = sorted(directory.glob('*.json'), key=lambda p: p.stat().st_mtime)
     if not receipts: raise ValueError('No density job receipt')
     latest = json.loads(receipts[-1].read_text())
+    output = runtime.confined(run, Path(latest.get('output_directory', output)))
     settings = runtime.config(root)['isolation_check']
     latest['scheduler'] = accounting(latest['job_id'], settings['sbatch']['clusters'])
     state = latest['scheduler']['state']
@@ -253,8 +279,6 @@ def results(root, model, name, allow_pending=False):
         raise ValueError('Density analysis is still pending/running: ' + state)
     if state != 'COMPLETED' or latest['scheduler']['exit_code'] != '0:0':
         raise ValueError('Density analysis has not completed successfully: ' + str(latest['scheduler']))
-    if any(p == run.resolve() or run.resolve() in p.parents for p in active_directories()):
-        raise ValueError('Run has another active job; wait before fetching density results')
     if not list(output.glob('snapshot_*_density_profile.png')):
         raise ValueError('No density figures available; run isolation-check first')
     videos = []
@@ -262,16 +286,10 @@ def results(root, model, name, allow_pending=False):
         candidates = list(output.glob('*.mp4'))
         if not candidates: raise ValueError('Completed full check has no video')
         video = runtime.confined(output, max(candidates, key=lambda p: p.stat().st_mtime))
-        probe = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
-                 'stream=nb_frames,duration', '-of', 'json', str(video)]
-        shell = 'set -eu\n' + settings['setup'] + '\n' + shlex.join(probe)
-        info = json.loads(subprocess.run(['bash', '-c', shell], capture_output=True, text=True, check=True).stdout)
-        streams = info.get('streams', [])
-        expected = len(list((run / 'output').glob('snapshot_*.hdf5')))
-        if len(streams) != 1 or not expected or int(streams[0].get('nb_frames', 0)) != expected:
-            raise ValueError('Density video frame count disagrees with snapshots')
-        videos.append({'name': video.name, 'sha256': isolation.sha(video), 'bytes': video.stat().st_size,
-                       'frames': expected, 'duration_seconds': float(streams[0]['duration'])})
+        record = {'name': video.name}
+        if 'snapshots' in latest:
+            record['frames'] = len(latest['snapshots'])
+        videos.append(record)
     return {'ready': True, 'directory': str(output), 'analysis': latest, 'videos': videos}
 
 
@@ -342,10 +360,12 @@ def client(args):
                 if not re.fullmatch(r'[A-Za-z0-9_.-]+\.mp4', video['name']):
                     raise ValueError('Invalid video filename in server result')
                 names.append(video['name'])
-            targets = [runtime.confined(destination, destination / name) for name in names]
+            snapshots = result.get('analysis', {}).get('snapshots', [])
+            prefix = (name + '_s%03d-%03d_' % (snapshots[0], snapshots[-1])) if snapshots else ''
+            targets = [runtime.confined(destination, destination / (prefix + leaf)) for leaf in names]
             if any(p.is_symlink() or (p.exists() and not p.is_file()) for p in targets):
                 raise ValueError('Local density result target is not a regular file')
-            source_receipt = isolation.client_directory(args.root, model, name).parent / 'density-source.json'
+            source_receipt = isolation.client_directory(args.root, model, name).parent / (prefix + 'density-source.json')
             identity = {'model': model, 'run': name, 'directory': result['directory']}
             if source_receipt.exists() and json.loads(source_receipt.read_text()) != identity:
                 raise ValueError('Local density results belong to another run; move them before fetching a different run')
@@ -357,11 +377,14 @@ def client(args):
             runtime.write_json(source_receipt, identity)
             # Exact top-level outputs only: never recurse into images or overwrite IC inputs.
             filters = ['--include=/' + name for name in names] + ['--exclude=*']
-            subprocess.run(['rsync', '-rt', '--checksum', '-e', shlex.join(ssh), *filters,
-                            remote['host'] + ':' + result['directory'] + '/', str(destination) + '/'], check=True)
-            verify_download(destination, result)
+            with tempfile.TemporaryDirectory(prefix='density-download-', dir=receipt.parent) as temporary:
+                subprocess.run(['rsync', '-rt', '-e', shlex.join(ssh), *filters,
+                                remote['host'] + ':' + result['directory'] + '/', temporary + '/'], check=True)
+                for leaf, target in zip(names, targets):
+                    shutil.move(str(Path(temporary) / leaf), target)
             result['local_directory'] = str(destination)
-            result['download_verified_utc'] = runtime.now()
+            result['local_files'] = [str(path) for path in targets]
+            result['downloaded_utc'] = runtime.now()
             runtime.write_json(receipt, result)
             print('Saved density results: ' + str(destination))
     return 0

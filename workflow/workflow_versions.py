@@ -246,3 +246,21 @@ def update(directory, model, name, status):
             return
         entry.update(fields, updated_utc=now())
         save(directory, data)
+
+
+def continuation(directory, request, settings, text, previous):
+    """Keep one physical run, preserving the earlier binding as attempt history."""
+    directory = Path(directory)
+    with locked(directory, request['model']) as data:
+        entry = data['runs'].setdefault(request['name'], {
+            'request': dict(request, version_contract=request.get('version_contract', 'legacy')),
+            'directory': str(directory / 'runs' / request['name'])})
+        signature = parameter_signature(request.get('profile'), settings, text)
+        parameter = number(data['parameters'], 'P', signature, key='signature')
+        data['parameters'][parameter].update(settings=settings, template_text=text)
+        entry.setdefault('continuations', []).append(
+            {'request': dict(entry['request']), 'status': previous, 'recorded_utc': now()})
+        entry['request'] = dict(entry['request'], parameter_version=parameter)
+        entry.update(state='submitting', updated_utc=now())
+        save(directory, data)
+        return parameter

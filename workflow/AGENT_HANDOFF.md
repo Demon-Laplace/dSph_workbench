@@ -1,5 +1,10 @@
 # dSph 工作流：智能体交接与操作说明
 
+2026-11-20 续跑/分析更新：`isolation-resume MODEL --name RUN --time-max T --submit`
+在原RUN/output中使用二进制restart续跑，不新建分段数据目录。
+`isolation-check`可直接处理中途快照，固定当次清单、避开最新写入文件，并可在模拟继续时回传。
+见[续跑与中途分析](ISOLATION_CONTINUATION.md)；覆盖下文旧的“必须运行结束”限制。
+
 2026-11-20 用户最终明确本地布局：IC、初态图片和isolation结果全部直接放在
 `<model>/isolation/`，不再建 `<model>/ic/` 或isolation内构建子目录。
 只在版本重名时加构建名文件前缀；工具固定名链接放在workspace内部，不复制粒子。

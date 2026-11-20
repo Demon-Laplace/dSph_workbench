@@ -182,6 +182,12 @@ def main():
     p.add_argument('--submit', action='store_true', help='submit; otherwise prepare only, without scheduler preflight')
     p.add_argument('--dry-run', action='store_true', help='show plan without building or connecting')
     p.set_defaults(func=isolation.pipeline)
+    p = commands.add_parser('isolation-resume', help='binary restart in the original run/output directory')
+    p.add_argument('model')
+    p.add_argument('--name', required=True)
+    p.add_argument('--time-max', type=float, required=True, help='new total endpoint in solver code units')
+    p.add_argument('--submit', action='store_true')
+    p.set_defaults(func=isolation.resume_client)
     for operation in ('isolation-clean-failed', 'isolation-check', 'isolation-fetch'):
         p = commands.add_parser(operation)
         p.add_argument('model', nargs='+')

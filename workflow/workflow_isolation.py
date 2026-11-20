@@ -269,7 +269,123 @@ def receive(root, stage, submit=False):
         return result_record(root, run, request, status, reused)
 
 
-def run_job(root, name, model=None):
+def resume(root, name, model, time_max, submit=False):
+    """Extend TimeMax in place; never copy checkpoints or reconvert the IC."""
+    run = case_dir(root, name, model)
+    with (run.parent / (run.name + '.lock')).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        status = json.loads((run / 'status.json').read_text())
+        settings = json.loads((run / 'profile.json').read_text())
+        request = json.loads((run / 'request.json').read_text())
+        original = (run / 'GZWJL.PARAM').read_text()
+        values = versions.parameter_values(original)
+        old_end = float(values['TimeMax'])
+        if time_max == old_end and status.get('continuation') and status['state'] in ('submitted', 'running', 'complete'):
+            return {'directory': str(run), 'TimeMax': time_max, 'rerun': '1',
+                    'submitted': True, 'reused': True, 'job_id': status['job_id']}
+        retry = status['state'] == 'failed' and time_max == old_end
+        if time_max is None or not (retry or old_end < time_max < float('inf')):
+            raise ValueError('The continuation TimeMax must extend the existing endpoint')
+        plan = {'directory': str(run), 'TimeMax': time_max, 'rerun': '1',
+                'output_directory_unchanged': True, 'submitted': False}
+        if not submit:
+            return plan
+        if status['state'] not in ('complete', 'failed'):
+            raise ValueError('Stop/wait for the current solver before resuming it')
+        queue = subprocess.run(['squeue', '-M', 'all', '--me', '-h', '-o', '%Z'],
+                               capture_output=True, text=True, check=True)
+        if any(Path(line.strip()) == run or run in Path(line.strip()).parents
+               for line in queue.stdout.splitlines() if line.strip().startswith('/')):
+            raise ValueError('An active job still uses this run')
+        output_match = re.search(r'^\s*OutputDir\s+(\S+)', original, re.M)
+        output = run / output_match[1] if output_match else run / 'output'
+        output = runtime.confined(root, output)
+        checkpoints = output / 'restartfiles'
+        for rank in range(int(settings['sbatch']['ntasks'])):
+            if not (checkpoints / (values.get('RestartFile', 'restart') + '.' + str(rank))).is_file():
+                raise ValueError('Missing binary rank checkpoint: ' + str(rank))
+        number = len(list(run.glob('.resume-*'))) + 1
+        attempt = run / ('.resume-%03d' % number)
+        attempt.mkdir()
+        for source in ('workflow_isolation.py', 'workflow_runtime.py', 'workflow_versions.py'):
+            shutil.copy2(Path(__file__).with_name(source), attempt / source)
+        shutil.copy2(run / 'GZWJL.PARAM', attempt / 'previous.PARAM')
+        rewrite_parameter_text(original, attempt / 'GZWJL.PARAM', {'TimeMax': str(time_max)})
+        for suffix in ('json', 'csv'):
+            report = run / ('rotation_evolution.' + suffix)
+            if report.is_file():
+                shutil.copy2(report, attempt / report.name)
+        settings = dict(settings, parameter_overrides=dict(
+            settings.get('parameter_overrides', {}), TimeMax=str(time_max)))
+        signature_settings = dict(settings, rerun='1')
+        restart_time = float(values['TimeMax'])
+        info = output / 'info.txt'
+        if info.is_file():
+            with info.open('rb') as stream:
+                stream.seek(max(0, info.stat().st_size - 16384))
+                times = re.findall(r'Sync-Point\s+\d+,\s*Time:\s*([0-9.eE+-]+)',
+                                   stream.read().decode(errors='replace'))
+            if times:
+                restart_time = float(times[-1])
+        if '--run-solver' in settings['solver']:
+            checkout = root / runtime.config(root)['github']['checkout']
+            shutil.copy2(checkout / 'local_tools/ic_generation/rotation_diagnostics.py',
+                         attempt / 'rotation_diagnostics.py')
+            settings['solver'] = list(settings['solver'])
+            settings['solver'][1] = str(attempt / 'rotation_diagnostics.py')
+            settings['solver'] += ['--rerun', '1', '--restart-time', str(restart_time)]
+        else:
+            settings['solver'] = list(settings['solver'])
+            if settings['solver'][-1] not in ('1', '{rerun}'):
+                settings['solver'].append('1')
+        parameter = versions.continuation(version_directory(root, model), request, signature_settings,
+                                         (attempt / 'GZWJL.PARAM').read_text(), dict(status))
+        runtime.write_json(attempt / 'profile.json', settings)
+        command = [settings.get('python', 'python3'), str(attempt / 'workflow_isolation.py'),
+                   'run-job', '--root', str(root), '--model', model, '--name', name,
+                   '--resume', str(attempt)]
+        script = '#!/bin/bash\nset -euo pipefail\ncd ' + shlex.quote(str(run)) + '\n'
+        script += 'export TMPDIR="$PWD/.tmp"\nmkdir -p "$TMPDIR"\n'
+        script += settings.get('setup', '') + '\nrerun="1"\nexec ' + shlex.join(command) + '\n'
+        (attempt / 'run.sh').write_text(script)
+        batch = ['sbatch', '--parsable', '--chdir', str(run), '--job-name', 'resume-' + name,
+                 '--output', str(run / 'slurm-%j.out')]
+        for key, value in settings['sbatch'].items():
+            batch += ['--' + key, str(value)]
+        batch.append(str(attempt / 'run.sh'))
+        for key in ('started_utc', 'finished_utc', 'error', 'completion'):
+            status.pop(key, None)
+        status.update(state='submitting', continuation=str(attempt), parameter_version=parameter)
+        runtime.write_json(run / 'status.json', status)
+        result = subprocess.run(batch, capture_output=True, text=True)
+        runtime.write_json(attempt / 'submission.json', {
+            'command': batch, 'returncode': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
+        if result.returncode:
+            status.update(state='failed', error=result.stderr)
+        else:
+            job = result.stdout.strip().split(';')[0]
+            if not job.isdigit():
+                raise ValueError('Uncertain resume acknowledgement; reconcile before retrying')
+            shutil.copy2(attempt / 'GZWJL.PARAM', run / 'GZWJL.PARAM')
+            status.update(state='submitted', job_id=job)
+        runtime.write_json(run / 'status.json', status)
+        versions.update(version_directory(root, model), model, name, status)
+        if result.returncode:
+            raise ValueError('Slurm rejected continuation: ' + result.stderr)
+        return dict(plan, submitted=True, job_id=job, parameter_version=parameter)
+
+
+def resume_client(args):
+    remote = runtime.config(args.root)['remote']
+    command = ['python3', remote['root'] + '/workflow_isolation.py', 'resume',
+               '--root', remote['root'], '--model', args.model, '--name', args.name,
+               '--time-max', str(args.time_max)]
+    if args.submit:
+        command.append('--submit')
+    return remote_exec(args, command).returncode
+
+
+def run_job(root, name, model=None, resume=None):
     run = case_dir(root, name, model)
     model = json.loads((run / 'request.json').read_text())['model']
     # Same lock as submitter: a fast-starting job must not lose its status update.
@@ -282,12 +398,14 @@ def run_job(root, name, model=None):
         runtime.write_json(run / 'status.json', status)
         versions.update(version_directory(root, model), model, run.name, status)
     try:
-        settings = json.loads((run / 'profile.json').read_text())
+        control = runtime.confined(run, Path(resume)) if resume else run
+        settings = json.loads((control / 'profile.json').read_text())
         substitutions = {'ascii': str(run / 'Fornax.ini'), 'binary': str(run / 'Fornax.IC_000'),
-                         'prefix': str(run / 'Fornax'), 'parameters': str(run / 'GZWJL.PARAM')}
-        for stage in ('converter', 'solver'):
+                         'prefix': str(run / 'Fornax'), 'parameters': 'GZWJL.PARAM' if resume else str(run / 'GZWJL.PARAM'),
+                         'rerun': '1' if resume else '0'}
+        for stage in (('solver',) if resume else ('converter', 'solver')):
             command = [arg.format(**substitutions) for arg in settings[stage]]
-            with (run / (stage + '.log')).open('w') as log:
+            with (run / (stage + '.log')).open('a' if resume else 'w') as log:
                 subprocess.run(command, cwd=run, stdout=log, stderr=subprocess.STDOUT, check=True)
             if stage == 'converter' and not (run / 'Fornax.IC_000').is_file():
                 raise ValueError('Converter did not produce the expected binary IC')
@@ -519,7 +637,7 @@ def status(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'resolve', 'status', 'prepare-legacy'))
+    parser.add_argument('operation', choices=('receive', 'run-job', 'resume', 'locate', 'resolve', 'status', 'prepare-legacy'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path)
     parser.add_argument('--directory', type=Path, default=Path.cwd())
@@ -527,6 +645,8 @@ def main():
     parser.add_argument('--name')
     parser.add_argument('--model')
     parser.add_argument('--submit', action='store_true')
+    parser.add_argument('--resume', type=Path)
+    parser.add_argument('--time-max', type=float)
     parser.add_argument('--request-json', help='declared IC build and requested run; no particle metadata')
     args = parser.parse_args()
     if args.operation == 'prepare-legacy':
@@ -534,7 +654,9 @@ def main():
     elif args.operation == 'receive':
         print(json.dumps(receive(args.root.resolve(), args.stage, args.submit)))
     elif args.operation == 'run-job':
-        run_job(args.root.resolve(), args.name, args.model)
+        run_job(args.root.resolve(), args.name, args.model, args.resume)
+    elif args.operation == 'resume':
+        print(json.dumps(resume(args.root.resolve(), args.name, args.model, args.time_max, args.submit)))
     elif args.operation == 'resolve':
         print(json.dumps(resolve_request(args.root.resolve(), json.loads(args.request_json))))
     else:
