@@ -32,6 +32,9 @@ section. Section and option names are matched case-insensitively. Before builds,
 changed ``Fornax2047+`` parameter files are synchronized to ``origin/main``.
 Successful builds automatically update and push ``IC_MODELS.csv``. Configure
 ``ic.root`` and ``ic_python`` in workflow.json; outputs use unique per-model ic/ runs.
+The shared builder also generates initial spatial, surface-density, mass-budget
+and kinematic figures by default, directly in the local model's isolation/ folder.
+New build versions preserve existing figures instead of overwriting them.
 """
 
 import argparse

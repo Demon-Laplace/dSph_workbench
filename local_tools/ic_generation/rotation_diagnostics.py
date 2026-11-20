@@ -8,9 +8,12 @@ import argparse
 import configparser
 import csv
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import threading
+import time
 
 import numpy as np
 
@@ -72,13 +75,19 @@ def moments(x, v, m, axis, mask):
         'mean_abs_vphi_kms': float(average(np.abs(vp), m)),
         'mean_vR_kms': float(mean[0]), 'mean_vz_kms': float(mean[2]),
         'sigma_R_phi_z_kms': sigma.tolist(),
+        'sigma_1d_cyl_kms': float(np.sqrt(np.mean(sigma*sigma))),
+        'V_over_sigma_R': float(abs(mean[1])/sigma[0]) if sigma[0] > 0 else None,
         'V_over_sigma_phi': float(abs(mean[1])/sigma[1]) if sigma[1] > 0 else None,
+        'V_over_sigma_1d_cyl': float(abs(mean[1])/np.sqrt(np.mean(sigma*sigma)))
+            if np.sum(sigma*sigma) > 0 else None,
         'prograde_mass_fraction': float(m[vp > 0].sum()/m.sum()),
         'specific_L_axis_kpc_kms': float(average(R*vp, m)),
         'specific_L_xyz_kpc_kms': average(np.cross(x, v), m).tolist(),
         'signed_L_over_absL': float(np.sum(m*R*vp)/np.sum(m*R*np.abs(vp)))
             if np.sum(m*R*np.abs(vp)) > 0 else None,
         'r10_r50_r90_kpc': [quantile(r, m, f) for f in (.1, .5, .9)],
+        'z_rms_kpc': float(np.sqrt(average(z*z, m))),
+        'R_rms_kpc': float(np.sqrt(average(R*R, m))),
         'beta_second_spherical': float(1-(second[1]+second[2])/(2*second[0]))
             if second[0] > 0 else None,
         'beta_sigma_spherical': float(1-(dispersion2[1]+dispersion2[2])/(2*dispersion2[0]))
@@ -99,6 +108,8 @@ def diagnose(populations, label, time_code):
         R = np.linalg.norm(x-(x@axis)[:, None]*axis, axis=1)
         core = radius < 5.
         pop = {'3D5': moments(x, v, m, axis, core),
+               'main_disk_R025_15_within_3D5': moments(
+                   x, v, m, axis, core & (R >= .25) & (R < 1.5)),
                'annuli_within_3D5': []}
         for lo, hi in zip((0., .25, .5, 1., 2.), (.25, .5, 1., 2., 5.)):
             values = moments(x, v, m, axis, core & (R >= lo) & (R < hi))
@@ -111,7 +122,7 @@ def diagnose(populations, label, time_code):
     return result
 
 
-def read_build(directory):
+def read_build(directory, disk_metrics=False):
     build = json.loads((directory/'build.json').read_text())
     populations, libraries = {}, {}
     for name in ('stellar', 'gas'):
@@ -159,6 +170,12 @@ def read_build(directory):
             'particle_enclosed_Msun': (actual*1e10).tolist(),
             'enclosed_mass_fractional_difference': (actual/target-1).tolist()}
     report['analytic_density_comparison'] = structure
+    if disk_metrics:
+        from disk_diagnostics import disk_summary
+        report['stellar_disk_diagnostics'] = disk_summary(
+            populations['old'], directory,
+            np.array(report['states'][0]['center_kpc']),
+            np.array(report['states'][0]['bulk_kms']))
     return report
 
 
@@ -192,7 +209,7 @@ def read_snapshots(directory, selected):
 
 
 def write_report(report, prefix, target_time=None):
-    report.update(schema='intrinsic_rotation_v1',
+    report.update(schema='intrinsic_rotation_v2',
                   units={'length': 'kpc', 'velocity': 'km/s', 'mass': 'Msun', 'time': 'solver_code_time'},
                   membership='Current physical particles, spatial apertures, mass weighted; no IDs.',
                   axis_definition='Old-star density covariance short axis within 2 kpc; sign toward +Z.',
@@ -206,6 +223,11 @@ def write_report(report, prefix, target_time=None):
             'first_time_code': states[0]['time_code'], 'last_time_code': states[-1]['time_code'],
             'old_V_first_last_kms': [first['mean_vphi_kms'], last['mean_vphi_kms']],
             'old_V_over_sigma_phi_first_last': [first['V_over_sigma_phi'], last['V_over_sigma_phi']],
+            'old_V_over_sigma_R_first_last': [first['V_over_sigma_R'], last['V_over_sigma_R']],
+            'old_V_over_sigma_1d_first_last': [first['V_over_sigma_1d_cyl'], last['V_over_sigma_1d_cyl']],
+            'old_sigma_R_phi_z_first_last_kms': [
+                first['sigma_R_phi_z_kms'], last['sigma_R_phi_z_kms']],
+            'old_z_rms_first_last_kpc': [first['z_rms_kpc'], last['z_rms_kpc']],
             'old_r50_fractional_change': last['r10_r50_r90_kpc'][1]/first['r10_r50_r90_kpc'][1]-1,
             'old_V_fractional_change': last['mean_vphi_kms']/first['mean_vphi_kms']-1
                 if abs(first['mean_vphi_kms']) > 1e-3 else None}
@@ -216,13 +238,14 @@ def write_report(report, prefix, target_time=None):
     prefix.with_suffix('.json').write_text(json.dumps(report, indent=2, allow_nan=False)+'\n')
     fields = ['label', 'time_code', 'population', 'aperture', 'N', 'mass_Msun', 'mean_vphi_kms',
               'V_over_sigma_phi', 'prograde_mass_fraction', 'specific_L_axis_kpc_kms',
-              'sigma_R_kms', 'sigma_phi_kms', 'sigma_z_kms', 'r50_kpc']
+              'sigma_R_kms', 'sigma_phi_kms', 'sigma_z_kms', 'r50_kpc',
+              'V_over_sigma_R', 'V_over_sigma_1d_cyl', 'z_rms_kpc', 'R_rms_kpc']
     with prefix.with_suffix('.csv').open('w', newline='') as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         for state in states:
             for name, population in state['populations'].items():
-                for aperture in ('3D5', '3D15', 'shell_5_15'):
+                for aperture in ('3D5', 'main_disk_R025_15_within_3D5', '3D15', 'shell_5_15'):
                     values = population.get(aperture)
                     if values is None:
                         continue
@@ -238,7 +261,49 @@ def write_report(report, prefix, target_time=None):
         print('%s t=%.8g: old Vphi=%.5g km/s, sigma_phi=%.5g, V/sigma_phi=%.5g, prograde=%.4f'
               % (state['label'], state['time_code'], old['mean_vphi_kms'],
                  old['sigma_R_phi_z_kms'][1], old['V_over_sigma_phi'],
-                 old['prograde_mass_fraction']), flush=True)
+                  old['prograde_mass_fraction']), flush=True)
+
+
+def startup_evidence(directory, elapsed):
+    """Small in-allocation progress check; never open particle/snapshot data."""
+    info = directory/'output/info.txt'
+    if elapsed < 140 or not info.is_file():
+        return None
+    with info.open('rb') as stream:
+        stream.seek(max(0, info.stat().st_size-16384))
+        text = stream.read().decode(errors='replace')
+    times = re.findall(r'Sync-Point\s+\d+,\s*Time:\s*([0-9.eE+-]+)', text)
+    if not times or float(times[-1]) <= 0:
+        return None
+    return {'state': 'started', 'elapsed_seconds': elapsed, 'time_code': float(times[-1]),
+            'job_id': os.environ.get('SLURM_JOB_ID'),
+            'scope': 'At least 140 running seconds and nonzero integration, not equilibrium validation.'}
+
+
+def run_solver(parameters, solver, monitor=False):
+    directory = parameters.resolve().parent
+    started = time.monotonic()
+    stop = threading.Event()
+    record = directory/'isolation_startup.json'
+
+    def watch():
+        while not stop.wait(15):
+            evidence = startup_evidence(directory, time.monotonic()-started)
+            if evidence is not None:
+                temporary = record.with_suffix('.json.tmp')
+                temporary.write_text(json.dumps(evidence, indent=2)+'\n')
+                temporary.replace(record)
+                return
+
+    thread = threading.Thread(target=watch, daemon=True) if monitor else None
+    if thread is not None:
+        thread.start()
+    try:
+        return subprocess.run(['mpirun', str(solver), str(parameters)]).returncode
+    finally:
+        stop.set()
+        if thread is not None:
+            thread.join()
 
 
 def main():
@@ -249,14 +314,20 @@ def main():
     source.add_argument('--run-solver', type=Path, metavar='PARAMETERS',
                         help='Within the existing allocation: run MPI solver, then measure its new snapshots.')
     parser.add_argument('--solver', type=Path)
+    parser.add_argument('--monitor-startup', action='store_true',
+                        help='Lightweight monitor in this allocation; stops after startup evidence.')
+    parser.add_argument('--disk-metrics', action='store_true',
+                        help='For a new --build, also measure Toomre Q and orbital circularity.')
     parser.add_argument('--selected', default='0,10,25,50')
     parser.add_argument('--output-prefix', required=True, type=Path)
     args = parser.parse_args()
+    if args.disk_metrics and not args.build:
+        parser.error('--disk-metrics requires --build; Q/circularity use its initial smooth potential')
     target_time = None
     if args.run_solver:
         if args.solver is None:
             parser.error('--run-solver needs --solver')
-        code = subprocess.run(['mpirun', str(args.solver), str(args.run_solver)]).returncode
+        code = run_solver(args.run_solver, args.solver, args.monitor_startup)
         if code:
             return code
         args.snapshots = args.run_solver.resolve().parent/'output'
@@ -264,7 +335,7 @@ def main():
             fields = line.split('%', 1)[0].split()
             if len(fields) >= 2 and fields[0] == 'TimeMax':
                 target_time = float(fields[1])
-    report = read_build(args.build) if args.build else read_snapshots(
+    report = read_build(args.build, disk_metrics=args.disk_metrics) if args.build else read_snapshots(
         args.snapshots, [int(s) for s in args.selected.split(',') if s])
     write_report(report, args.output_prefix, target_time)
     return 0

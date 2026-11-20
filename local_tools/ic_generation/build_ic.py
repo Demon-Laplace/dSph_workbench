@@ -26,6 +26,14 @@ def component_type(name):
     raise ValueError(f'Unknown particle type for component {name!r}')
 
 
+def generate_default_plots(data, model, build, directory=None):
+    path = Path(__file__).with_name('plot_ic.py')
+    spec = importlib.util.spec_from_file_location('ic_default_plots', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.generate(data, model, directory or module.default_directory(build), build=build)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ini', required=True, type=Path)
@@ -33,6 +41,8 @@ def main():
     parser.add_argument('--model', help='model ID used for the exported particle filename')
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--plots-dir', type=Path, help='default: model/isolation for a standard ic/ build')
+    parser.add_argument('--no-plots', action='store_true', help='explicitly skip default IC figures')
     parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     source, output = args.ini.resolve(), args.output.absolute()
@@ -129,6 +139,16 @@ def main():
         raise
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Built {sum(counts)} particles: {destination}')
+    if args.no_plots:
+        manifest['plots'] = {'state': 'disabled'}
+    else:
+        try:
+            manifest['plots'] = generate_default_plots(data, model, output, args.plots_dir)
+            print('Initial model figures: '+manifest['plots']['directory'])
+        except Exception as error:
+            manifest['plots'] = {'state': 'failed', 'error': str(error)}
+            print(f'IC generation succeeded, but default figures failed: {error}', file=sys.stderr)
+    receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     try:
         catalog.register(output, args.catalog_repo)
     except Exception as error:

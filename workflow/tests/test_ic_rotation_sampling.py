@@ -56,6 +56,23 @@ class SamplingTests(unittest.TestCase):
         self.assertEqual(candidate['Component_stellar'].pop('icbeta'), '0.0')
         self.assertEqual(candidate, original)
 
+    def test_8002_is_an_explicit_thin_disk_not_a_silent_change_to_8001(self):
+        root = Path(__file__).resolve().parents[2]
+        parent, cold = configparser.RawConfigParser(), configparser.RawConfigParser()
+        parent.read(root / 'IniFile/IC_Fornax8001.ini')
+        cold.read(root / 'IniFile/IC_Fornax8002.ini')
+        self.assertEqual(dict(parent.items('Density_gas')), dict(cold.items('Density_gas')))
+        self.assertEqual(dict(parent.items('Component_gas')), dict(cold.items('Component_gas')))
+        for field in ('mass', 'sersicindex', 'scaleradius'):
+            self.assertEqual(parent.get('Density_stellar', field), cold.get('Density_stellar', field))
+        self.assertEqual(cold.getfloat('Density_stellar', 'axisratioz'), .12)
+        self.assertEqual(cold.getfloat('Component_stellar', 'axisratioz'), .12)
+        self.assertEqual(cold.getfloat('Component_stellar', 'icbeta'), .65)
+        self.assertEqual(cold.getfloat('Component_stellar', 'ickappa'), 1.)
+        self.assertFalse(cold.has_option('Component_stellar', 'beta'))
+        self.assertFalse(cold.has_option('Component_stellar', 'kinemgrid'))
+        self.assertEqual(parent.getfloat('Component_stellar', 'beta'), -.1)
+
 
 if __name__ == '__main__':
     unittest.main()

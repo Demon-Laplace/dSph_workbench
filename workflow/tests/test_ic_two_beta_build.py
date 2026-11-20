@@ -82,6 +82,8 @@ class TwoBetaBuildTests(unittest.TestCase):
             argv = ['build_ic.py', '--ini', str(source), '--output', str(output)]
             with patch.object(sys, 'argv', argv), \
                  patch.object(builder.subprocess, 'check_output', return_value='test-generator-revision\n'), \
+                 patch.object(builder, 'generate_default_plots',
+                     return_value={'state': 'complete', 'directory': str(output)}) as plots, \
                  patch.object(builder.subprocess, 'run', side_effect=worker), \
                  patch.object(builder.importlib.util, 'find_spec',
                      side_effect=lambda name: True if name == 'agama' else original_find(name)):
@@ -97,8 +99,10 @@ class TwoBetaBuildTests(unittest.TestCase):
             self.assertEqual((output / 'Fornax5029.ini').exists(), not fail)
             if fail:
                 catalog.register.assert_not_called()
+                plots.assert_not_called()
             else:
                 catalog.register.assert_called_once()
+                plots.assert_called_once()
                 self.assertEqual(receipt['counts'], [0, 0, 3, 0])
                 self.assertEqual((output / 'Fornax.ini').resolve(), output / 'Fornax5029.ini')
 

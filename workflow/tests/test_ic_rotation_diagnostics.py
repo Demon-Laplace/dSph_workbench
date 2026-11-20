@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
@@ -25,6 +26,7 @@ class RotationMeasurements(unittest.TestCase):
         self.assertAlmostEqual(result['mean_abs_vphi_kms'], 6., places=12)
         self.assertAlmostEqual(result['sigma_R_phi_z_kms'][1], 6., places=12)
         self.assertAlmostEqual(result['prograde_mass_fraction'], .5, places=12)
+        self.assertAlmostEqual(result['V_over_sigma_1d_cyl'], 0., places=10)
 
     def test_translation_and_bulk_do_not_create_or_remove_rotation(self):
         x, v, m = self.ring()
@@ -42,6 +44,19 @@ class RotationMeasurements(unittest.TestCase):
         result = DIAG.diagnose({'old': (x, v, m)}, 'test', 0.)
         self.assertEqual(result['populations']['old']['3D5']['N'], 1000)
         self.assertAlmostEqual(result['populations']['old']['3D5']['mean_vphi_kms'], 6., places=10)
+
+    def test_startup_needs_both_elapsed_threshold_and_nonzero_integration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory/'output').mkdir()
+            info = directory/'output/info.txt'
+            info.write_text('Sync-Point 0, Time: 0, Systemstep: 0\n')
+            self.assertIsNone(DIAG.startup_evidence(directory, 200))
+            info.write_text('Sync-Point 4, Time: 0.0002, Systemstep: 0.00005\n')
+            self.assertIsNone(DIAG.startup_evidence(directory, 139))
+            evidence = DIAG.startup_evidence(directory, 155)
+            self.assertEqual(evidence['state'], 'started')
+            self.assertAlmostEqual(evidence['time_code'], .0002)
 
 
 if __name__ == '__main__':

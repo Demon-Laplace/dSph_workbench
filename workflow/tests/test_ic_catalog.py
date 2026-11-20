@@ -197,6 +197,7 @@ class ICCatalogTests(unittest.TestCase):
         original_find = importlib.util.find_spec
         with patch.object(sys, 'argv', argv), patch.object(builder.subprocess, 'run', side_effect=worker), \
              patch.object(builder.subprocess, 'check_output', return_value='test-generator-revision\n'), \
+             patch.object(builder, 'generate_default_plots', return_value={'state': 'complete', 'directory': str(output)}) as plots, \
              patch.object(builder.catalog, 'register'), \
              patch.object(builder.importlib.util, 'find_spec', side_effect=lambda name: True if name == 'agama' else original_find(name)):
             self.assertEqual(builder.main(), 0)
@@ -208,6 +209,8 @@ class ICCatalogTests(unittest.TestCase):
         self.assertFalse(manifest['data_verification_performed'])
         self.assertEqual(manifest['version_tracking'], 'declared_build_id_v1')
         self.assertEqual(manifest['generator_revision'], 'test-generator-revision')
+        plots.assert_called_once()
+        self.assertEqual(manifest['plots']['state'], 'complete')
         self.assertEqual(np.loadtxt(output / 'Fornax9001.ini', skiprows=1).shape, (5, 10))
 
 
