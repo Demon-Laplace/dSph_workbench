@@ -16,3 +16,9 @@ Slurm mem-per-cpu=3800M，GIZMO MaxMemSize=3800；walltime99h，多节点shm:tcp
 正式提交Job314007，运行目录/travail/xhuang/Fornax8001，启动检测尚在等待，不声称科学稳定性通过。
 原孤立模拟、7006、旧输入和用户启动脚本均保留，不额外做全粒子认证或哈希回读。
 依据：case.json、source_snapshot001.json；workspace/jobs/s001-orbit7006-thin4n96-20261120-v1-Fornax8001/。
+
+同任务启动结果：314007在运行275秒后检测到Sync-Point16、代码时间5.61792e-05，
+通过“140秒且非零积分”标准，同作业内监测已退出，模拟继续。
+实际总粒子14144922；dwarf为14500气体和600158恒星，质量分辨率约1e4与100 Msun。
+详细启动/分辨率/输入报告已回传本地Fornax8001/analysis/formal_s001_orbit7006_details.json。
+这是启动确认，不是长期演化或平衡验证；此后不持续轮询8001。

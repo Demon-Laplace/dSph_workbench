@@ -17,3 +17,13 @@ Slurm mem-per-cpu=3800M，GIZMO MaxMemSize=3800；walltime99h，多节点shm:tcp
 正式运行目录/travail/xhuang/Fornax8002，314009启动检测尚在等待，不声称冷盘稳定性通过。
 原孤立模拟、7006、旧输入和用户启动脚本均保留，不额外做全粒子认证或哈希回读。
 依据：case.json、source_snapshot001.json；workspace/jobs/s001-orbit7006-thin4n96-20261120-v1-Fornax8002/。
+
+同任务314009启动失败排查：运行24分13秒后FAILED，主退出101:0，MPI步骤退出7:0。
+唯一snapshot000的Time=0，没有restart，也未记录正时间积分；最早可见错误为PMPI_Allgather与rank58通信失败。
+实际GIZMO符号表将发送缓冲定位到TimeBinCount；未见更早OOM/段错误说明，亦未发现core文件，
+不能据此认定是3800MB不足、IC问题或节点硬件故障。
+MPI步骤含4个启动代理、共96CPU，Slurm约7.3GiB MaxRSS不能直接解释为单rank内存。
+实际日志在workspace/jobs上述任务目录/slurm-314009.out；314008未分配节点所以没有生成.out。
+已在正式模型根目录增加slurm-314009.out链接，并回传完整日志到本地analysis/formal_slurm-314009.out。
+用户要求先排查，尚未再次提交；现有IC、输出、轨道、资源和8001均保持不变。
+排查说明：本地Fornax8002/analysis/formal_job314009_failure.md。
