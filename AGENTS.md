@@ -1,5 +1,15 @@
 # dSph workbench agent entry point
 
+## Local IC/result layout (owner clarification, 2026-11-20)
+
+Put IC files, initial figures and isolation results together directly in
+`<model>/isolation/`. Do not create `<model>/ic/` or build subdirectories there.
+Keep existing filenames; use a build-name filename prefix only when versions
+would otherwise collide. Fixed-name tool views belong under
+`workspace/ic-builds/<model>/<build>/` and contain links, not duplicate particles.
+This supersedes the older local IC layout below. Server runs are not relocated.
+See [the local layout](workflow/LOCAL_LAYOUT.md).
+
 ## Isolation run versions (owner update, 2026-11-20)
 
 Use the automatic structured run bindings described in

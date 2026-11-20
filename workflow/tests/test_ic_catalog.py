@@ -171,11 +171,23 @@ class ICCatalogTests(unittest.TestCase):
         with patch.object(models.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
             self.assertEqual(models.build_ic(args), 0)
             command = run.call_args.args[0]
-            self.assertEqual(command[command.index('--output') + 1], str(analysis / 'Fornax7003/ic/new-run'))
-        (analysis / 'Fornax7003').mkdir()
-        (analysis / 'Fornax7003/ic').symlink_to(ic, target_is_directory=True)
+            self.assertEqual(command[command.index('--output') + 1],
+                             str(analysis / 'workspace/ic-builds/Fornax7003/new-run'))
+            self.assertEqual(command[command.index('--flat-output') + 1], str(analysis / 'Fornax7003/isolation'))
+        (analysis / 'workspace').symlink_to(ic, target_is_directory=True)
         with self.assertRaises(ValueError):
             models.build_ic(args)
+
+    def test_flat_build_retains_catalogue_identity_without_particle_hashing(self):
+        spec = importlib.util.spec_from_file_location('catalog_flat_layout', SOURCE.with_name('flat_layout.py'))
+        layout = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        directory = self.build()
+        destination = self.root / 'Fornax7003'
+        layout.publish(directory, destination)
+        with patch.object(catalog, 'sha', side_effect=AssertionError('no routine hashing')):
+            row = catalog.generated_row(directory)
+        self.assertEqual(row['record_id'], 'build:run1')
 
     @unittest.skipUnless(importlib.util.find_spec('numpy'), 'numpy required for particle export fixture')
     def test_numbered_particle_export_retains_legacy_name(self):

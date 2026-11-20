@@ -35,13 +35,14 @@ def build_ic(args):
         raise ValueError(f'Missing versioned IC builder: {builder}')
     python = args.python or runtime.config(args.root).get('ic_python') or sys.executable
     return subprocess.run([python, str(builder), '--ini', str(source), '--output', str(destination),
-                           '--model', model, '--threads', str(args.threads), '--seed', str(args.seed),
-                           '--catalog-repo', str(repo)]).returncode
+                            '--model', model, '--threads', str(args.threads), '--seed', str(args.seed),
+                            '--flat-output', str(runtime.model_directory(args.root, model) / 'isolation'),
+                            '--catalog-repo', str(repo)]).returncode
 
 
 def initial_directory(args, model, name):
-    directory = runtime.model_directory(args.root, model)
-    return runtime.confined(directory, directory / 'ic' / runtime.label(name))
+    base = runtime.model_directory(args.root, model).parent
+    return runtime.confined(base, base / 'workspace/ic-builds' / model / runtime.label(name))
 
 
 def find_initial(args, name, model=None):
@@ -50,9 +51,14 @@ def find_initial(args, name, model=None):
         current = initial_directory(args, model, name)
         if current.exists():
             return current
+        previous = runtime.model_directory(args.root, model) / 'ic' / name
+        if previous.exists():
+            return runtime.confined(runtime.model_directory(args.root, model), previous)
     else:
         base = (args.root / runtime.config(args.root).get('models_root', '.')).resolve()
-        matches = [p for p in base.glob('*/ic/' + name) if p.is_dir()]
+        matches = [p for p in (base / 'workspace/ic-builds').glob('*/' + name) if p.is_dir()]
+        if not matches:
+            matches = [p for p in base.glob('*/ic/' + name) if p.is_dir()]
         if len(matches) > 1:
             raise ValueError('Multiple models have this run name; specify --model')
         if matches:

@@ -19,6 +19,19 @@ class ICPlotInputs(unittest.TestCase):
         self.assertEqual(PLOT.default_directory(Path('/data/custom-build')),
                          Path('/data/custom-build'))
 
+    def test_flat_build_uses_model_root_and_keeps_project_observation_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            model = project / 'Fornax8003'
+            build = project / 'workspace/ic-builds/Fornax8003/v1'
+            build.mkdir(parents=True)
+            (build / 'build.json').write_text(json.dumps(
+                {'local_output_directory': str(model), 'local_model_directory': str(model)}))
+            config = {'ic_plotting': {'observation_profile': 'profile.csv'}}
+            (project / 'workflow.json').write_text(json.dumps(config))
+            self.assertEqual(PLOT.default_directory(build), model)
+            self.assertEqual(PLOT.project_settings(build), (project, config))
+
     def test_density_map_is_mass_weighted_not_particle_count_weighted(self):
         image = PLOT.surface_image(np.array([-.5, .5]), np.array([0., 0.]),
                                    np.array([1., 3.]), extent=1., bins=2)

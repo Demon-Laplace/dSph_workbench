@@ -1,5 +1,10 @@
 # dSph 工作流：智能体交接与操作说明
 
+2026-11-20 用户最终明确本地布局：IC、初态图片和isolation结果全部直接放在
+`<model>/isolation/`，不再建 `<model>/ic/` 或isolation内构建子目录。
+只在版本重名时加构建名文件前缀；工具固定名链接放在workspace内部，不复制粒子。
+此项覆盖下文较早的本地IC目录示例；服务器运行路径不变。见[本地布局](LOCAL_LAYOUT.md)。
+
 2026-11-20 isolation 更新：使用 [自动版本绑定](RUN_VERSIONS.md)。
 按声明的 IC build_id 和小型参数/profile 配置自动分配运行，相同版本复用、
 不同版本新建；JSON 为权威台账，TXT 为自动视图。正常接收/提交不例行核验

@@ -140,7 +140,8 @@ def generated_row(directory):
         raise ValueError('Only successful IC builds can enter the catalogue')
     params = directory / 'parameters.ini'
     particle = directory / build['particle_ic']
-    if params.parent != directory or particle.resolve().parent != directory.resolve():
+    storage = Path(build.get('local_output_directory', directory)).resolve()
+    if params.parent != directory or particle.resolve().parent != storage:
         raise ValueError('Build receipt points outside the IC run')
     model = Path(build['source_ini']).stem.removeprefix('IC_')
     # Normal registration trusts the declared completed build. Legacy hashes

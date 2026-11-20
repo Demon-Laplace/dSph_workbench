@@ -44,3 +44,15 @@ Yang2022/既有Muñoz2018标定点。只将恒星质量转为光度，默认读�
 Yang现有绝对标定已使用Muñoz，二者不当作独立光度约束；M/L仍2.6，无WLM、无IC/运行变化。
 新增--profile-only只更新轮廓，不重画其它图；CODE_VERSION=ic-figures-v4-munoz-published-profile。
 63项定向单测通过；8001/8002真实轮廓图已更新，旧图与来源留工作区，未找到逐bin mu_V机读表。
+
+[LOCAL-FLAT-ISOLATION-20261120] 2026-11-20
+用户最终明确：本地初态文件和isolation结果全部平铺在model/isolation，取消model/ic/build。
+8个有ic目录的模型合并136个文件；仅重名版本加构建名文件前缀，不覆盖旧结果。
+保留原build_id、种子和科学配置；仅重命名文件，不复制、重算或哈希认证粒子。
+固定名工具视图移到workspace/ic-builds，内容为指向实际文件的链接；
+更新构建入口、默认绘图配置定位和目录登记，后续生成不恢复旧的模型内多层目录。
+服务器运行和数据位置不变。38项IC/布局/目录登记/绘图输入测试通过；
+真实8003路径dry-run正确，不提交作业。说明：LOCAL_LAYOUT.md。
+移动记录保存在用户工作区local_flat_layout_20261120/moves.json。
+扩展50项isolation相关测试中48通过；另两项（旧清理认证断言、production-fetch旧fixture）
+在未修改的4349bc9基线也同样失败，未扩展本次任务去修改其科学/清理逻辑。

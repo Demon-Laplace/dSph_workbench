@@ -22,12 +22,23 @@ CODE_VERSION = 'ic-figures-v4-munoz-published-profile'
 
 def default_directory(build):
     build = Path(build)
+    receipt = build / 'build.json'
+    if receipt.is_file():
+        destination = json.loads(receipt.read_text()).get('local_output_directory')
+        if destination:
+            return Path(destination)
     return build.parent.parent/'isolation' if build.parent.name == 'ic' else build
 
 
 def project_settings(build=None):
     if build is not None:
         build = Path(build).resolve()
+        receipt = build / 'build.json'
+        model = json.loads(receipt.read_text()).get('local_model_directory') if receipt.is_file() else None
+        if model:
+            project = Path(model).parent
+            path = project/'workflow.json'
+            return project, json.loads(path.read_text()) if path.is_file() else {}
         if build.parent.name == 'ic':
             project = build.parent.parent.parent
             path = project/'workflow.json'

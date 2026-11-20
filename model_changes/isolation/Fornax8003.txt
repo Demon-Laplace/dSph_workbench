@@ -12,3 +12,10 @@ icbeta=.65、ickappa=1及无最终球坐标beta约束；轨道库、网格和粒
 本次不自动提交isolation或正式轨道演化；服务器仅登记本模型配方及备注。
 依据：本地Fornax8003/ic/cold-disk-mstar2e7-20261120-v1/；
 工作说明：Fornax_workspace/fornax8003_mstar2e7_20261120/REPORT.md。
+
+同任务完成及用户要求的本地整理：
+完整IC已生成，build_id=20d56906-8c1c-4b64-ba76-4c12c0bbad91，
+600000恒星+14500气体，默认5张初态图完成，IC总表已由4349bc9发布。
+按用户最终明确的布局，所有初态、分量、参数和图片平铺到本地Fornax8003/isolation；
+原ic/build目录已取消，工具固定名链接留在workspace/ic-builds，不复制实际粒子。
+恒星名义质量2e7 Msun、其余配方不变；尚未测新模型Q/冷度或提交演化，不声称稳定性通过。

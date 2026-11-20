@@ -34,6 +34,14 @@ def generate_default_plots(data, model, build, directory=None):
     return module.generate(data, model, directory or module.default_directory(build), build=build)
 
 
+def publish_flat(output, destination):
+    path = Path(__file__).with_name('flat_layout.py')
+    spec = importlib.util.spec_from_file_location('ic_flat_layout', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.publish(output, destination)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ini', required=True, type=Path)
@@ -42,6 +50,8 @@ def main():
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--plots-dir', type=Path, help='default: model/isolation for a standard ic/ build')
+    parser.add_argument('--flat-output', type=Path,
+                        help='publish directly in the model isolation folder; workspace retains only tool links')
     parser.add_argument('--no-plots', action='store_true', help='explicitly skip default IC figures')
     parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
@@ -84,7 +94,12 @@ def main():
                 'sampling_recipe': {
                     section: {key: config.get(section, key, fallback=None)
                               for key in ('icbeta', 'ickappa', 'beta', 'numorbits', 'nbody')}
-                    for section in config.sections() if section.lower().startswith('component_')}}
+                     for section in config.sections() if section.lower().startswith('component_')}}
+    if args.flat_output:
+        flat = args.flat_output.absolute()
+        model_directory = flat.parent if flat.name == 'isolation' else flat
+        manifest.update(local_model_directory=str(model_directory),
+                        local_output_directory=str(args.flat_output.absolute()))
     try:
         manifest['generator_revision'] = subprocess.check_output(
             ['git', '-C', str(Path(__file__).parent), 'rev-parse', 'HEAD'],
@@ -136,6 +151,8 @@ def main():
     except Exception as error:
         manifest.update(state='failed', error=str(error))
         receipt.write_text(json.dumps(manifest, indent=2) + '\n')
+        if args.flat_output:
+            publish_flat(output, args.flat_output)
         raise
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     print(f'Built {sum(counts)} particles: {destination}')
@@ -149,12 +166,17 @@ def main():
             manifest['plots'] = {'state': 'failed', 'error': str(error)}
             print(f'IC generation succeeded, but default figures failed: {error}', file=sys.stderr)
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
+    if args.flat_output:
+        publish_flat(output, args.flat_output)
     try:
         catalog.register(output, args.catalog_repo)
     except Exception as error:
         print(f'IC generation succeeded; catalogue sync pending: {error}\n'
               f'Retry with workflow.py ic-catalog --run {output.name}', file=sys.stderr)
         return 3
+    finally:
+        if args.flat_output:
+            publish_flat(output, args.flat_output)
     print('IC catalogue updated and pushed to GitHub main.')
     return 0
 
