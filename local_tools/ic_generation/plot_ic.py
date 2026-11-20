@@ -9,6 +9,7 @@ import configparser
 import json
 import os
 from pathlib import Path
+import tempfile
 
 import numpy as np
 
@@ -52,18 +53,18 @@ def cumulative(radius, mass, radii):
 
 
 def generate(data, model, directory, build=None, prefix=None):
-    # Config/cache writes stay inside the caller's approved temporary directory.
-    cache = Path(os.environ.get('TMPDIR', '/tmp/opencode'))/'ic-matplotlib'
-    cache.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault('MPLCONFIGDIR', str(cache))
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    # Temporary display-only files stay with the explicitly selected output,
+    # including on servers where all writes must remain in the data workspace.
+    cache = tempfile.TemporaryDirectory(prefix='.ic-matplotlib-', dir=directory)
+    os.environ.setdefault('MPLCONFIGDIR', cache.name)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
     from scipy.ndimage import gaussian_filter
 
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
     prefix = prefix or model
     if any((directory/(prefix+'_'+suffix+'.png')).exists() for suffix in SUFFIXES):
         if build is None:
@@ -231,6 +232,7 @@ def generate(data, model, directory, build=None, prefix=None):
         axes[1, 1].legend()
         fig.suptitle(model+' initial kinematics — intrinsic, not LOS; plotted bins have N>=20')
         save(fig, paths[4])
+    cache.cleanup()
     return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
             'files': [path.name for path in paths],
             'render_recipe': 'mass_weighted_ic_figures_v2_resolved_profile_range',
