@@ -94,3 +94,33 @@ allocation, without another monitoring job or editing 8001's frozen driver.
 An initially cold equilibrium orbit superposition can still develop bars,
 spirals, clumps or vertical heating. That is a scientific outcome, not something
 to mask by relabelling the model or changing the data.
+
+## Completed IC and actual outcome
+
+Build `cold-disk-q012-20261120-v1`, ID `27ace52b-fd7d-401b-b008-a9764d988c5e`,
+generator f0b4d30, seed 42: 600000 old stars + 14500 gas particles. Five default
+initial-model figures were generated automatically in the local isolation folder.
+
+All old stars within 3D5: Vphi=13.065, sigma_R/phi/z=6.589/7.463/4.041 km/s,
+V/sigma_1d=2.106, prograde=93.59%, measured c/a=0.12028, rms height=57 pc.
+The predeclared main region contains 83.99% of old-star mass: Vphi=14.342 km/s,
+V/sigma_R=2.299, V/sigma_phi=2.227, V/sigma_1d=2.552, prograde=96.98%,
+and median Lz/Lcirc(E)=0.855. The central region is still warm.
+
+**Four out of five exploratory indicators passed, not all five.** Minimum
+Q_star from target surface density is 1.141 (particle annular density: 1.174),
+below the predeclared 1.2 margin. Do not change that threshold retrospectively
+or describe this as a proven stable cold disk. The initially thin, substantially
+rotation-dominated candidate is retained for a bounded evolution test.
+
+Isolated test `cold-disk-test` submitted as **Job313997**, **IC001/P001**,
+TimeMax=0.5, same feedback=16.6 and PAF=4.0. No Milky Way orbit simulation was
+submitted. Its in-allocation monitor stops after startup and the solver continues;
+post-run measurements report rotation, radial coldness and thickness evolution.
+No evolution result is claimed yet. Full IC measurements are in
+`Fornax8002/isolation/rotation_IC.json` and `.csv` locally.
+
+The in-allocation automatic startup report was received: Job313997 running,
+150 seconds, nonzero integration at code time 0.000732422. Startup detection
+ended by itself while the solver continues. No further startup monitoring or
+claim of reaching TimeMax/evolution stability is made.
