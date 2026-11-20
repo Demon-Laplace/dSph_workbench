@@ -11,3 +11,21 @@
 重试使用新构建名rotation-icbeta0-20261120-v2及足够的执行时限，不覆盖v1或任何旧模型。
 补充科学测量程序rotation_diagnostics.py：密度短轴、分量/孔径、带符号旋转及分箱统计，
 不读取粒子ID；可在同一isolation作业内演化结束后直接处理8001的新快照，不增加监视作业。
+
+同任务IC实测：v2已完整生成614500粒子（600000旧星、14500气体），
+build_id=4258fa52-a693-4112-99f7-08ca903f94ac，生成器808ed9a，测量程序173a1d8。
+3D5、质量加权、独立恒星密度短轴：旧星Vphi=5.556 km/s、sigma_phi=9.336 km/s、
+V/sigma_phi=0.5951、顺行74.18%；这是完整轨道优化/采样后的IC，不是种子演示。
+恒星r50=0.603684 kpc，相对解析目标0.604374差−0.114%；中心0.1 kpc包围质量仍偏低12.2%，
+保留并说明该局限。beta_second=−0.1033，去流beta_sigma=+0.0926，不宣称随机beta不变。
+测试profile rotation-8001-t0p5：TimeMax=0.5、输出步长0.01、feedback=16.6、
+PAF=4.0、BufferSize=120；astro_thin单节点24MPI、8小时时限；不启动银河系轨道。
+isolation上传/提交命令已发起，JobID尚待返回；没有完整演化或稳定性通过结论。
+同作业内自动测量新8001的0/10/25/50及最终帧，结果为运行目录rotation_evolution.json/csv。
+本地IC科学结果：Fornax8001/isolation/rotation_IC.json/csv；不需要粒子ID或哈希认证。
+本机46项定向单测通过，服务器采样/测量7项通过；较大服务器单测SSH中断未算通过。
+
+同任务提交回执（2026-11-20 12:51 UTC）：isolation rotation-test 已提交JobID 313990，
+自动版本绑定IC001/P001；服务器目录isoFornax/Fornax8001/runs/rotation-test/。
+首次客户端SSH在resolve阶段中断、未提交；Rubicon控制连接重试复用同一请求，仅提交一次。
+现只确认IC净旋转及提交成功；不提前声称启动、达到0.5或长期平衡已通过。
