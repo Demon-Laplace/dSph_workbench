@@ -46,3 +46,11 @@ components/central_components标题注明整体±5/中心±1.5kpc；每图两行
 未重定观测零点、未拟合M/L或姿态；初态正面投影不当作演化后观测拟合通过。
 代码IC-FORNAX-STELLAR-SB-20261120，58项定向单测通过；旧3图保留工作区备份，
 当前图及initial_figures.json在本地Fornax8002/isolation；IC、参数和Job313997均未改动或重提。
+
+[F8002-MUNOZ-PROFILE-20261120] 2026-11-20
+仅在轮廓图加入Muñoz2018发表Sersic拟合：n=.71、theta_e=18.4arcmin、mu0V=23.59，
+不把平滑曲线或400个采样值冒充新观测点；带宽仅±.16mag归一化误差，外层为外推。
+共同角半径显示采用现有D139.4kpc（Re=.7461kpc；论文D147对应787pc），M/L仍2.6。
+Yang输入mu、误差、标定与CSV不变，显示半径按角坐标统一；不把两者当独立绝对光度约束。
+CODE_VERSION=ic-figures-v4-munoz-published-profile，63项定向测试与真实出图通过。
+资料与旧图留工作区munoz2018_reference_20261120；未改冷盘IC、其它图或Job313997。

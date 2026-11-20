@@ -51,3 +51,6 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 | 2026-11-20 | IC面亮度绘图 / `IC-FORNAX-STELLAR-SB-20261120` | 用户明确不加WLM；既有Fornax V波段观测表与分析M/L=2.6 | 轮廓图分质量/光度面板，加入Fornax观测误差及既有Muñoz标定点；空间图明确整体与中心尺度；未调IC/参数、未拟合归一化 | 58项定向测试及两模型真实出图通过；[程序备注](workflow/MODEL_CHANGES.txt) |
 | 2026-11-20 | Fornax8001 / `F8001-STELLAR-SB-20261120` | 既有build4258fa52、Job313990不动 | 仅刷新3张初态图，加入恒星mu_V观测而非WLM，澄清整体/放大与成分/投影含义 | 图已更新、旧图备份；不是演化拟合结果；[完整备注](model_changes/isolation/Fornax8001.txt) |
 | 2026-11-20 | Fornax8002 / `F8002-STELLAR-SB-20261120` | 既有build27ace52b、Job313997不动 | 同样更新初态观测面亮度参照，保持固定M/L与原始观测标定，未改冷盘IC | 图已更新、旧图备份；未重新运行或查询演化；[完整备注](model_changes/isolation/Fornax8002.txt) |
+| 2026-11-20 | Muñoz发表轮廓 / `IC-MUNOZ-PUBLISHED-FIT-20261120` | 原刊ApJ860,66表1/5/6与图6；既有Yang参考保留 | 用n=.71、theta_e=18.4arcmin、mu0V=23.59重建完整发表Sersic拟合；明确非新增bins、外推与归一化误差范围，统一D139.4显示角半径 | 63项定向测试通过；[共用程序备注](workflow/MODEL_CHANGES.txt) |
+| 2026-11-20 | Fornax8001 / `F8001-MUNOZ-PROFILE-20261120` | 同一旋转IC、Job313990不动 | 只刷新面亮度轮廓，加入Muñoz发表拟合和来源，不重标定观测或拟合M/L | 真实图已更新、旧图保存；[完整备注](model_changes/isolation/Fornax8001.txt) |
+| 2026-11-20 | Fornax8002 / `F8002-MUNOZ-PROFILE-20261120` | 同一冷盘IC、Job313997不动 | 同样补充完整Muñoz拟合，保留非独立标定/外推说明，物理参数不变 | 真实图已更新、旧图保存；[完整备注](model_changes/isolation/Fornax8002.txt) |

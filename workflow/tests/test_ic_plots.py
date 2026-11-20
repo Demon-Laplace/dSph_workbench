@@ -84,9 +84,20 @@ class ICPlotInputs(unittest.TestCase):
             build.mkdir(parents=True)
             active = project/'active/repo'
             active.mkdir(parents=True)
-            (active/'variable.py').write_text('sim_plot_mass_to_light_ratio=2.6\n'
+            (active/'variable.py').write_text('sim_plot_mass_to_light_ratio=2.6\nd_today=139.4\n'
                                             'raise RuntimeError("must not execute")\n')
             (project/'workflow.json').write_text(json.dumps({'analysis_code': 'active/repo'}))
             settings = PLOT.photometric_settings(build=build)
             self.assertEqual(settings['mass_to_light_V'], 2.6)
             self.assertEqual(settings['mass_to_light_source'], str(active/'variable.py'))
+            self.assertEqual(settings['reference_display_distance_kpc'], 139.4)
+
+    def test_angular_observation_radii_use_common_distance_without_changing_input(self):
+        data = {'radius_kpc': np.array([1.]), 'inner_kpc': np.array([.9]),
+                'outer_kpc': np.array([1.1]), 'radius_deg': np.array([.4]),
+                'inner_deg': np.array([.3]), 'outer_deg': np.array([.5]),
+                'mu_v': np.array([24.]), 'mu_v_error': np.array([.2])}
+        displayed = PLOT.observation_at_distance(data, 139.4)
+        np.testing.assert_allclose(displayed['radius_kpc'], np.deg2rad([.4])*139.4)
+        np.testing.assert_allclose(data['radius_kpc'], [1.])
+        np.testing.assert_allclose(displayed['mu_v'], data['mu_v'])

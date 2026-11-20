@@ -36,6 +36,8 @@ The shared builder also generates initial spatial, surface-density, mass-budget
 and kinematic figures by default, directly in the local model's isolation/ folder.
 The profile figure keeps mass density separate from the stellar V-band
 surface-brightness comparison with the configured Fornax observation table.
+The Muñoz 2018 reference is drawn as its published Sersic fit, not as additional
+radial measurements; angular profiles share the configured analysis distance.
 New build versions preserve existing figures instead of overwriting them.
 """
 

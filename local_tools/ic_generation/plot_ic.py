@@ -17,7 +17,7 @@ import numpy as np
 
 SUFFIXES = ('components', 'central_components', 'column_density_profile',
             'Mstar_Mgas_relation', 'kinematics')
-CODE_VERSION = 'ic-figures-v3-fornax-stellar-surface-brightness'
+CODE_VERSION = 'ic-figures-v4-munoz-published-profile'
 
 
 def default_directory(build):
@@ -35,7 +35,7 @@ def project_settings(build=None):
     return None, {}
 
 
-def photometric_settings(build=None, mass_to_light=None):
+def photometric_settings(build=None, mass_to_light=None, distance_kpc=None):
     """Use the existing analysis photometry without importing its runtime paths."""
     project, config = project_settings(build)
     candidates = []
@@ -43,23 +43,33 @@ def photometric_settings(build=None, mass_to_light=None):
         candidates.append((project/config['analysis_code']).resolve()/'variable.py')
     candidates.append(Path(__file__).resolve().parents[2]/'repo/variable.py')
     value, source = 2.6, 'existing project default'
+    distance, distance_source = 139.4, 'existing project distance default'
     for path in candidates:
         if not path.is_file():
             continue
+        settings = {}
         for node in ast.parse(path.read_text()).body:
-            if isinstance(node, ast.Assign) and any(
-                    isinstance(t, ast.Name) and t.id == 'sim_plot_mass_to_light_ratio'
-                    for t in node.targets):
-                value, source = float(ast.literal_eval(node.value)), str(path)
-                break
-        else:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in (
+                            'sim_plot_mass_to_light_ratio', 'd_today'):
+                        settings[target.id] = float(ast.literal_eval(node.value))
+        if 'sim_plot_mass_to_light_ratio' not in settings:
             continue
+        value, source = settings['sim_plot_mass_to_light_ratio'], str(path)
+        if 'd_today' in settings:
+            distance, distance_source = settings['d_today'], str(path)
         break
     if mass_to_light is not None:
         value, source = float(mass_to_light), 'explicit --mass-to-light'
     if not np.isfinite(value) or value <= 0:
         raise ValueError('V-band mass-to-light ratio must be positive and finite')
+    if distance_kpc is not None:
+        distance, distance_source = float(distance_kpc), 'explicit --distance-kpc'
+    if not np.isfinite(distance) or distance <= 0:
+        raise ValueError('Reference display distance must be positive and finite')
     return {'mass_to_light_V': value, 'mass_to_light_source': source,
+            'reference_display_distance_kpc': distance, 'distance_source': distance_source,
             'band': 'V', 'magnitude_system': 'Vega, existing project convention',
             'solar_magnitude_input': 4.83, 'AB_to_Vega_offset': -.02,
             'arcsec_per_radian': 206265.,
@@ -120,7 +130,9 @@ def load_surface_brightness_observation(build=None, observation_profile=None):
             return np.array([float(row.get(key) or 'nan') for row in rows])
         data = {'radius_kpc': values('r_mid_kpc'), 'mu_v': values('mu_v_mag_arcsec2'),
                 'mu_v_error': values('mu_v_err_total'),
-                'inner_kpc': values('r_inner_kpc'), 'outer_kpc': values('r_outer_kpc')}
+                'inner_kpc': values('r_inner_kpc'), 'outer_kpc': values('r_outer_kpc'),
+                'radius_deg': values('r_mid_deg') if 'r_mid_deg' in rows[0] else values('xr'),
+                'inner_deg': values('r_inner_deg'), 'outer_deg': values('r_outer_deg')}
         finite = (np.isfinite(data['radius_kpc']) & np.isfinite(data['mu_v']) &
                   np.isfinite(data['mu_v_error']) & (data['mu_v_error'] >= 0))
         return data, {
@@ -136,6 +148,17 @@ def load_surface_brightness_observation(build=None, observation_profile=None):
         }
     return None, {'state': 'unavailable', 'observable': 'Fornax stellar V-band surface brightness',
                   'searched_paths': [str(path) for path in paths], 'include_WLM': False}
+
+
+def observation_at_distance(data, distance_kpc):
+    """Display angular observations at a common distance; never alter their CSV."""
+    result = dict(data)
+    for physical, angular in [('radius_kpc', 'radius_deg'), ('inner_kpc', 'inner_deg'),
+                              ('outer_kpc', 'outer_deg')]:
+        if angular in data:
+            good = np.isfinite(data[angular])
+            result[physical] = np.where(good, np.deg2rad(data[angular])*distance_kpc, data[physical])
+    return result
 
 
 def surface_image(x, y, mass, extent, bins=400):
@@ -169,7 +192,7 @@ def cumulative(radius, mass, radii):
 
 
 def generate(data, model, directory, build=None, prefix=None,
-             observation_profile=None, mass_to_light=None):
+             observation_profile=None, mass_to_light=None, distance_kpc=None, profile_only=False):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     # Temporary display-only files stay with the explicitly selected output,
@@ -181,18 +204,28 @@ def generate(data, model, directory, build=None, prefix=None,
     import matplotlib.pyplot as plt
     from matplotlib.colors import LogNorm
     from scipy.ndimage import gaussian_filter
+    import munoz2018
     observation, reference = load_surface_brightness_observation(build, observation_profile)
-    photometry = photometric_settings(build, mass_to_light)
+    photometry = photometric_settings(build, mass_to_light, distance_kpc)
+    distance = photometry['reference_display_distance_kpc']
+    if observation is not None:
+        observation = observation_at_distance(observation, distance)
+        reference['display_radius_convention'] = (
+            'Use supplied angular radii at common D='+str(distance)+' kpc when available; '
+            'mu_V/errors and source CSV unchanged.')
+    munoz = munoz2018.metadata(distance)
     if reference['state'] != 'loaded':
         print('IC figures: Fornax stellar-light reference unavailable; configure --observation-profile.')
 
     prefix = prefix or model
-    if any((directory/(prefix+'_'+suffix+'.png')).exists() for suffix in SUFFIXES):
+    selected_suffixes = ('column_density_profile',) if profile_only else SUFFIXES
+    if any((directory/(prefix+'_'+suffix+'.png')).exists() for suffix in selected_suffixes):
         if build is None:
             raise FileExistsError('Existing IC figures are preserved; choose another output prefix.')
         prefix = model+'_'+Path(build).name
     paths = [directory/(prefix+'_'+suffix+'.png') for suffix in SUFFIXES]
-    if any(path.exists() for path in paths):
+    selected_paths = [paths[2]] if profile_only else paths
+    if any(path.exists() for path in selected_paths):
         raise FileExistsError('Figures for this build already exist; use --prefix for a new rendering.')
 
     populations = {}
@@ -232,8 +265,18 @@ def generate(data, model, directory, build=None, prefix=None,
         fig.savefig(path, dpi=170, bbox_inches='tight')
         plt.close(fig)
 
+    def result():
+        return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
+                'files': [path.name for path in selected_paths], 'render_recipe': CODE_VERSION,
+                'observational_reference': reference, 'published_munoz_reference': munoz,
+                'photometric_convention': photometry,
+                'spatial_views': {'components': 'overview, half-width 5 kpc',
+                                  'central_components': 'same IC, central zoom, half-width 1.5 kpc',
+                                  'panels': 'rows: gas/stars; columns: XY/XZ; equal spatial scales'},
+                'note': 'Initial IC diagnostics. Muñoz line is a published fit, not newly measured bins. No WLM.'}
+
     with plt.rc_context({'font.size': 10, 'axes.grid': False}):
-        for path, extent in zip(paths[:2], (5., 1.5)):
+        for path, extent in (() if profile_only else zip(paths[:2], (5., 1.5))):
             fig, axes = plt.subplots(2, 2, figsize=(10, 9), constrained_layout=True)
             for row, (name, (x, _, mass)) in enumerate(populations.items()):
                 for col, (a, b, plane) in enumerate([(0, 1, 'XY / face-on'), (0, 2, 'XZ / edge-on')]):
@@ -301,7 +344,7 @@ def generate(data, model, directory, build=None, prefix=None,
             light_ax.errorbar(observation['radius_kpc'][good], observation['mu_v'][good],
                 yerr=observation['mu_v_error'][good], fmt='o', ms=3, capsize=2,
                 lw=.7, color='darkorchid', ecolor='gray', alpha=.5,
-                label='Fornax observed (Yang 2022, prepared)', zorder=2)
+                label='Yang 2022 (project Muñoz calibration)', zorder=2)
         else:
             light_ax.text(.03, .05, 'Fornax observation profile unavailable',
                           transform=light_ax.transAxes, fontsize=8, color='#a86600')
@@ -310,17 +353,27 @@ def generate(data, model, directory, build=None, prefix=None,
             x, mass, inner, outer, photometry['mass_to_light_V'])
         light_ax.plot(light_radius, light_mu, '.-', color='black', ms=3, lw=1.2,
                       label=f"IC stars, face-on; M/L={photometry['mass_to_light_V']:g}", zorder=3)
-        light_ax.errorbar([.05, .791], [23.59, 24.77], yerr=[.16, .16],
-                         fmt='s', mfc='none', mec='#d78300', ecolor='#d78300',
-                         ms=6, capsize=3, label='Muñoz 2018 calibration anchors', zorder=4)
+        published_R = np.linspace(0., 5.1, 400)
+        published_mu = munoz2018.sersic_mu_v(published_R, distance)
+        light_ax.fill_between(published_R, published_mu-.16, published_mu+.16,
+                              color='#df8a00', alpha=.14, linewidth=0)
+        light_ax.plot(published_R, published_mu, '--', color='#d78300', lw=1.8,
+                      label="Muñoz 2018 Sérsic fit (n=0.71, Re=18.4')", zorder=4)
+        angular = light_ax.secondary_xaxis('top', functions=(
+            lambda r: r/distance*180/np.pi*60, lambda theta: np.deg2rad(theta/60)*distance))
+        angular.set_xlabel('Angular semi-major radius [arcmin]')
         light_ax.set(xlim=(0, 5.1), ylim=(36, 22),
                      xlabel='Radius [kpc]', ylabel=r'$\mu_V\ [{\rm mag\ arcsec}^{-2}]$',
                      title='Stellar V-band surface brightness (Vega)')
         light_ax.grid(alpha=.2); light_ax.legend(loc='lower left', fontsize=8)
         fig.suptitle(model+' initial IC — mass profiles and Fornax stellar-light reference')
-        fig.supxlabel('IC is face-on, not a fitted present-day sky view; observation uses its prepared radial profile.\n'
-                      'Fixed project M/L; no observational renormalization, no WLM reference.', fontsize=9)
+        fig.supxlabel(f'Common reference distance {distance:g} kpc; IC is face-on, fixed M/L (not a sky-view fit).\n'
+                      'Muñoz: published fit, not new bins; outer continuation is extrapolation. Band: ±0.16 mag normalization only.\n'
+                      'Yang already uses Muñoz calibration; no independent joint-photometry fit, no WLM.', fontsize=8)
         save(fig, paths[2])
+        if profile_only:
+            cache.cleanup()
+            return result()
 
         radii = np.geomspace(.03, 15., 160)
         enclosed = {}
@@ -390,15 +443,7 @@ def generate(data, model, directory, build=None, prefix=None,
         fig.suptitle(model+' initial kinematics — intrinsic, not LOS; plotted bins have N>=20')
         save(fig, paths[4])
     cache.cleanup()
-    return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
-            'files': [path.name for path in paths],
-            'render_recipe': CODE_VERSION,
-            'observational_reference': reference,
-            'photometric_convention': photometry,
-            'spatial_views': {'components': 'overview, half-width 5 kpc',
-                              'central_components': 'same IC, central zoom, half-width 1.5 kpc',
-                              'panels': 'rows: gas/stars; columns: XY/XZ; equal spatial scales'},
-            'note': 'Initial IC diagnostics; only stellar mass is converted to V-band light. No WLM.'}
+    return result()
 
 
 def main():
@@ -410,6 +455,10 @@ def main():
                         help='prepared Fornax stellar mu_V CSV; default: configured ic_plotting.observation_profile')
     parser.add_argument('--mass-to-light', type=float,
                         help='explicit stellar V-band M/L; default: existing analysis sim_plot_mass_to_light_ratio')
+    parser.add_argument('--distance-kpc', type=float,
+                        help='common reference-radius distance; default: existing analysis d_today')
+    parser.add_argument('--profile-only', action='store_true',
+                        help='refresh only the mass/surface-brightness profile, not the other IC figures')
     args = parser.parse_args()
     receipt = json.loads((args.build/'build.json').read_text())
     arrays = []
@@ -418,8 +467,9 @@ def main():
         arrays.append(np.column_stack((data, np.zeros(len(data)), np.full(len(data), kind))))
     model = Path(receipt['source_ini']).stem.removeprefix('IC_')
     result = generate(np.vstack(arrays), model, args.output or default_directory(args.build),
-                      build=args.build, prefix=args.prefix,
-                      observation_profile=args.observation_profile, mass_to_light=args.mass_to_light)
+                       build=args.build, prefix=args.prefix,
+                      observation_profile=args.observation_profile, mass_to_light=args.mass_to_light,
+                      distance_kpc=args.distance_kpc, profile_only=args.profile_only)
     print(json.dumps(result, indent=2))
 
 
