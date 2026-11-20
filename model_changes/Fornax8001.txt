@@ -1,0 +1,18 @@
+[F8001-S001-7006-THIN-20261121] 2026-11-21
+对象：Fornax8001正式轨道模拟，不是同编号isolation续跑。
+来源：rotation-test/output/snapshot_001.hdf5，代码时间约.01（约9.78 Myr），
+原IC build4258fa52-a693-4112-99f7-08ca903f94ac；全部14500气体及600158恒星导出。
+用户指定轨道：实际已应用的Fornax7006/orbit_corrected/Fornax7006/case.json，
+不是7006顶层旧mergegalaxy。沿用MW53、背景气体、内部旋角及反馈16.6、PAF8、Buffer95。
+共同初始GRF轨道目标：r=(-38.365692,226.532950,-171.864240) kpc，
+v=(-10.577884,-80.892500,-20.894640) km/s；
+源依赖的合并平移按本模型当前恒星质心/均速换算，未重新拟合轨道。
+内部旋角=(166.8887634,-46.7272530,42.7932205)度；正式终点3.6 Gyr。
+资源按用户要求：astro_thin，4节点、总96MPI、每节点24任务，
+Slurm mem-per-cpu=3800M，GIZMO MaxMemSize=3800；walltime99h，多节点shm:tcp。
+沿用snap2csv和一次合并器；新生type4映射type2，新IC赋顺序标签，不按ID删行或认证。
+限制：保留热InternalEnergy，独立反馈能量库按现有新IC流程重置；这不是无缝二进制restart。
+准备Job236888因脚本把Path传给文本函数失败；修正后复用已导出文件，Job236889完成准备。
+正式提交Job314007，运行目录/travail/xhuang/Fornax8001，启动检测尚在等待，不声称科学稳定性通过。
+原孤立模拟、7006、旧输入和用户启动脚本均保留，不额外做全粒子认证或哈希回读。
+依据：case.json、source_snapshot001.json；workspace/jobs/s001-orbit7006-thin4n96-20261120-v1-Fornax8001/。
