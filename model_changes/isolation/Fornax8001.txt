@@ -44,3 +44,14 @@ column_density_profile.png、Mstar_Mgas_relation.png、kinematics.png（均以�
 平均旋转/三向弥散/V-sigma/顺行率；不将总气体冒充HI，不读取模拟快照。
 renderer=0d2bcab；53项定向单测通过，真实8001图片已生成。
 8001粒子IC、参数、冻结驱动和Job313990均未修改或重新提交。
+
+[F8001-STELLAR-SB-20261120] 2026-11-20
+按用户最终指令，不加WLM；原临时WLM预览未发布。
+更新components/central_components标题明确整体±5/中心±1.5kpc；行气体/恒星、列XY/XZ。
+column_density_profile图左侧仍是质量面密度，右侧叠加Fornax恒星V波段观测轮廓与总误差：
+使用项目Fornax_surface_brightness_profile.csv（v0.2.4、Muñoz两点既有标定），158行中148行有有限误差。
+模型沿用分析源sim_plot_mass_to_light_ratio=2.6及Vega约定，按观测区间统计初态正面恒星光度；
+没有调M/L贴合、重新标定观测或选择观测姿态拟合。不是总气体/HI对照。
+代码IC-FORNAX-STELLAR-SB-20261120，58项定向单测通过；旧3张图保存工作区
+ic_stellar_surface_brightness_20261120/previous_figures/；图与元数据仍在本地Fornax8001/isolation。
+IC和Job313990完全不改、不重提、不读演化快照。

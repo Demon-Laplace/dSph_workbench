@@ -37,3 +37,12 @@ PAF4、Buffer120、astro_thin单节点24MPI、8小时；仅短期探索，不启
 
 同任务自动启动报告：Job313997运行150秒后非零积分至Time=.000732422，状态running。
 同作业内启动检测已自行结束，模拟继续；本次停止监测，不把启动通过当作达到.5或稳定性通过。
+
+[F8002-STELLAR-SB-20261120] 2026-11-20
+按用户要求不加WLM，改为Fornax恒星V波段面亮度观测；仅更新绘图。
+components/central_components标题注明整体±5/中心±1.5kpc；每图两行是气体/恒星，两列为XY/XZ。
+轮廓图左侧质量面密度、右侧恒星mu_V与Yang2022/既有Muñoz2018标定对照，包含观测总误差。
+引用项目已处理Fornax_surface_brightness_profile.csv v0.2.4；默认M/L=2.6来自现有分析源，
+未重定观测零点、未拟合M/L或姿态；初态正面投影不当作演化后观测拟合通过。
+代码IC-FORNAX-STELLAR-SB-20261120，58项定向单测通过；旧3图保留工作区备份，
+当前图及initial_figures.json在本地Fornax8002/isolation；IC、参数和Job313997均未改动或重提。

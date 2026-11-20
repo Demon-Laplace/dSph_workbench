@@ -34,6 +34,8 @@ Successful builds automatically update and push ``IC_MODELS.csv``. Configure
 ``ic.root`` and ``ic_python`` in workflow.json; outputs use unique per-model ic/ runs.
 The shared builder also generates initial spatial, surface-density, mass-budget
 and kinematic figures by default, directly in the local model's isolation/ folder.
+The profile figure keeps mass density separate from the stellar V-band
+surface-brightness comparison with the configured Fornax observation table.
 New build versions preserve existing figures instead of overwriting them.
 """
 
