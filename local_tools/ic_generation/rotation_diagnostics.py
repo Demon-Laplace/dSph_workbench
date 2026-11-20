@@ -5,6 +5,7 @@ This is a scientific measurement, not a transfer/integrity gate. Membership is
 spatial and mass weighted; particle IDs are neither read nor required.
 """
 import argparse
+import configparser
 import csv
 import json
 from pathlib import Path
@@ -127,11 +128,38 @@ def read_build(directory):
                 'equal_seed_mean_vphi_kms': float(np.mean(vp)),
                 'optimized_seed_mean_vphi_kms': float(average(vp, weight)),
                 'note': 'Seed vphi is not an orbit-time-averaged rotation curve.'}
-    return {'model': Path(build['source_ini']).stem.removeprefix('IC_'),
-            'build_id': build.get('build_id'), 'generator_revision': build.get('generator_revision'),
-            'seed': build.get('seed'), 'sampling_recipe': build.get('sampling_recipe'),
-            'input_build': str(directory), 'orbit_libraries': libraries,
-            'states': [diagnose(populations, 'IC', 0.)]}
+    report = {'model': Path(build['source_ini']).stem.removeprefix('IC_'),
+              'build_id': build.get('build_id'), 'generator_revision': build.get('generator_revision'),
+              'seed': build.get('seed'), 'sampling_recipe': build.get('sampling_recipe'),
+              'input_build': str(directory), 'orbit_libraries': libraries,
+              'states': [diagnose(populations, 'IC', 0.)]}
+    # Compare the new IC to its analytic density recipe, not to any old particles.
+    # This branch runs in the IC's AGAMA environment; snapshot-only work does not
+    # import AGAMA or reconstruct its orbit library.
+    import agama
+    from scipy.optimize import brentq
+    agama.setUnits(length=1, velocity=1, mass=1e10)
+    config = configparser.RawConfigParser()
+    config.read(directory/'parameters.ini')
+    center = np.array(report['states'][0]['center_kpc'])
+    structure = {}
+    for component, population in [('stellar', 'old'), ('gas', 'gas')]:
+        density = agama.Density(**dict(config.items('Density_'+component)))
+        x, _, m = populations[population]
+        r = np.linalg.norm(x-center, axis=1)
+        radii = np.array([.1, .25, .5, 1., 2., 5., 15.])
+        target = density.enclosedMass(radii)
+        actual = np.array([m[r < radius].sum() for radius in radii])
+        total = density.totalMass()
+        structure[component] = {
+            'target_mass_Msun': float(total*1e10), 'particle_mass_Msun': float(m.sum()*1e10),
+            'r50_target_all_kpc': float(brentq(lambda rr: density.enclosedMass(rr)-total*.5, 1e-5, 100.)),
+            'r50_particles_all_kpc': quantile(r, m, .5),
+            'radii_kpc': radii.tolist(), 'target_enclosed_Msun': (target*1e10).tolist(),
+            'particle_enclosed_Msun': (actual*1e10).tolist(),
+            'enclosed_mass_fractional_difference': (actual/target-1).tolist()}
+    report['analytic_density_comparison'] = structure
+    return report
 
 
 def read_snapshots(directory, selected):
