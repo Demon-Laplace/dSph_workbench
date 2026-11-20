@@ -31,7 +31,7 @@ class IsolationTests(unittest.TestCase):
         runtime.write_json(self.root / 'workflow.json', config)
         for name in ('Fornax.ini', 'parameters.ini'):
             (self.stage / name).write_text('fixture ' + name)
-        for name in ('workflow_isolation.py', 'workflow_runtime.py'):
+        for name in ('workflow_isolation.py', 'workflow_runtime.py', 'workflow_versions.py'):
             shutil.copy2(Path(isolation.__file__).with_name(name), self.stage / name)
             shutil.copy2(Path(isolation.__file__).with_name(name), self.root / name)
         self.request = {'name': 'Fornax7003-test', 'model': 'Fornax7003', 'profile': 'default',
@@ -54,12 +54,10 @@ class IsolationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Ambiguous'):
             isolation.case_dir(self.root, self.run.name, 'Fornax7003')
 
-    def test_preflight_preserves_physics_and_does_not_submit(self):
+    def test_prepare_preserves_physics_and_does_not_call_scheduler(self):
         result, sbatch = self.receive()
         self.assertEqual(result['state'], 'prepared')
-        self.assertIn('--test-only', sbatch.call_args.args[0])
-        self.assertIn('--clusters', sbatch.call_args.args[0])
-        self.assertIn('--qos', sbatch.call_args.args[0])
+        sbatch.assert_not_called()
         self.assertIn('export TMPDIR="$PWD/.tmp"', (self.run / 'run.sh').read_text())
         params = (self.run / 'GZWJL.PARAM').read_text()
         self.assertIn('TimeMax 1\nSofteningGas 0.1', params)
@@ -100,22 +98,21 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(again['job_id'], '12345')
         sbatch.assert_not_called()
 
-    def test_changed_inputs_or_settings_cannot_reuse_run(self):
+    def test_unsupported_profile_fails_but_particle_edits_do_not_trigger_hashing(self):
         self.receive()
         self.request['profile'] = 'other'
         runtime.write_json(self.stage / 'request.json', self.request)
-        with self.assertRaisesRegex(ValueError, 'different ICs'):
+        with self.assertRaisesRegex(ValueError, 'Configure isolation_profiles'):
             isolation.receive(self.root, self.stage)
         self.request['profile'] = 'default'
         runtime.write_json(self.stage / 'request.json', self.request)
         (self.stage / 'Fornax.ini').write_text('bad upload')
-        with self.assertRaisesRegex(ValueError, 'checksum'):
-            isolation.receive(self.root, self.stage)
+        self.assertTrue(isolation.receive(self.root, self.stage)['reused'])
 
-    def test_prepared_parameter_edit_and_existing_data_refused(self):
+    def test_existing_simulation_data_remains_protected(self):
         self.receive()
-        (self.run / 'GZWJL.PARAM').write_text('changed')
-        with self.assertRaisesRegex(ValueError, 'Prepared case changed'):
+        (self.run / 'output/snapshot_fixture.hdf5').write_text('existing output')
+        with self.assertRaisesRegex(ValueError, 'simulation data'):
             isolation.receive(self.root, self.stage, True)
 
     def test_uncertain_submission_never_blindly_retries(self):
@@ -134,12 +131,14 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual((self.run / 'Fornax.IC_000').read_bytes(), b'binary')
         self.assertEqual(json.loads((self.run / 'status.json').read_text())['state'], 'complete')
 
-    def test_solver_without_final_snapshot_is_failed(self):
+    def test_process_completion_does_not_reread_snapshots(self):
         self.receive(submit=True)
-        with patch.dict(os.environ, SLURM_JOB_ID='12345'), patch.object(isolation, 'verify_completion', side_effect=ValueError('TimeMax not reached')):
-            with self.assertRaisesRegex(ValueError, 'TimeMax'):
-                isolation.run_job(self.root, self.run.name)
-        self.assertEqual(json.loads((self.run / 'status.json').read_text())['state'], 'failed')
+        with patch.dict(os.environ, SLURM_JOB_ID='12345'), patch.object(isolation, 'verify_completion') as verify:
+            isolation.run_job(self.root, self.run.name)
+        verify.assert_not_called()
+        status = json.loads((self.run / 'status.json').read_text())
+        self.assertEqual(status['state'], 'complete')
+        self.assertEqual(status['completion'], 'solver process returned successfully')
 
     def test_symlink_escape_cannot_create_server_case(self):
         outside = self.root / 'outside'
@@ -189,6 +188,29 @@ class IsolationTests(unittest.TestCase):
         self.assertEqual(receipt['job_id'], '45678')
         self.assertEqual(list((local / 'Fornax7003/isolation').iterdir()), [])
         self.assertEqual((self.root / 'isoFornax/Fornax7003/runs/transport/Fornax.ini').read_bytes(), (ic / 'Fornax.ini').read_bytes())
+        # A new IC under the same requested name selects a different server run,
+        # including across the real CLI resolve/upload/receive calls.
+        newer = local / 'generated/newer'
+        newer.mkdir()
+        for name in ('parameters.ini', 'Fornax.ini'):
+            (newer / name).write_text('new transport fixture')
+        build = json.loads((ic / 'build.json').read_text())
+        build['build_id'] = 'new-fixture'
+        runtime.write_json(newer / 'build.json', build)
+        args.ic_run = 'newer'
+        with patch.dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ['PATH']):
+            self.assertEqual(isolation.pipeline(args), 0)
+            self.assertEqual(isolation.pipeline(args), 0)
+        self.assertEqual((self.root / 'sbatch-count').read_text(), '11')
+        result = json.loads((local / 'workspace/receipts/isolation/Fornax7003/transport/server.json').read_text())
+        self.assertEqual(result['name'], 'transport-IC002-P001-01')
+        self.assertEqual((self.root / 'isoFornax/Fornax7003/runs/transport/Fornax.ini').read_bytes(),
+                         (ic / 'Fornax.ini').read_bytes())
+        with patch.object(isolation, 'remote_exec',
+                          return_value=subprocess.CompletedProcess([], 0)) as remote:
+            self.assertEqual(isolation.status(SimpleNamespace(root=local, name='transport',
+                                                             model='Fornax7003')), 0)
+        self.assertIn('transport-IC002-P001-01', remote.call_args.args[1])
 
     def test_cooling_is_materialized_and_required_table_cannot_disappear(self):
         table = self.root / 'table'
@@ -227,8 +249,7 @@ class IsolationTests(unittest.TestCase):
         isolation.prepare_legacy(self.root, model)
         self.assertEqual(binary.stat().st_mtime_ns, original)
         (model / 'Fornax9001.ini').write_text('changed input')
-        with self.assertRaisesRegex(ValueError, 'changed'):
-            isolation.prepare_legacy(self.root, model)
+        self.assertTrue(isolation.prepare_legacy(self.root, model)['reused_existing_binary'])
         self.assertEqual(binary.stat().st_mtime_ns, original)
 
     def test_manual_wrong_model_and_existing_binary_are_refused(self):
@@ -239,8 +260,7 @@ class IsolationTests(unittest.TestCase):
         self.assertFalse((model / 'Fornax.IC_000').exists())
         (model / 'Fornax9002.ini').rename(model / 'Fornax9001.ini')
         (model / 'Fornax.IC_000').write_bytes(b'keep original')
-        with self.assertRaisesRegex(ValueError, 'refusing to overwrite'):
-            isolation.prepare_legacy(self.root, model)
+        self.assertTrue(isolation.prepare_legacy(self.root, model)['reused_existing_binary'])
         self.assertEqual((model / 'Fornax.IC_000').read_bytes(), b'keep original')
 
     def test_both_local_workspaces_share_receipts(self):

@@ -34,3 +34,5 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 - ③ `workspace/receipts/isolation/Fornax5029/fd16p6-paf45-mesopsl1-20261115-fix1/startup-repair.json`。
 
 追加格式：`日期 | 模型/唯一版本 | IC来源、轨道参考或前次运行 | 为什么改、改了什么 | 已验证到哪一步、依据`。
+
+| 2026-11-20 | 共享 isolation 工作流 / `WORKFLOW-RUN-VERSIONS-20261120` | main `02da0be`；服务器 11-17 非例行核验接收路径 | 按用户要求，以声明的 IC/参数版本自动绑定运行并生成 JSON/TXT 台账；同版本复用、不同版本新建，不扫描粒子或做哈希认证 | 合成版本、并发和客户端/接收器测试；未改真实 IC 或提交模拟。[共享程序备注](workflow/MODEL_CHANGES.txt)、[使用说明](workflow/RUN_VERSIONS.md) |

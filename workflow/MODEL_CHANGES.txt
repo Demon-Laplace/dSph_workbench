@@ -1,0 +1,11 @@
+[WORKFLOW-RUN-VERSIONS-20261120] 2026-11-20
+范围：共享 isolation 工作流；未改任何实际模型、轨道、IC 或物理参数。
+前序：GitHub main 02da0be；沿用服务器 2026-11-17 已采用的非例行核验接收路径。
+原因：旧接收器忽略显式 build_id 差异，可能将新 IC 请求误认为旧运行。
+变更：模型级结构化 JSON 版本台账及自动 TXT 视图；IC/参数版本相同复用、
+变化时分配新运行名；配置快照、并发防重复、历史运行不补造版本。
+正常绑定不读取粒子、不计算哈希、不做传输后回读；保留 --submit 和旧结果保护。
+验证：48项相关合成/兼容测试通过，含并发和本机到接收器的换IC场景；
+未提交真实模拟，未验证真实长期演化。另有既有ProductionFetch旧fixture测试在
+未修改的02da0be基线同样失败，不在本次版本绑定改动范围。
+说明：RUN_VERSIONS.md；测试：tests/test_run_versions.py、tests/test_isolation.py。

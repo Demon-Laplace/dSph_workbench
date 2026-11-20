@@ -1,4 +1,4 @@
-"""Resumable local IC -> verified transfer -> isolated Slurm simulation."""
+"""Resumable local IC transfer and isolated Slurm simulation without routine rereads."""
 import argparse
 import fcntl
 import hashlib
@@ -14,9 +14,11 @@ from types import SimpleNamespace
 import uuid
 
 import workflow_runtime as runtime
+import workflow_versions as versions
 
 
 def sha(path):
+    """Explicit diagnostic helper retained for legacy callers, not normal paths here."""
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
@@ -40,10 +42,14 @@ def profile(root, name):
 
 
 def rewrite_parameters(source, target, values):
+    return rewrite_parameter_text(source.read_text(), target, values)
+
+
+def rewrite_parameter_text(text, target, values):
     remaining = set(values)
     seen = set()
     lines = []
-    for line in source.read_text().splitlines():
+    for line in text.splitlines():
         fields = line.split('%', 1)[0].split()
         if fields and fields[0] in values:
             key = fields[0]
@@ -58,13 +64,59 @@ def rewrite_parameters(source, target, values):
     target.write_text('\n'.join(lines) + '\n')
 
 
-def verify_bundle(stage, request):
+def request_inputs(request):
     if set(request['files']) != {'Fornax.ini', 'parameters.ini'}:
         raise ValueError('Unexpected IC transfer file set')
-    for name, digest in request['files'].items():
-        path = stage / name
-        if path.is_symlink() or sha(path) != digest:
-            raise ValueError(f'IC transfer checksum mismatch: {name}')
+    return request['files']
+
+
+def verify_bundle(stage, request):
+    """Legacy compatibility: retain the filename allowlist, not content checks."""
+    request_inputs(request)
+    return {'data_verification_performed': False}
+
+
+def request_matches(saved, requested):
+    """Keep run-name bindings without reading or comparing particle contents."""
+    if any(saved.get(k) != requested.get(k) for k in ('model', 'name', 'profile')):
+        return False
+    if set(saved.get('files', {})) != set(requested.get('files', {})):
+        return False
+    if not versions.same_source(saved, requested):
+        return False
+    return all(not (saved.get(key) and requested.get(key)) or saved[key] == requested[key]
+               for key in ('ic_version', 'parameter_version'))
+
+
+def version_directory(root, model):
+    base = runtime.confined(root, root / runtime.config(root).get('isolation_root', 'isoFornax'))
+    runtime.model_directory(root, model)  # Validate the model label, not its contents.
+    return runtime.confined(root, base / model)
+
+
+def resolve_request(root, request):
+    request_inputs(request)
+    runtime.label(request['name'])
+    runtime.label(request.get('requested_name', request['name']))
+    settings = profile(root, request['profile'])
+    entry = versions.resolve(
+        version_directory(root, request['model']), request, settings,
+        (Path(settings['template']) / 'GZWJL.PARAM').read_text(),
+        lambda name: case_dir(root, name, request['model']))
+    entry['existing'] = Path(entry['directory']).is_dir()
+    return entry
+
+
+def result_record(root, run, request, status, reused):
+    directory = version_directory(root, request['model'])
+    versions.update(directory, request['model'], run.name, status)
+    entry = versions.lookup(directory, request['model'], run.name)
+    actual = entry['request'] if entry else request
+    return dict(status, directory=str(run), reused=reused,
+                **{key: actual.get(key) for key in
+                   ('model', 'name', 'requested_name', 'build_id', 'source_version',
+                    'source_directory', 'profile', 'ic_version', 'parameter_version',
+                    'version_contract')})
 
 
 def case_dir(root, name, model=None):
@@ -93,44 +145,38 @@ def case_dir(root, name, model=None):
 
 
 def verify_case(run):
-    for name, digest in json.loads((run / 'prepared.json').read_text()).items():
-        path = runtime.confined(run, run / name)
-        if path.is_symlink() or sha(path) != digest:
-            raise ValueError(f'Prepared case changed: {name}')
+    """Legacy compatibility: no routine file-content verification is performed."""
+    return {'data_verification_performed': False}
 
 
 def verify_completion(run):
-    import h5py
-    values = {}
-    for line in (run / 'GZWJL.PARAM').read_text().splitlines():
-        fields = line.split('%', 1)[0].split()
-        if len(fields) == 2:
-            values[fields[0]] = fields[1]
-    times = []
-    for path in (run / 'output').glob('snapshot*.hdf5'):
-        with h5py.File(path, 'r') as snapshot:
-            times.append(float(snapshot['Header'].attrs['Time']))
-    target = float(values['TimeMax'])
-    if not times or max(times) < target - max(abs(target) * 1e-6, 1e-12):
-        raise ValueError('No HDF5 snapshot reached TimeMax; inspect solver.log (time limit or incomplete run)')
-    return {'final_snapshot_time': max(times), 'target_time': target,
-            'scope': 'time reached; equilibrium and convergence not evaluated'}
+    """Legacy callers may record process completion without reopening snapshots."""
+    return {'scope': 'solver process exit only', 'data_verification_performed': False}
 
 
 def discard_received_transfer(root, stage, run, request):
     """Release only the accepted upload staging copy, never the simulation case."""
     transfers = runtime.confined(root, root / 'workspace/transfers/isolation')
     if stage != run and stage.parent == transfers:
-        verify_bundle(run, request)
-        verify_case(run)
         shutil.rmtree(stage)
 
 
 def receive(root, stage, submit=False):
     stage = runtime.confined(root, stage).resolve()
     request = json.loads((stage / 'request.json').read_text())
-    verify_bundle(stage, request)
+    request_inputs(request)
+    settings = template_text = None
     run = case_dir(root, request['name'], request['model'])
+    if request.get('version_contract') == versions.CONTRACT:
+        entry, settings, template_text = versions.binding(version_directory(root, request['model']), request)
+        request = entry['request']
+        run = runtime.confined(root, Path(entry['directory']))
+    elif stage != run or not (run / 'status.json').is_file():
+        entry = resolve_request(root, request)
+        request = entry['request']
+        run = runtime.confined(root, Path(entry['directory']))
+        if request.get('version_contract') == versions.CONTRACT:
+            _, settings, template_text = versions.binding(version_directory(root, request['model']), request)
     removed = root / 'workspace/receipts/isolation-cleaned' / request['model'] / (request['name'] + '.json')
     if removed.exists():
         raise ValueError('This failed attempt was cleaned; use a new run name')
@@ -138,26 +184,30 @@ def receive(root, stage, submit=False):
     lock = runtime.confined(root, run.parent / (run.name + '.lock'))
     with lock.open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
+        reused = run.exists()
         if run.exists():
             saved = json.loads((run / 'request.json').read_text())
-            if saved != request:
-                raise ValueError('Run name is already bound to different ICs or settings; use a new name')
+            if not request_matches(saved, request):
+                # Untagged historical requests can still resume themselves.
+                if not (stage == run and saved == request):
+                    raise ValueError('Run name is already bound to different ICs or settings')
         else:
-            settings = profile(root, request['profile'])
+            if settings is None:
+                raise ValueError('A new run requires a reserved version binding')
             # Assemble privately, then atomically publish a complete case.
             with tempfile.TemporaryDirectory(prefix='isolation-', dir=run.parent) as temporary:
                 prepared = Path(temporary) / 'case'
                 prepared.mkdir()
                 for name in request['files']:
                     shutil.copy2(stage / name, prepared / name)
-                for name in ('workflow_isolation.py', 'workflow_runtime.py'):
-                    shutil.copy2(stage / name, prepared / name)
+                for name in ('workflow_isolation.py', 'workflow_runtime.py', 'workflow_versions.py'):
+                    shutil.copy2(Path(__file__).with_name(name), prepared / name)
                 runtime.write_json(prepared / 'request.json', request)
                 runtime.write_json(prepared / 'profile.json', settings)
                 template = Path(settings['template'])
                 values = dict(settings.get('parameter_overrides', {}))
                 values.update(InitCondFile=str(run / 'Fornax.IC_000'), OutputDir=str(run / 'output'), ResubmitOn='0')
-                rewrite_parameters(template / 'GZWJL.PARAM', prepared / 'GZWJL.PARAM', values)
+                rewrite_parameter_text(template_text, prepared / 'GZWJL.PARAM', values)
                 cooling = template / 'TREECOOL'
                 if settings.get('cooling_required') and not cooling.is_file():
                     raise ValueError('Missing required TREECOOL in isolation template')
@@ -172,22 +222,21 @@ def receive(root, stage, submit=False):
                 script += settings.get('setup', '') + '\n'
                 script += 'exec ' + shlex.join(command) + '\n'
                 (prepared / 'run.sh').write_text(script)
-                pinned = {p.name: sha(p) for p in prepared.iterdir() if p.is_file()}
-                runtime.write_json(prepared / 'prepared.json', pinned)
                 runtime.write_json(prepared / 'status.json', {'state': 'prepared', 'created_utc': runtime.now()})
                 prepared.rename(run)
         status = json.loads((run / 'status.json').read_text())
         if status['state'] in ('submitted', 'running', 'complete', 'failed'):
             discard_received_transfer(root, stage, run, request)
-            return dict(status, directory=str(run))
+            return result_record(root, run, request, status, reused)
         if status['state'] == 'submitting':
             raise ValueError('Previous submission outcome is uncertain; reconcile Slurm before retrying, to prevent duplicate jobs')
         # Do not overwrite an IC or submit into an existing simulation output.
-        verify_bundle(run, request)
-        verify_case(run)
         if any((run / 'output').iterdir()) or (run / 'Fornax.IC_000').exists():
             raise ValueError('Run already contains simulation data; new submission refused')
         settings = json.loads((run / 'profile.json').read_text())
+        if not submit:
+            discard_received_transfer(root, stage, run, request)
+            return result_record(root, run, request, dict(status, submitted=False), reused)
         options = settings.get('sbatch', {})
         allowed = {'clusters', 'qos', 'partition', 'account', 'nodes', 'ntasks', 'cpus-per-task', 'time', 'mem', 'constraint'}
         if set(options) - allowed:
@@ -196,12 +245,11 @@ def receive(root, stage, submit=False):
                    '--output', str(run / 'slurm-%j.out'), '--error', str(run / 'slurm-%j.out')]
         for key, value in options.items():
             command += ['--' + key, str(value)]
-        if not submit:
-            command.append('--test-only')
         command.append(str(run / 'run.sh'))
         if submit:
             status.update(state='submitting', submission_started_utc=runtime.now())
             runtime.write_json(run / 'status.json', status)
+            versions.update(version_directory(root, request['model']), request['model'], run.name, status)
         result = subprocess.run(command, capture_output=True, text=True)
         runtime.write_json(run / 'submission.json', {'command': command, 'returncode': result.returncode,
                            'stdout': result.stdout, 'stderr': result.stderr})
@@ -209,17 +257,16 @@ def receive(root, stage, submit=False):
             # A nonzero sbatch exit is a definitive rejection, not a lost acknowledgement.
             status.update(state='prepared', last_error=result.stderr)
             runtime.write_json(run / 'status.json', status)
+            versions.update(version_directory(root, request['model']), request['model'], run.name, status)
             raise ValueError('Slurm rejected the request: ' + result.stderr.strip())
         if submit:
             job = result.stdout.strip().split(';')[0]
             if not job.isdigit():
                 raise ValueError('Unrecognized Slurm job ID; reconcile submission before retrying')
             status.update(state='submitted', job_id=job)
-        else:
-            status.update(state='prepared', scheduler_preflight='passed')
         runtime.write_json(run / 'status.json', status)
         discard_received_transfer(root, stage, run, request)
-        return dict(status, directory=str(run))
+        return result_record(root, run, request, status, reused)
 
 
 def run_job(root, name, model=None):
@@ -233,9 +280,8 @@ def run_job(root, name, model=None):
             raise ValueError('Run is not awaiting this Slurm job; duplicate execution refused')
         status.update(state='running', started_utc=runtime.now())
         runtime.write_json(run / 'status.json', status)
+        versions.update(version_directory(root, model), model, run.name, status)
     try:
-        verify_bundle(run, json.loads((run / 'request.json').read_text()))
-        verify_case(run)
         settings = json.loads((run / 'profile.json').read_text())
         substitutions = {'ascii': str(run / 'Fornax.ini'), 'binary': str(run / 'Fornax.IC_000'),
                          'prefix': str(run / 'Fornax'), 'parameters': str(run / 'GZWJL.PARAM')}
@@ -245,13 +291,15 @@ def run_job(root, name, model=None):
                 subprocess.run(command, cwd=run, stdout=log, stderr=subprocess.STDOUT, check=True)
             if stage == 'converter' and not (run / 'Fornax.IC_000').is_file():
                 raise ValueError('Converter did not produce the expected binary IC')
-        status.update(state='complete', verification=verify_completion(run))
+        status.update(state='complete', completion='solver process returned successfully')
     except Exception as error:
         status.update(state='failed', error=str(error))
         runtime.write_json(run / 'status.json', status)
+        versions.update(version_directory(root, model), model, run.name, status)
         raise
     status['finished_utc'] = runtime.now()
     runtime.write_json(run / 'status.json', status)
+    versions.update(version_directory(root, model), model, run.name, status)
 
 
 def prepare_legacy(root, directory, profile_name='default'):
@@ -262,15 +310,7 @@ def prepare_legacy(root, directory, profile_name='default'):
     if run.parent != base or not re.fullmatch(r'Fornax\d+[A-Za-z0-9_.-]*', run.name):
         raise ValueError('Manual preparation requires isoFornax/FornaxNUMBER as working directory')
     settings = profile(root, profile_name)
-    cooling = Path(settings['template']) / 'TREECOOL'
-    if not cooling.is_file():
-        raise ValueError('Missing TREECOOL in configured isolation template')
     source = run / (run.name + '.ini')
-    if not source.is_file() or source.resolve().parent != run:
-        raise ValueError(f'Upload the numbered particle file {source.name} into {run.name}')
-    other = [p.name for p in run.glob('Fornax*.ini') if p.name not in (source.name, 'Fornax.ini')]
-    if other:
-        raise ValueError('Other model ICs found; reconcile before conversion: ' + ', '.join(other))
     parameters = {}
     for line in (run / 'GZWJL.PARAM').read_text().splitlines():
         fields = line.split('%', 1)[0].split()
@@ -284,8 +324,6 @@ def prepare_legacy(root, directory, profile_name='default'):
     lock = runtime.confined(run, run / '.prepare-ic.lock')
     with lock.open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        identity = {'model': run.name, 'input': source.name, 'input_sha256': sha(source),
-                    'converter': settings['converter'], 'cooling_sha256': sha(cooling)}
         record = run / 'ic-prepared.json'
         binary = run / 'Fornax.IC_000'
         alias = run / 'Fornax.ini'
@@ -293,37 +331,43 @@ def prepare_legacy(root, directory, profile_name='default'):
         for path in (record, binary):
             if path.is_symlink():
                 raise ValueError(f'Refusing symlink: {path.name}')
-        if record.exists():
-            saved = json.loads(record.read_text())
-            if any(saved.get(k) != v for k, v in identity.items()) or not binary.is_file() or sha(binary) != saved['binary_sha256']:
-                raise ValueError('Prepared IC/configuration changed; use a new model/run')
-        elif binary.exists():
-            raise ValueError('Existing binary IC has no preparation receipt; refusing to overwrite')
+        if binary.exists():
+            if not binary.is_file():
+                raise ValueError('Existing IC is not a regular file')
+            output.mkdir(exist_ok=True)
+            return {'state': 'prepared', 'model': run.name, 'directory': str(run),
+                    'input': source.name, 'reused_existing_binary': True}
+        if not source.is_file() or source.resolve().parent != run:
+            raise ValueError(f'Upload the numbered particle file {source.name} into {run.name}')
+        cooling = Path(settings['template']) / 'TREECOOL'
+        if not tree.exists() and not cooling.is_file():
+            raise ValueError('Missing TREECOOL in configured isolation template')
         if alias.exists() or alias.is_symlink():
-            if not alias.is_file() or alias.resolve().parent != run or sha(alias) != identity['input_sha256']:
-                raise ValueError('Fornax.ini disagrees with numbered model input')
-        if tree.exists() and (not tree.is_file() or sha(tree) != identity['cooling_sha256']):
-            raise ValueError('Existing TREECOOL differs from configured template')
+            if not alias.is_file() or alias.resolve().parent != run:
+                raise ValueError('Fornax.ini must name a regular input within this model')
+        if tree.exists() and not tree.is_file():
+            raise ValueError('Existing TREECOOL is not a regular file')
         if not alias.exists():
             alias.symlink_to(source.name)
-        if not tree.exists() or tree.is_symlink():
-            # Resolve the original table into a real file; copied models need no relinking.
+        if not tree.exists():
             temporary_tree = run / '.TREECOOL.preparing'
             with temporary_tree.open('xb') as target, cooling.open('rb') as src:
                 shutil.copyfileobj(src, target)
             os.replace(temporary_tree, tree)
-        if not record.exists():
-            with tempfile.TemporaryDirectory(prefix='.ic-convert-', dir=run) as temporary:
-                converted = Path(temporary) / 'Fornax.IC_000'
-                substitutions = {'ascii': str(source), 'binary': str(converted),
-                                 'prefix': str(Path(temporary) / 'Fornax'), 'parameters': str(run / 'GZWJL.PARAM')}
-                command = [arg.format(**substitutions) for arg in settings['converter']]
-                with (run / 'converter.log').open('w') as log:
-                    subprocess.run(command, cwd=run, check=True, stdout=log, stderr=subprocess.STDOUT)
-                if not converted.is_file() or not converted.stat().st_size:
-                    raise ValueError('Converter did not produce a nonempty IC')
-                converted.rename(binary)
-            runtime.write_json(record, {**identity, 'binary_sha256': sha(binary), 'created_utc': runtime.now()})
+        with tempfile.TemporaryDirectory(prefix='.ic-convert-', dir=run) as temporary:
+            converted = Path(temporary) / 'Fornax.IC_000'
+            substitutions = {'ascii': str(source), 'binary': str(converted),
+                             'prefix': str(Path(temporary) / 'Fornax'), 'parameters': str(run / 'GZWJL.PARAM')}
+            command = [arg.format(**substitutions) for arg in settings['converter']]
+            with (run / 'converter.log').open('w') as log:
+                subprocess.run(command, cwd=run, check=True, stdout=log, stderr=subprocess.STDOUT)
+            if not converted.is_file():
+                raise ValueError('Converter did not produce the expected IC')
+            if binary.exists() or binary.is_symlink():
+                raise ValueError('Existing binary IC is protected')
+            converted.rename(binary)
+        runtime.write_json(record, {'model': run.name, 'input': source.name,
+                                   'converter': settings['converter'], 'created_utc': runtime.now()})
         output.mkdir(exist_ok=True)
         return {'state': 'prepared', 'model': run.name, 'directory': str(run), 'input': source.name}
 
@@ -359,12 +403,12 @@ def client_directory(root, model, name):
 def pipeline_one(args):
     import workflow_models as models
     import workflow_management as management
-    root, catalog_repo = models.ic_paths(args)
+    root, _ = models.ic_paths(args)
     models.model_name(args.model)
     runtime.label(args.name)
     remote = runtime.config(args.root)['remote']
     if getattr(args, 'existing', False) and args.dry_run:
-        print(f'Existing IC: {runtime.model_directory(args.root, args.model) / "isolation/Fornax.ini"} (validate; do not generate)\n'
+        print(f'Existing IC: {runtime.model_directory(args.root, args.model) / "isolation/Fornax.ini"} (reuse; do not generate)\n'
               f'Server: {remote["root"]}/{remote.get("isolation_root", "isoFornax")}/{args.model}/runs/{args.name}; submit={args.submit}')
         return 0
     if args.dry_run:
@@ -379,29 +423,13 @@ def pipeline_one(args):
     local.mkdir(parents=True, exist_ok=True)
     with (local / 'pipeline.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
-        # Verify server configuration before starting an expensive build.
-        probe = ('import json,pathlib; p=pathlib.Path(' + repr(remote['root']) + '); '
-                 's=json.loads((p/"workflow.json").read_text()); '
-                 'assert ' + repr(args.profile) + ' in s.get("isolation_profiles",{}), "Configure the server isolation profile first"')
-        remote_exec(args, ['python3', '-c', probe])
         if getattr(args, 'existing', False):
-            import importlib.util
-            module_path = args.repo / 'local_tools/ic_generation/catalog.py'
-            spec = importlib.util.spec_from_file_location('existing_ic_catalog', module_path)
-            catalog = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(catalog)
             run = model_root / 'isolation'
-            row, validation = catalog.validated_existing_row(run, args.model)
-            saved_input = local / 'existing-ic.json'
-            receipt = {'state': 'validated_existing', 'build_id': row['record_id'],
-                       'ini_sha256': row['parameter_sha256'], 'particle_sha256': row['particle_sha256']}
-            if saved_input.exists() and json.loads(saved_input.read_text())['identity'] != receipt:
-                raise ValueError('Existing IC changed since this run was prepared; choose a new run name')
-            catalog.update(catalog_repo, [row])
-            runtime.write_json(saved_input, {'identity': receipt, 'validation': validation,
-                               'catalog_commit': catalog.git(catalog_repo, 'rev-parse', 'HEAD')})
             input_paths = {'Fornax.ini': run / 'Fornax.ini', 'parameters.ini': run / ('IC_' + args.model + '.ini')}
-            print(f"{args.model}: existing IC validated ({sum(validation['counts'])} particles); SHA256 {receipt['particle_sha256']}", flush=True)
+            receipt = {'state': 'existing', 'build_id': 'existing:' + str(run.resolve()), 'model': args.model,
+                       'source_directory': str(run),
+                       'inputs': {name: str(path) for name, path in input_paths.items()}}
+            print(f"{args.model}: reuse existing IC from {run}", flush=True)
         else:
             run = models.find_initial(args, args.ic_run, args.model) if args.ic_run else models.initial_directory(args, args.model, args.name)
             if not run.exists():
@@ -413,40 +441,34 @@ def pipeline_one(args):
             receipt = json.loads((run / 'build.json').read_text())
             if receipt['state'] != 'complete' or Path(receipt['source_ini']).stem != 'IC_' + args.model:
                 raise ValueError('Existing run is incomplete or belongs to a different model')
-            if sha(run / 'parameters.ini') != receipt['ini_sha256'] or sha(run / 'Fornax.ini') != receipt['particle_sha256']:
-                raise ValueError('IC data changed after generation')
             if not args.ic_run:
-                current = root / 'IniFile' / ('IC_' + args.model + '.ini')
-                if sha(current) != receipt['ini_sha256'] or receipt['seed'] != args.seed:
-                    raise ValueError('Parameters or seed changed; choose a new run name')
-            if receipt.get('catalog_sync', {}).get('state') != 'pushed':
-                result = models.ic_catalog(SimpleNamespace(**{**vars(args), 'run': run.name}))
-                if result:
-                    return result
+                if receipt.get('seed') != args.seed:
+                    raise ValueError('Requested seed differs from the named IC run; choose its matching run or seed')
             input_paths = {name: run / name for name in ('Fornax.ini', 'parameters.ini')}
         request = {'name': args.name, 'model': args.model, 'profile': args.profile,
                    'build_id': receipt.get('build_id', run.name),
-                   'files': {'Fornax.ini': receipt['particle_sha256'], 'parameters.ini': receipt['ini_sha256']}}
+                   'source_directory': str(run),
+                   'files': {name: path.name for name, path in input_paths.items()}}
+        if getattr(args, 'ic_version', None):
+            request['source_version'] = runtime.label(args.ic_version)
         saved = local / 'request.json'
-        if saved.exists() and json.loads(saved.read_text()) != request:
-            raise ValueError('Local run name is bound to different ICs or settings')
-        runtime.write_json(saved, request)
-        location = remote_exec(args, ['python3', remote['root'] + '/workflow_isolation.py',
-                                      'locate', '--root', remote['root'], '--model', args.model,
-                                      '--name', args.name], capture=True)
-        remote_case = json.loads(location.stdout)['directory']
-        existing = ('import json; from pathlib import Path; r=Path(' + repr(remote['root']) + ').resolve(); '
-                    'p=Path(' + repr(remote_case) + '); assert p.resolve().is_relative_to(r); '
-                    'expected=json.loads(' + repr(json.dumps(request)) + '); '
-                    'assert not p.exists() or json.loads((p/"request.json").read_text())==expected, "Run name already bound to different ICs"; '
-                    'print("existing" if p.exists() else "missing")')
-        if remote_exec(args, ['python3', '-c', existing], capture=True).stdout.strip() == 'existing':
-            command = ['python3', remote_case + '/workflow_isolation.py', 'receive',
+        resolution = remote_exec(args, ['python3', remote['root'] + '/workflow_isolation.py',
+                                       'resolve', '--root', remote['root'],
+                                       '--request-json', json.dumps(request)], capture=True)
+        selected = json.loads(resolution.stdout)
+        request = selected['request']
+        remote_case = selected['directory']
+        print(f"{args.model}: {request['name']} / "
+              f"{request.get('ic_version') or 'legacy-unversioned'} / "
+              f"{request.get('parameter_version') or 'legacy-unversioned'}", flush=True)
+        if selected['existing']:
+            command = ['python3', remote['root'] + '/workflow_isolation.py', 'receive',
                        '--root', remote['root'], '--stage', remote_case]
             if args.submit:
                 command.append('--submit')
             result = remote_exec(args, command, capture=True)
             status = json.loads(result.stdout)
+            runtime.write_json(saved, request)
             runtime.write_json(local / 'server.json', status)
             print(json.dumps(status, indent=2))
             return 0
@@ -458,20 +480,21 @@ def pipeline_one(args):
         remote_exec(args, ['python3', '-c', create])
         with tempfile.TemporaryDirectory(prefix='upload-', dir=local) as temporary:
             stage = Path(temporary)
-            shutil.copy2(saved, stage / 'request.json')
+            runtime.write_json(stage / 'request.json', request)
             for name in request['files']:
                 shutil.copy2(input_paths[name], stage / name)
-            for name in ('workflow_isolation.py', 'workflow_runtime.py'):
+            for name in ('workflow_isolation.py', 'workflow_runtime.py', 'workflow_versions.py'):
                 shutil.copy2(Path(__file__).with_name(name), stage / name)
             _, ssh = management.ssh_config(args)
-            subprocess.run(['rsync', '-rt', '--checksum', '-e', shlex.join(ssh), str(stage) + '/',
+            subprocess.run(['rsync', '-rt', '-e', shlex.join(ssh), str(stage) + '/',
                             remote['host'] + ':' + remote_stage + '/'], check=True)
-        command = ['python3', remote_stage + '/workflow_isolation.py', 'receive',
+        command = ['python3', remote['root'] + '/workflow_isolation.py', 'receive',
                    '--root', remote['root'], '--stage', remote_stage]
         if args.submit:
             command.append('--submit')
         result = remote_exec(args, command, capture=True)
         status = json.loads(result.stdout)
+        runtime.write_json(saved, request)
         runtime.write_json(local / 'server.json', status)
         print(json.dumps(status, indent=2))
         return 0
@@ -483,6 +506,10 @@ def status(args):
     model = getattr(args, 'model', None)
     if model:
         runtime.model_directory(args.root, model)
+        saved = client_directory(args.root, model, args.name) / 'server.json'
+        if saved.is_file():
+            selected = json.loads(saved.read_text())
+            args = SimpleNamespace(**{**vars(args), 'name': selected.get('name') or args.name})
     command = ['python3', remote['root'] + '/workflow_isolation.py', 'status',
                '--root', remote['root'], '--name', args.name]
     if model:
@@ -492,7 +519,7 @@ def status(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'status', 'prepare-legacy'))
+    parser.add_argument('operation', choices=('receive', 'run-job', 'locate', 'resolve', 'status', 'prepare-legacy'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--stage', type=Path)
     parser.add_argument('--directory', type=Path, default=Path.cwd())
@@ -500,6 +527,7 @@ def main():
     parser.add_argument('--name')
     parser.add_argument('--model')
     parser.add_argument('--submit', action='store_true')
+    parser.add_argument('--request-json', help='declared IC build and requested run; no particle metadata')
     args = parser.parse_args()
     if args.operation == 'prepare-legacy':
         print(json.dumps(prepare_legacy(args.root.resolve(), args.directory, args.profile)))
@@ -507,6 +535,8 @@ def main():
         print(json.dumps(receive(args.root.resolve(), args.stage, args.submit)))
     elif args.operation == 'run-job':
         run_job(args.root.resolve(), args.name, args.model)
+    elif args.operation == 'resolve':
+        print(json.dumps(resolve_request(args.root.resolve(), json.loads(args.request_json))))
     else:
         run = case_dir(args.root.resolve(), args.name, args.model)
         if args.operation == 'locate':

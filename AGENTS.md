@@ -1,5 +1,17 @@
 # dSph workbench agent entry point
 
+## Isolation run versions (owner update, 2026-11-20)
+
+Use the automatic structured run bindings described in
+[workflow/RUN_VERSIONS.md](workflow/RUN_VERSIONS.md). Compare declared IC build
+versions and the small effective profile/parameter configuration, never particle
+IDs, particle contents, hashes or post-copy rereads. Equal versions reuse the
+original job; changed versions allocate a new run and preserve old files.
+Only `--submit` authorizes job submission. Historical unversioned runs retain
+their identity, not invented version labels. JSON is authoritative and TXT is a
+generated view. Do not edit frozen runs or migrate historical data for this.
+This supersedes conflicting older isolation transfer/preflight/hash requirements.
+
 Read [workflow/AGENT_HANDOFF.md](workflow/AGENT_HANDOFF.md) before operating the
 local/IC/server workflow. It records the directory conventions, server write
 boundary, startup-retry cleanup policy, density analysis and publication steps.

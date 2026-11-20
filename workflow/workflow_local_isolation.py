@@ -116,7 +116,7 @@ def start(args):
         if not all(p.is_file() for p in files.values()):raise ValueError('Missing native solver, converter or template input')
         run.mkdir()
         for name,path in files.items():shutil.copy2(path,run/name)
-        for name in ('workflow_local_isolation.py','workflow_runtime.py','workflow_isolation.py'):
+        for name in ('workflow_local_isolation.py','workflow_runtime.py','workflow_isolation.py','workflow_versions.py'):
             shutil.copy2(Path(__file__).with_name(name),run/name)
         values=dict(cfg.get('parameter_overrides',{}))
         values.update(InitCondFile='Fornax.IC_000',OutputDir='output',ResubmitOn='0',

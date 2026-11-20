@@ -1,3 +1,11 @@
+## Isolation 自动版本绑定（2026-11-20）
+
+`isolation` 现在按声明的 IC 构建版本和小型 profile/参数配置自动分配运行。
+同版本复用原作业，不同版本自动产生新运行名；JSON 台账自动判断，TXT 自动展示。
+正常处理不扫描粒子、不做哈希核验或复制后回读；未加 `--submit` 只准备，
+不再执行旧文中的 scheduler preflight。历史冻结运行保持不动。
+详见 [RUN_VERSIONS.md](RUN_VERSIONS.md)，本节替代下文相冲突的旧 isolation 说明。
+
 ## 本地检查成果采用浅层目录（2026-11-15）
 
 用户要求少层级、按文件名区分成果，并允许 isolation 与正式模拟分开。
