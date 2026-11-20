@@ -54,3 +54,4 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 | 2026-11-20 | Muñoz发表轮廓 / `IC-MUNOZ-PUBLISHED-FIT-20261120` | 原刊ApJ860,66表1/5/6与图6；既有Yang参考保留 | 用n=.71、theta_e=18.4arcmin、mu0V=23.59重建完整发表Sersic拟合；明确非新增bins、外推与归一化误差范围，统一D139.4显示角半径 | 63项定向测试通过；[共用程序备注](workflow/MODEL_CHANGES.txt) |
 | 2026-11-20 | Fornax8001 / `F8001-MUNOZ-PROFILE-20261120` | 同一旋转IC、Job313990不动 | 只刷新面亮度轮廓，加入Muñoz发表拟合和来源，不重标定观测或拟合M/L | 真实图已更新、旧图保存；[完整备注](model_changes/isolation/Fornax8001.txt) |
 | 2026-11-20 | Fornax8002 / `F8002-MUNOZ-PROFILE-20261120` | 同一冷盘IC、Job313997不动 | 同样补充完整Muñoz拟合，保留非独立标定/外推说明，物理参数不变 | 真实图已更新、旧图保存；[完整备注](model_changes/isolation/Fornax8002.txt) |
+| 2026-11-20 | Fornax8003 / `F8003-LOW-MSTAR-20261120` | 8002初态配方、build27ace52b；不是演化快照 | 用户确认只将恒星质量6e7降至2e7 Msun，气体1.45e8及q=.12等其余配方、粒子数保持；重新构建势与两种分量速度，不改旧模型 | 参数比较仅恒星质量一项变化；完整IC已开始构建，冷度/Q/稳定性待实测；未提交演化。[完整备注](model_changes/isolation/Fornax8003.txt) |
