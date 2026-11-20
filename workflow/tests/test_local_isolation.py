@@ -39,8 +39,10 @@ class NativeTests(unittest.TestCase):
         self.assertIn('InitCondFile Fornax.IC_000',params)
         self.assertIn('OutputDir output',params)
         self.assertTrue((run/'Fornax.ini').is_file())
-        (self.ic/'Fornax.ini').write_text('changed')
-        with self.assertRaises(ValueError):local.start(self.args)
+        (self.ic/'Fornax.ini').write_text('changed outside workflow')
+        with patch.object(local.subprocess,'Popen') as again:
+            self.assertEqual(local.start(self.args),0)
+            again.assert_not_called()
 
     def test_dry_run_does_not_create_case_and_invalid_limit_is_rejected(self):
         self.args.dry_run=True;local.start(self.args)
@@ -49,14 +51,46 @@ class NativeTests(unittest.TestCase):
         with self.assertRaises(ValueError):local.start(self.args)
         self.assertFalse((self.root/'workspace').exists())
 
-    def test_changed_frozen_inputs_fail_before_solver_and_record_failure(self):
+    def test_declared_new_build_is_supported_without_digests(self):
+        receipt=self.ic/'build.json'
+        build=json.loads(receipt.read_text())
+        build.update(build_id='explicit-build-version',particle_sha256=None,ini_sha256=None)
+        runtime.write_json(receipt,build)
+        with patch.object(local.subprocess,'Popen') as popen, \
+             patch.object(isolation,'sha',side_effect=AssertionError('no hashing')):
+            popen.return_value.pid=123
+            local.start(self.args);local.start(self.args)
+            popen.assert_called_once()
+        identity=json.loads((local.directory(self.root,'Fornax7004','test')/'identity.json').read_text())
+        self.assertEqual(identity['build_id'],'explicit-build-version')
+
+    def test_legacy_run_keeps_its_identity_without_rereading_data(self):
+        with patch.object(local.subprocess,'Popen') as popen:
+            popen.return_value.pid=123;local.start(self.args)
+        run=local.directory(self.root,'Fornax7004','test')
+        identity=json.loads((run/'identity.json').read_text())
+        identity.pop('build_id')
+        identity['particle_sha256']=json.loads((self.ic/'build.json').read_text())['particle_sha256']
+        runtime.write_json(run/'identity.json',identity)
+        before=(run/'identity.json').read_text()
+        with patch.object(local.subprocess,'Popen') as popen, \
+             patch.object(isolation,'sha',side_effect=AssertionError('no hashing')):
+            local.start(self.args);popen.assert_not_called()
+        self.assertEqual((run/'identity.json').read_text(),before)
+
+    def test_normal_execution_does_not_recheck_frozen_file_contents(self):
         with patch.object(local.subprocess,'Popen') as popen:
             popen.return_value.pid=123;local.start(self.args)
         run=local.directory(self.root,'Fornax7004','test')
         (run/'Fornax.ini').write_text('corrupted after freeze')
-        with self.assertRaisesRegex(ValueError,'Changed frozen file'):
+        process = unittest.mock.MagicMock()
+        process.__enter__.return_value.wait.return_value=0
+        with patch.object(local.subprocess,'run'), \
+             patch.object(local.subprocess,'Popen',return_value=process), \
+             patch.object(local.os,'nice'), \
+             patch.object(isolation,'sha',side_effect=AssertionError('no hashing')):
             local.execute(self.root,run)
-        self.assertEqual(json.loads((run/'status.json').read_text())['state'],'failed')
+        self.assertEqual(json.loads((run/'status.json').read_text())['state'],'complete')
 
     def test_eta_uses_measured_progress_after_startup(self):
         run=self.root/'run';run.mkdir();(run/'solver.log').write_text('Sync-Point 12, Time: 0.2\n')

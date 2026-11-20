@@ -56,8 +56,6 @@ def execute(root, run):
                            NUMEXPR_NUM_THREADS='1', TMPDIR=str(run/'.tmp'))
         (run/'.tmp').mkdir(exist_ok=True)
         try:
-            for name, digest in request['frozen_sha256'].items():
-                if isolation.sha(run/name) != digest: raise ValueError('Changed frozen file: '+name)
             os.nice(10)
             with (run/'converter.log').open('w') as log:
                 subprocess.run([str(run/'IC_ascii2snap'),str(run/'Fornax.ini'),str(run/'Fornax.IC_000')],
@@ -74,7 +72,8 @@ def execute(root, run):
                     progress(run,status,samples)
                     if code: raise subprocess.CalledProcessError(code,command)
                     break
-            status.update(state='complete', verification=isolation.verify_completion(run))
+            status.update(state='complete', completion='solver process returned successfully',
+                          data_verification_performed=False)
         except Exception as error:
             status.update(state='failed',error=str(error),finished_utc=runtime.now())
             runtime.write_json(run/'status.json',status)
@@ -89,17 +88,22 @@ def start(args):
     cfg=runtime.config(args.root)['isolation_local']
     source=models.find_initial(args,args.ic_run,args.model)
     build=json.loads((source/'build.json').read_text())
-    if (build['state']!='complete' or Path(build['source_ini']).stem!='IC_'+args.model or
-        isolation.sha(source/'Fornax.ini')!=build['particle_sha256'] or
-        isolation.sha(source/'parameters.ini')!=build['ini_sha256']):
-        raise ValueError('IC build identity/checksum mismatch')
+    if build['state']!='complete' or Path(build['source_ini']).stem!='IC_'+args.model:
+        raise ValueError('IC build is incomplete or belongs to a different model')
     processes=args.processes or cfg.get('processes',4)
     if processes < 1 or processes > (os.cpu_count() or 1): raise ValueError('Invalid MPI process count')
     if args.time_max is not None and args.time_max <= 0: raise ValueError('--time-max must be positive')
     run=directory(args.root,args.model,args.name)
     identity={'model':args.model,'ic_run':args.ic_run,'processes':processes,
-              'particle_sha256':build['particle_sha256'],'time_max':args.time_max,
+              'build_id':build.get('build_id', source.name),'time_max':args.time_max,
               'profile':cfg}
+    # Old native cases keep their original identity; compare declared legacy
+    # metadata, never reread their particle files or rewrite a historical run.
+    if (run/'identity.json').is_file():
+        previous=json.loads((run/'identity.json').read_text())
+        if 'build_id' not in previous and 'particle_sha256' in previous:
+            identity.pop('build_id')
+            identity['particle_sha256']=build.get('particle_sha256')
     if args.dry_run:
         print(json.dumps({'directory':str(run),'identity':identity},indent=2));return 0
     run.parent.mkdir(parents=True,exist_ok=True)
@@ -128,7 +132,7 @@ def start(args):
                 for line in (run/'GZWJL.PARAM').read_text().splitlines() if len(line.split('%',1)[0].split())>=2}
         (run/'output').mkdir()
         request={'model':args.model,'processes':processes,'time_max':float(fields['TimeMax']),
-                 'solver_command':cfg['command'],'frozen_sha256':{p.name:isolation.sha(p) for p in run.iterdir() if p.is_file()}}
+                 'solver_command':cfg['command'],'frozen_files':[p.name for p in run.iterdir() if p.is_file()]}
         runtime.write_json(run/'request.json',request);runtime.write_json(run/'identity.json',identity)
         runtime.write_json(run/'status.json',{'state':'starting','created_utc':runtime.now(),'directory':str(run)})
         command=[str((args.root/cfg['python']).resolve()),str(run/'workflow_local_isolation.py'),

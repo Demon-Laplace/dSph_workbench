@@ -2,7 +2,6 @@
 """Build particle ICs in a new directory using the existing Schwarzschild solver."""
 import argparse
 import configparser
-import hashlib
 import importlib.util
 import json
 import os
@@ -68,11 +67,24 @@ def main():
     manifest = {'state': 'building', 'build_id': str(uuid.uuid4()),
                 'seed': args.seed, 'threads': args.threads,
                 'python': sys.executable, 'source_ini': str(source),
-                'ini_sha256': hashlib.sha256(params.read_bytes()).hexdigest(),
-                'solver_sha256': hashlib.sha256(solver.read_bytes()).hexdigest()}
+                'solver_file': str(solver), 'parameter_snapshot': 'parameters.ini',
+                'ini_sha256': None, 'solver_sha256': None,
+                'version_tracking': 'declared_build_id_v1',
+                'data_verification_performed': False,
+                'sampling_recipe': {
+                    section: {key: config.get(section, key, fallback=None)
+                              for key in ('icbeta', 'ickappa', 'beta', 'numorbits', 'nbody')}
+                    for section in config.sections() if section.lower().startswith('component_')}}
+    try:
+        manifest['generator_revision'] = subprocess.check_output(
+            ['git', '-C', str(Path(__file__).parent), 'rev-parse', 'HEAD'],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        manifest['generator_revision'] = None
     if two_beta:
         base_solver = solver.with_name('schwarzschild.py')
-        manifest['base_solver_sha256'] = hashlib.sha256(base_solver.read_bytes()).hexdigest()
+        manifest['base_solver_file'] = str(base_solver)
+        manifest['base_solver_sha256'] = None
     receipt = output / 'build.json'
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     env = dict(os.environ, OMP_NUM_THREADS=str(args.threads), OPENBLAS_NUM_THREADS='1')
@@ -110,7 +122,7 @@ def main():
         manifest.update(state='complete', generated_utc=datetime.now(timezone.utc).isoformat(),
                         counts=counts, component_masses=masses,
                         particle_ic=destination.name,
-                        particle_sha256=hashlib.sha256(destination.read_bytes()).hexdigest())
+                        particle_sha256=None)
     except Exception as error:
         manifest.update(state='failed', error=str(error))
         receipt.write_text(json.dumps(manifest, indent=2) + '\n')

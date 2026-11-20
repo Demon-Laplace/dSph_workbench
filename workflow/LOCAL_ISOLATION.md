@@ -1,5 +1,10 @@
 # 本机 isolation 运行
 
+2026-11-20：新IC和本机运行正常登记使用声明的build_id，不计算粒子哈希、
+逐粒子认证或完成后的数据回读。旧运行身份保持原样；旧digest只作已存元数据。
+`status=complete`表示求解器正常退出，不等于达到TimeMax或科学平衡已通过；
+后两项用实际演化进度及针对性的科学测量报告，不作普通传输的前置门槛。
+
 本机可运行与服务器相同物理配置的 isolation。当前独立安装复用系统 GCC、OpenMPI、GSL、
 HDF5，Python 环境在 `workspace/environments/isolation/`，不更改 IC 生成环境。
 只读取并复制服务器非周期 isolation 求解器源码；服务器原安装与既有用户 .sh 均不修改。
@@ -24,7 +29,7 @@ PartAllocFactor=4.0、BufferSize=120，MaxMemSize=2048 MiB/进程。
 本机 30 GiB 内存，8 个进程的内存上限合计约 16 GiB；实际 RSS 以运行时采样为准。
 
 计算文件与快照放在 `workspace/local-isolation/<model>/<name>/`，与服务器结果分开。
-其中 request.json 记录冻结文件 SHA256；status.json 记录运行/失败/完成；progress.json
+其中 request.json 记录冻结文件名称；status.json 记录运行/失败/正常退出；progress.json
 每约 15 秒记录积分进度，并在至少两次有效采样后给出按近期积分速度外推的剩余小时数。
 初始化不适合估计整个模拟时间，早期时间步也可能与后期不同，不能用单核频率推断总耗时。
 本机输出不能用服务器 `isolation-fetch` 覆盖；该命令仍专用于服务器成果。

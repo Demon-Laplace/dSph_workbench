@@ -1,0 +1,7 @@
+[F8001-ROTATION-SEED-20261120] 2026-11-20
+模型：Fornax8001；测试基线：Fornax5028 保存的AGAMA参数，不读取或重建旧模拟数据。
+原因：期望恒星净自转；旧配方有ickappa但漏icbeta，实际轨道采样走Eddington。
+本次参数：仅新增Component_stellar.icbeta=0.0；保留ickappa=0.70及最终beta_second=-0.1，
+保留原密度、质量、粒子数和轨道库设置；气体及旧模型不改。
+状态：参数已准备，尚未生成新IC或提交演化；后续实测与运行状态追加，不提前声称通过。
+来源/说明：IniFile/IC_Fornax8001.ini；workflow/reports/IC_ROTATION_INI_AUDIT_20261120.md。

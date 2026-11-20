@@ -32,12 +32,13 @@ def git(repo, *args):
     return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
 
 
-def parameters(path, model):
+def parameters(path, model, include_hash=True):
     parser = configparser.RawConfigParser()
     parser.read(path)
     sections = {name.lower(): dict(parser.items(name)) for name in parser.sections()}
     row = dict.fromkeys(FIELDS, '')
-    row.update(model=model, parameter_file=Path(path).name, parameter_sha256=sha(path))
+    row.update(model=model, parameter_file=Path(path).name,
+               parameter_sha256=sha(path) if include_hash else '')
     known = set()
     for group in ('gas', 'stellar'):
         densities = [(name, values) for name, values in sections.items()
@@ -141,14 +142,14 @@ def generated_row(directory):
     particle = directory / build['particle_ic']
     if params.parent != directory or particle.resolve().parent != directory.resolve():
         raise ValueError('Build receipt points outside the IC run')
-    if sha(params) != build['ini_sha256'] or sha(particle) != build['particle_sha256']:
-        raise ValueError('IC files changed after generation; catalogue registration refused')
     model = Path(build['source_ini']).stem.removeprefix('IC_')
-    row = parameters(params, model)
+    # Normal registration trusts the declared completed build. Legacy hashes
+    # remain metadata only; do not reread generated particle files to certify them.
+    row = parameters(params, model, include_hash=False)
     row.update(status='generated', run=directory.name, parameter_file=Path(build['source_ini']).name,
                seed=str(build['seed']), generated_utc=build.get('generated_utc', ''),
-               particle_sha256=build['particle_sha256'],
-               record_id='build:' + build.get('build_id', directory.name + ':' + build['particle_sha256']))
+               particle_sha256=build.get('particle_sha256') or '',
+               record_id='build:' + build.get('build_id', directory.name))
     return row
 
 

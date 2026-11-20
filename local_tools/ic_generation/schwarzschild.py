@@ -15,6 +15,29 @@ import agama, numpy, os, sys, re
 agama.setUnits(length=1, velocity=1, mass=1e10)
 from configparser import RawConfigParser  # python 3
 
+
+def orbit_sampling_options(value, potential):
+    """Keep old recipes explicit; icbeta is distinct from the final beta target."""
+    options = {'n': int(value['numorbits']), 'potential': potential}
+    if 'icbeta' in value:
+        options['beta'] = float(value['icbeta'])
+    if 'ickappa' in value:
+        options['kappa'] = float(value['ickappa'])
+    if 'beta' not in options:
+        method = 'Eddington'
+        if options.get('kappa', 0) != 0:
+            print("WARNING: ickappa without icbeta selects non-rotating Eddington sampling; "
+                  "the final beta target does not supply icbeta. Historical parameters "
+                  "are not changed automatically.", flush=True)
+    elif 'kappa' not in options:
+        method = 'spherical_Jeans'
+    else:
+        method = 'axisymmetric_Jeans'
+    print("Orbit sampler: %s; icbeta=%s; ickappa=%s" %
+          (method, options.get('beta'), options.get('kappa')), flush=True)
+    return options
+
+
 def createModel(iniFileName):
     """
     parse the ini file and construct the initial data for the entire model:
@@ -110,9 +133,7 @@ def createModel(iniFileName):
             print("Creating kinematic target for "+name)
             targets.append(agama.Target(**targetKinemParams))
         if 'numorbits' in value:
-            icoptions = { 'n': int(value['numorbits']), 'potential': model.potential }
-            if 'icbeta'  in value:  icoptions['beta' ] = float(value['icbeta'])
-            if 'ickappa' in value:  icoptions['kappa'] = float(value['ickappa'])
+            icoptions = orbit_sampling_options(value, model.potential)
             print("Creating initial conditions for %i orbits in %s" % (icoptions['n'], name))
             ic,weightprior = density.sample(**icoptions)
         else: raise ValueError("No orbits defined in "+name)

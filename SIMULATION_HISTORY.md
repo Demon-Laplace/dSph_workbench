@@ -36,3 +36,6 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 追加格式：`日期 | 模型/唯一版本 | IC来源、轨道参考或前次运行 | 为什么改、改了什么 | 已验证到哪一步、依据`。
 
 | 2026-11-20 | 共享 isolation 工作流 / `WORKFLOW-RUN-VERSIONS-20261120` | main `02da0be`；服务器 11-17 非例行核验接收路径 | 按用户要求，以声明的 IC/参数版本自动绑定运行并生成 JSON/TXT 台账；同版本复用、不同版本新建，不扫描粒子或做哈希认证 | 合成版本、并发和客户端/接收器测试；未改真实 IC 或提交模拟。[共享程序备注](workflow/MODEL_CHANGES.txt)、[使用说明](workflow/RUN_VERSIONS.md) |
+
+| 2026-11-20 | Fornax8001 / `F8001-ROTATION-SEED-20261120` | 原Fornax5028 AGAMA参数；旧模型保持原样 | 用户指定8001进行恒星旋转修正测试，仅新增stellar.icbeta=0.0，保留密度、质量、ickappa及最终beta-second；INI静态检查发现当前96份旧恒星配方同类遗漏 | 参数候选已准备，尚未生成IC或演化；[完整备注](model_changes/isolation/Fornax8001.txt)、[参数排查](workflow/reports/IC_ROTATION_INI_AUDIT_20261120.md) |
+| 2026-11-20 | 共享IC生成器 / `IC-ROTATION-SAMPLER-20261120` | main `8a8829f`；声明版本绑定规则 | 记录采样分支、提示缺失icbeta；新构建和正常目录登记不再计算粒子哈希，本机兼容新build_id及旧运行身份 | 43项定向单测通过；旧production-fetch断言不在本任务修正范围；[程序备注](workflow/MODEL_CHANGES.txt) |

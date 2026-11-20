@@ -9,3 +9,10 @@
 未提交真实模拟，未验证真实长期演化。另有既有ProductionFetch旧fixture测试在
 未修改的02da0be基线同样失败，不在本次版本绑定改动范围。
 说明：RUN_VERSIONS.md；测试：tests/test_run_versions.py、tests/test_isolation.py。
+[IC-ROTATION-SAMPLER-20261120] 2026-11-20
+共享IC生成器：显式记录icbeta/ickappa采样分支；有ickappa而缺icbeta时警告，不自动改旧配方。
+为用户指定的Fornax8001测试准备参数：继承5028，仅补stellar.icbeta=0.0。
+正常构建/登记及本机启动按声明build_id，不作粒子哈希或认证回读；旧运行身份和旧元数据保留。
+验证：IC生成、采样传参、本机运行身份、自动版本绑定共43项定向单测通过；
+与本次无关的旧production-fetch测试因canonical身份要求失败，未改生产取回逻辑。
+完整IC与短期isolation的科学测量待本次测试，不能用单测代替平衡验证。

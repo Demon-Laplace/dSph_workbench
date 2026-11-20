@@ -126,17 +126,17 @@ class ICCatalogTests(unittest.TestCase):
         catalog.register(run, self.repo)
         self.assertEqual(len(self.rows()), 1)
 
-    def test_failed_or_changed_data_cannot_enter_catalogue(self):
+    def test_declared_build_registration_does_not_hash_particles(self):
         run = self.build()
         (run / 'Fornax.ini').write_text('changed')
-        with self.assertRaisesRegex(ValueError, 'changed'):
+        with patch.object(catalog, 'sha', side_effect=AssertionError('no routine hashing')):
             catalog.register(run, self.repo)
         receipt = json.loads((run / 'build.json').read_text())
         receipt['state'] = 'failed'
         (run / 'build.json').write_text(json.dumps(receipt))
         with self.assertRaisesRegex(ValueError, 'successful'):
             catalog.register(run, self.repo)
-        self.assertFalse((self.repo / catalog.TABLE).exists())
+        self.assertEqual(len(self.rows()), 1)
 
     def test_existing_ic_validates_full_data_and_rejects_corruption(self):
         directory = self.root / 'existing'
@@ -203,7 +203,9 @@ class ICCatalogTests(unittest.TestCase):
         self.assertEqual((output / 'Fornax.ini').resolve(), output / 'Fornax9001.ini')
         manifest = json.loads((output / 'build.json').read_text())
         self.assertEqual(manifest['particle_ic'], 'Fornax9001.ini')
-        self.assertEqual(manifest['particle_sha256'], catalog.sha(output / 'Fornax.ini'))
+        self.assertIsNone(manifest['particle_sha256'])
+        self.assertFalse(manifest['data_verification_performed'])
+        self.assertEqual(manifest['version_tracking'], 'declared_build_id_v1')
         self.assertEqual(np.loadtxt(output / 'Fornax9001.ini', skiprows=1).shape, (5, 10))
 
 
