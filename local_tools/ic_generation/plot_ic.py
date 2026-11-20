@@ -137,11 +137,13 @@ def generate(data, model, directory, build=None, prefix=None):
         edges = np.geomspace(.025, 10., 48)
         radii = np.sqrt(edges[:-1]*edges[1:])
         fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+        sampled_surface_values = []
         for name, (x, _, mass) in populations.items():
             R = np.hypot(x[:, 0], x[:, 1])
             binned = np.histogram(R, bins=edges, weights=mass*1e10)[0]
             surface = binned/(np.pi*np.diff(edges**2)*1e6)
             use = surface > 0
+            sampled_surface_values.extend(surface[use].tolist())
             ax.plot(radii[use], surface[use], '.-', color=colors[name], label=name+' particles')
             if name in densities:
                 z = np.r_[0., np.geomspace(1e-5, 10., 400)]
@@ -153,6 +155,11 @@ def generate(data, model, directory, build=None, prefix=None):
         ax.set(xscale='log', yscale='log', xlim=(.025, 10),
                xlabel='Cylindrical R [kpc]', ylabel=r'$\Sigma\ [M_\odot\,{\rm pc}^{-2}]$',
                title=model+' initial face-on surface density')
+        if sampled_surface_values:
+            # Do not let an analytic Sersic tail at 1e-30 hide every resolved
+            # particle bin. These are display limits, not a data selection.
+            maximum = max(sampled_surface_values)
+            ax.set_ylim(max(1e-4, maximum*1e-5), maximum*2)
         ax.grid(alpha=.2); ax.legend()
         fig.supxlabel('Gas means total IC gas, not an assumed neutral-HI mass.', fontsize=9)
         save(fig, paths[2])
@@ -211,8 +218,9 @@ def generate(data, model, directory, build=None, prefix=None):
                 axes[1, 0].plot(values[:, 0], ratio, '.-', color=color, label=label)
         axes[1, 0].axhline(1., ls=':', color='gray')
         axes[1, 0].axhline(2., ls='--', color='gray', alpha=.5)
-        axes[1, 0].set(xlim=(0, 3), ylim=(0, 8), xlabel='R [kpc]',
+        axes[1, 0].set(xlim=(0, 3), xlabel='R [kpc]',
                        ylabel='Intrinsic rotation / dispersion', title='Stellar rotation dominance')
+        axes[1, 0].set_ylim(bottom=0)
         axes[1, 0].legend(fontsize=8)
         for name, values in curves.items():
             if len(values):
@@ -225,6 +233,7 @@ def generate(data, model, directory, build=None, prefix=None):
         save(fig, paths[4])
     return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
             'files': [path.name for path in paths],
+            'render_recipe': 'mass_weighted_ic_figures_v2_resolved_profile_range',
             'note': 'Initial IC scientific figures; no snapshot evolution or HI ionization assumption.'}
 
 
