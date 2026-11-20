@@ -33,3 +33,14 @@ isolation上传/提交命令已发起，JobID尚待返回；没有完整演化�
 同任务最终启动状态：Job313990在node0251为RUNNING、运行约155秒，
 info.txt已有非零积分记录到Time=0.00268555，满足超过140秒且已进入积分的启动标准。
 结束本次启动检查，保留模拟继续；仍未达到TimeMax=0.5或完成长期科学平衡验证。
+
+[F8001-IC-PLOTS-20261120] 2026-11-20
+用户指出默认初始图缺失，要求查看model_tool并允许优化内容。
+查明model_tool→workflow→build_ic漏接旧funcini出图；已修复共用构建器默认绘图。
+仅对既有8001完整IC（build 4258fa52-a693-4112-99f7-08ca903f94ac）补画5张初态图，
+放本地Fornax8001/isolation/：Fornax8001_components.png、central_components.png、
+column_density_profile.png、Mstar_Mgas_relation.png、kinematics.png（均以前缀Fornax8001_命名）。
+内容为质量加权等比例空间投影/中心放大、粒子和解析面密度、同孔径总气体质量预算、
+平均旋转/三向弥散/V-sigma/顺行率；不将总气体冒充HI，不读取模拟快照。
+renderer=0d2bcab；53项定向单测通过，真实8001图片已生成。
+8001粒子IC、参数、冻结驱动和Job313990均未修改或重新提交。
