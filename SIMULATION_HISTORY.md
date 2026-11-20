@@ -39,3 +39,4 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 
 | 2026-11-20 | Fornax8001 / `F8001-ROTATION-SEED-20261120` | 原Fornax5028 AGAMA参数；旧模型保持原样 | 用户指定8001进行恒星旋转修正测试，仅新增stellar.icbeta=0.0，保留密度、质量、ickappa及最终beta-second；INI静态检查发现当前96份旧恒星配方同类遗漏 | 参数候选已准备，尚未生成IC或演化；[完整备注](model_changes/isolation/Fornax8001.txt)、[参数排查](workflow/reports/IC_ROTATION_INI_AUDIT_20261120.md) |
 | 2026-11-20 | 共享IC生成器 / `IC-ROTATION-SAMPLER-20261120` | main `8a8829f`；声明版本绑定规则 | 记录采样分支、提示缺失icbeta；新构建和正常目录登记不再计算粒子哈希，本机兼容新build_id及旧运行身份 | 43项定向单测通过；旧production-fetch断言不在本任务修正范围；[程序备注](workflow/MODEL_CHANGES.txt) |
+| 2026-11-20 | Fornax8001 / `F8001-ROTATION-SEED-20261120` 进展 | 同任务首次构建v1；无旧模型变化 | v1因本地命令120秒执行上限中断，保留部分输出并改用新构建名v2；加入本征旋转科学测量及同作业内后处理入口 | 测量程序3项合成样本测试通过；完整IC仍待构建，不能将命令超时解释为物理失败；[追加备注](model_changes/isolation/Fornax8001.txt) |

@@ -81,6 +81,7 @@ class TwoBetaBuildTests(unittest.TestCase):
             original_find = importlib.util.find_spec
             argv = ['build_ic.py', '--ini', str(source), '--output', str(output)]
             with patch.object(sys, 'argv', argv), \
+                 patch.object(builder.subprocess, 'check_output', return_value='test-generator-revision\n'), \
                  patch.object(builder.subprocess, 'run', side_effect=worker), \
                  patch.object(builder.importlib.util, 'find_spec',
                      side_effect=lambda name: True if name == 'agama' else original_find(name)):

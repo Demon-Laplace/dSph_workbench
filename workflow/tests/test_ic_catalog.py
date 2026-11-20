@@ -196,6 +196,7 @@ class ICCatalogTests(unittest.TestCase):
         argv = ['build_ic.py', '--ini', str(source), '--output', str(output)]
         original_find = importlib.util.find_spec
         with patch.object(sys, 'argv', argv), patch.object(builder.subprocess, 'run', side_effect=worker), \
+             patch.object(builder.subprocess, 'check_output', return_value='test-generator-revision\n'), \
              patch.object(builder.catalog, 'register'), \
              patch.object(builder.importlib.util, 'find_spec', side_effect=lambda name: True if name == 'agama' else original_find(name)):
             self.assertEqual(builder.main(), 0)
@@ -206,6 +207,7 @@ class ICCatalogTests(unittest.TestCase):
         self.assertIsNone(manifest['particle_sha256'])
         self.assertFalse(manifest['data_verification_performed'])
         self.assertEqual(manifest['version_tracking'], 'declared_build_id_v1')
+        self.assertEqual(manifest['generator_revision'], 'test-generator-revision')
         self.assertEqual(np.loadtxt(output / 'Fornax9001.ini', skiprows=1).shape, (5, 10))
 
 
