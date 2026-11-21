@@ -22,3 +22,12 @@ build_id=9919a21b-61ec-4a45-b0e1-3221f20351dc，seed42，564500粒子及5张图�
 同一build9919a21b从初态重新运行，TimeMax=3.0、物理设置不变；新目录cold-disk-local-t3-pcores-mpi12。
 真实GIZMO的12个MPI rank分别限于CPU 0–11（6个P核，共12个逻辑线程，无E核）。
 绑核只冻结在本次运行的request.json，不改本机默认MPI命令；未提交Slurm，耗时与稳定性待实测。
+
+[F8005-LOCAL-STOP-MESOPSL1-T3-20261121] 2026-11-21
+按用户要求夜间暂停本机试跑：cold-disk-local-t3-pcores-mpi12 使用求解器stop正常退出，
+末记录T=0.00915527、约2855秒，保留本地目录与12个rank检查点；未到TimeMax。
+同一初态build9919a21b已上传，服务器cold-disk-test从t=0启动，不使用本机检查点。
+mesopsl1当时有空闲节点，Job236894获node0095，IC001/P001；单节点16 MPI、24小时，
+TimeMax=3.0、反馈16.6、快照间隔0.01；PAF4.5按服务器分配器对齐布局设置。
+依据：本机原运行status/progress与workspace/receipts/isolation/Fornax8005/cold-disk-test/server.json；
+Slurm已显示RUNNING，非零积分、终点和科学稳定性未验收。
