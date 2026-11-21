@@ -31,3 +31,17 @@ icbeta=.65、ickappa=1及无最终球坐标beta约束；轨道库、网格和粒
 astro_thin单节点24 MPI，TimeMax=0.5、timescale_fd=16.6、PartAllocFactor=4.0。
 依据：本地workspace/receipts/isolation/Fornax8003/cold-disk-test/server.json；
 服务器isoFornax/Fornax8003/runs/cold-disk-test/。调度器已启动作业，非零积分及稳定性尚未验收。
+
+[F8003-ISOLATION-3GYR-20261121] 2026-11-21
+用户更正隔离测试总终点为3 Gyr（代码时间3.0681360790075956）；旧0.5约为0.489 Gyr。
+前序314028在t=0快照后以MPI进程退出码11失败，无非零积分或restart，原目录保留。
+继续使用build08392e71-5c45-4ee4-8d5e-c609f9541417（200000恒星、14500气体），从零起跑。
+本地新版粒子文件带构建前缀平铺在Fornax8003/isolation/，同名无前缀文件保留旧版；
+按用户要求在同一目录增加Fornax8003_res100短名链接：粒子INI、参数INI、构建记录与5张初态图，不复制文件。
+服务器模型根另存Fornax8003-20261121T111636Z-585f0e32__IC_Fornax8003.ini配方，不覆盖旧文件。
+独立profile cold-disk-3gyr-Fornax8003-paf55：沿用反馈16.6和物理配置、单节点24 MPI，
+时限24小时；PartAllocFactor=5.5作为8/16字节对齐规避，未改求解器；根因未获崩溃栈确认。
+预计初始P偏移由8 mod 16（0.5965 MiB，与失败分配表吻合）变为0 mod 16。
+新作业314029（cold-disk-test-IC001-P002-01，IC001/P002）正在运行，已越过t=0，
+记录Sync-Point 32、代码时间0.00299623；尚未满足140秒启动观察窗或达到3 Gyr。
+依据：服务器同名run目录下GZWJL.PARAM、status.json、output/info.txt。
