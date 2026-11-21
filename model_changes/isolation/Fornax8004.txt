@@ -6,3 +6,12 @@
 build_id=e913d247-0679-4446-881b-db6ad2a9ce3d，seed42；总表d4552c2。
 已在本地Fornax8004/isolation/生成414500粒子与5张初态图，依据build.json、parameters.ini。
 未传输粒子或提交任何演化；冷度、Q和稳定性未验收。
+
+[F8004-ISOLATION-T6-20261121] 2026-11-21
+按用户要求从已生成的build e913d247-0679-4446-881b-db6ad2a9ce3d从零运行隔离模拟，
+400000恒星+14500气体；不重建IC、不使用其他模型的演化快照。
+profile cold-disk-t6-Fornax8004：TimeMax=6.0、反馈16.6、快照间隔0.01，
+astro_thin单节点24 MPI、24小时；PartAllocFactor=6.5按初始内存布局采用对齐规避，
+未改求解器或其它物理参数。
+Job314032（cold-disk-test，IC001/P001）已提交并进入RUNNING；
+依据：服务器isoFornax/Fornax8004/runs/cold-disk-test/与本地server.json回执，演化终点及稳定性待验收。

@@ -61,3 +61,13 @@ CODE_VERSION=ic-figures-v4-munoz-published-profile，63项定向测试与真实�
 共226帧，固定范围约到2.20 Gyr，未把进行中的模拟标为完成。
 视频和density_evolution.csv已回传本地Fornax8002/isolation，文件前缀Fornax8002_available_s000-225_。
 原始快照不复制、不迁移，模拟不中断；回传清单Fornax_workspace/isolation_available_20261120/returned.json。
+
+[F8002-ISOLATION-RESUME-T6-20261121] 2026-11-21
+按用户要求直接使用既有isolation-resume，从314006的24份二进制rank检查点原地续跑；
+沿用build27ace52b、cold-disk-test-IC001-P002-01/output、原求解器和反馈16.6，TimeMax改为6.0。
+旧段配置终点3.068136079，但末条积分时间为代码时间4.0；旧求解器续跑的整数时间网格
+可能使实际最后同步步超过配置终点，不把TimeMax当成终止实测。
+求解器可能复用最后快照编号，已将旧snapshot_306移到运行目录prior-output-job314006/保留；
+其余快照、检查点与IC未在提交前移动或复制。
+续跑Job314033（IC001/P003，astro_thin单节点24 MPI、24小时），已提交；
+依据：原运行目录.resume-001/submission.json与GZWJL.PARAM。未认定到达终点或稳定性通过。
