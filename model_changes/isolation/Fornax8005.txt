@@ -8,3 +8,9 @@ build_id=9919a21b-61ec-4a45-b0e1-3221f20351dc，seed42，564500粒子及5张图�
 本机原生隔离cold-disk-local-t3以8 MPI进程启动，TimeMax=3.0、反馈16.6、PAF4.0，
 低调度优先级；workspace/local-isolation/Fornax8005/cold-disk-local-t3状态与进度为依据。
 未提交Slurm或上传粒子；本机耗时待实测，未验收科学稳定性。
+
+[F8005-LOCAL-MPI12-20261121] 2026-11-21
+用户要求改用12个本机MPI进程；旧8进程cold-disk-local-t3用求解器stop正常退出，
+累计约485秒、末记录T=9.15527e-05，未达到3.0。确认无进程占用后按用户要求仅删除该旧运行目录。
+同一build9919a21b从初态在cold-disk-local-t3-mpi12启动（PID46241），TimeMax=3.0，
+物理参数和初态不变。新运行目录、共享初态和图件均保留；未提交服务器或给出完整运行耗时。
