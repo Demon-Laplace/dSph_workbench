@@ -1,5 +1,11 @@
 # dSph 工作流：智能体交接与操作说明
 
+2026-11-21 对齐修复：周期正式求解器的独立16字节分配器版通过Job236891的
+短期分配/重分配/搬移及二进制restart测试。服务器production_solver配置使
+后续simulate在新冻结脚本中替换已声明的周期求解器路径，原用户脚本及已提交作业不改。
+不适用于隔离求解器家族；不得据此自动停止或重提8002当前活动的孤立续跑314033。
+见[构建和默认选择说明](solver_patches/ALIGN16.md)。
+
 2026-11-20 续跑/分析更新：`isolation-resume MODEL --name RUN --time-max T --submit`
 在原RUN/output中使用二进制restart续跑，不新建分段数据目录。
 `isolation-check`可直接处理中途快照，固定当次清单、避开最新写入文件，并可在模拟继续时回传。

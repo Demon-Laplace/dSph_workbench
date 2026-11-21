@@ -95,3 +95,12 @@ Yang现有绝对标定已使用Muñoz，二者不当作独立光度约束；M/L�
 17份非空notebook归到workspace/notebooks，3个空占位进回收站，旧实验.py归档保留入口。
 23项定向测试通过；实际8004初态、Fornax81 HDF5导出、Tk窗口与Firefox相机事件通过。
 不作正式观测拟合、不部署服务器或提交作业；使用说明LOCAL_VIEWER.md。
+
+[GIZMO-PERIODIC-ALIGN16-20261121] 2026-11-21
+用户同意独立修复周期GIZMO的16字节内存对齐，并要求部署前核对8002活动状态。
+内存池基址及四个分配/重分配路径统一16字节；独立构建Job236891通过，
+实际4MPI分配/搬移和new→new、old→new二进制restart短测均通过。
+simulate新增production_solver映射，只改新冻结launcher中的已识别周期求解器路径，
+不覆盖原程序或旧用户脚本；物理配置、IC、3800MB和运行作业保持不变。
+队列核对8002孤立314033在运行，正式314009失败；不自动重提或修改任何8002/8001运行。
+说明solver_patches/ALIGN16.md，完整镜像model_changes/gizmo-periodic-align16.txt。

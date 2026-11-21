@@ -1,5 +1,8 @@
 --- a/system/mymalloc.c
 +++ b/system/mymalloc.c
+@@ -57 +57 @@
+-  if(!(Base = malloc(n)))
++  if(posix_memalign(&Base, 16, n) != 0)
 @@ -139,11 +139,12 @@
  
  void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int line)

@@ -1,0 +1,18 @@
+[GIZMO-PERIODIC-ALIGN16-20261121] 2026-11-21
+范围：周期正式GIZMO的内存分配器及后续新作业的默认求解器选择；不修改物理模型。
+来源：/obs/xhuang/zimpack/soft/gizmowjl_MFM_box_AGSgas_Nstar100的原源码、
+Config.sh、Makefile和GCC4.8.5/IntelMPI2018环境；原安装只读保留。
+独立安装：/travail/xhuang/workspace/software/gizmo-periodic-align16-20261121-v1/source/GIZMO_align16。
+唯一求解器源码改动为system/mymalloc.c：内存池基址posix_memalign16，
+四处分配/重分配尺寸统一16字节向上取整，使可移动块重排继续保持对齐。
+物理宏、粒子结构、数值类型、IC和运行物理参数未变；不靠提高内存或PartAllocFactor绕过缺陷。
+构建及实际测试Job236891，单节点4MPI、3800M/核，COMPLETED/0:0：
+内存池/普通与movable分配/重分配/搬移对齐通过；
+4100粒子修复版fresh→restart及4096粒子旧版fresh→修复版restart，
+均从代码时间1e-5继续至2e-5。仅短期接口验证，不代表96MPI正式启动或长期科学验证。
+新增production_solver配置，simulate仅在新冻结launcher中替换已识别周期求解器路径，
+旧用户shell、已提交作业、资源、3800MB上限及参数文件不受影响；隔离/自定义求解器不自动替换。
+部署前已查队列：8002孤立续跑314033正在运行；原正式314009失败、仅t=0输出。
+314033与8001均不改、不停止、不重提。本任务不自动追加8002正式作业。
+证据：该release/source/aligned-build.json、validation/validation.json与allocator-test.log。
+说明：workflow/solver_patches/ALIGN16.md；本地工作区solver_align16_20261121/validation_result.json。

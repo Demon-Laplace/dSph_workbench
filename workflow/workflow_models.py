@@ -151,6 +151,42 @@ def new_case(args):
     return 0
 
 
+def select_production_solver(root, launcher):
+    """Route only the new frozen launcher; original model/user shells stay intact."""
+    settings = runtime.config(root).get('production_solver')
+    if not settings:
+        return None
+    executable = runtime.confined(root, root / settings['executable']).resolve()
+    build_path = runtime.confined(root, root / settings['build_manifest'])
+    validation_path = runtime.confined(root, root / settings['validation'])
+    text = launcher.read_text()
+    replacements = settings['replaces']
+    active = [line for line in text.splitlines() if not line.lstrip().startswith('#')]
+    def pattern(value):
+        return re.compile(r'(?<![A-Za-z0-9_./-])' + re.escape(value) + r'(?![A-Za-z0-9_./-])')
+    matches = [old for old in replacements if any(pattern(old).search(line) for line in active)]
+    if not matches and not any(str(executable) in line for line in active):
+        return None  # An unrelated custom solver is not this periodic build.
+    build = json.loads(build_path.read_text())
+    validation = json.loads(validation_path.read_text())
+    if (build.get('state') != 'built' or build.get('alignment_bytes') != 16
+            or Path(build.get('executable', '')).resolve() != executable
+            or validation.get('state') != 'passed' or not os.access(executable, os.X_OK)):
+        raise ValueError('Aligned production solver is not built and validated; original launcher preserved')
+    if any(character.isspace() for character in str(executable)):
+        raise ValueError('Production solver path cannot contain whitespace')
+    lines = []
+    for line in text.splitlines(keepends=True):
+        if not line.lstrip().startswith('#'):
+            for old in sorted(matches, key=len, reverse=True):
+                line = pattern(old).sub(lambda match: str(executable), line)
+        lines.append(line)
+    launcher.write_text(''.join(lines))
+    return {'executable': str(executable), 'alignment_bytes': 16,
+            'replaced_paths': matches, 'build_manifest': str(build_path),
+            'validation': str(validation_path), 'original_model_launcher_unchanged': True}
+
+
 def simulate(args):
     if getattr(args, 'startup_timeout', 7200) <= 0:
         raise ValueError('--startup-timeout must be positive')
@@ -179,6 +215,9 @@ def simulate(args):
     directory.mkdir(parents=True)
     script = directory / launcher.name
     shutil.copy2(launcher, script)
+    selected_solver = select_production_solver(args.root, script)
+    if selected_solver:
+        runtime.write_json(directory / 'solver-selection.json', selected_solver)
     monitored = prepare_startup_monitor(args, model, directory, script)
     command = ['sbatch', '--parsable', '--chdir', str(model), '--output', str(directory / 'slurm-%j.out')]
     if not args.submit:
