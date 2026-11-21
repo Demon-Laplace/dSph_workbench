@@ -1,5 +1,20 @@
 # dSph workbench agent entry point
 
+## Supabase handoff log (owner update, 2026-11-21)
+
+Use the configured local `x10-worklog recent --project Fornax` before substantive
+work. Append concise decisions/corrections (`decision`), completed milestones
+(`completed`), or submitted-run/blocker/unfinished handoffs (`handoff`), normally
+one milestone per task. Existing blocked events remain historical; do not rewrite
+them. Exclude routine reads, polling, each tool error, full chats and raw data.
+Identify production versus isolation, run and JobID; recorded status is not live.
+Use disk-relative stable artifact paths. Science details remain in model notes
+and SIMULATION_HISTORY.md, not duplicated into the log. A next_step is never
+authorization; check current job state before any later action. Credentials stay
+with the approved local/portable CLI and must not be copied to servers or Git.
+The portable disk's WorkLog/README.md defines the event policy; servers without
+that CLI leave a concise handoff for the authorized local client to record.
+
 ## Local IC/result layout (owner clarification, 2026-11-20)
 
 Put IC files, initial figures and isolation results together directly in

@@ -1,5 +1,17 @@
 # Server data workspace
 
+## Supabase handoff log (owner update, 2026-11-21)
+
+Keep this server credential-free. The authorized local WorkLog client records
+concise decisions/corrections, completed milestones and submitted-run/blocker/
+unfinished handoffs after substantive work, normally one milestone per task.
+Identify production versus isolation, run and JobID. Do not record routine
+polling, every tool error, full chats or raw data. Recorded status is historical;
+next_step is not permission to submit, stop, delete or change a simulation.
+Check the live queue before acting on a run. Never copy a WorkLog device or
+portable token to this server. The portable disk's WorkLog/README.md is the event
+policy; use the configured local client to read recent events and append/sync.
+
 All server mutations must remain inside this data directory. Existing solver
 installations outside data may be read and executed, but never edited.
 
