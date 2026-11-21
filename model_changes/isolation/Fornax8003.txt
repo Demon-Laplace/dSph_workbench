@@ -19,3 +19,15 @@ icbeta=.65、ickappa=1及无最终球坐标beta约束；轨道库、网格和粒
 按用户最终明确的布局，所有初态、分量、参数和图片平铺到本地Fornax8003/isolation；
 原ic/build目录已取消，工具固定名链接留在workspace/ic-builds，不复制实际粒子。
 恒星名义质量2e7 Msun、其余配方不变；尚未测新模型Q/冷度或提交演化，不声称稳定性通过。
+
+[F8003-RES100-ISOLATION-20261121] 2026-11-21
+来源：Fornax8002冷盘解析配方（build27ace52b），不是演化快照；
+保留Fornax8003前一构建build20d56906。新版build_id=08392e71-5c45-4ee4-8d5e-c609f9541417，
+构建名Fornax8003-20261121T111636Z-585f0e32，seed42。
+恒星总质量2e7 Msun，200000粒子恢复与8002相同的100 Msun/粒子质量分辨率；
+恒星轨道库30000改为20000，气体仍为1.45e8 Msun、14500粒子。INI注释同步更正。
+现有新版粒子INI及初态图已生成，有效参数与新版配方相同；未重复生成或覆盖旧构建。
+按8002原始cold-disk-test配置提交独立隔离作业314028（cold-disk-test，IC001/P001），
+astro_thin单节点24 MPI，TimeMax=0.5、timescale_fd=16.6、PartAllocFactor=4.0。
+依据：本地workspace/receipts/isolation/Fornax8003/cold-disk-test/server.json；
+服务器isoFornax/Fornax8003/runs/cold-disk-test/。调度器已启动作业，非零积分及稳定性尚未验收。
