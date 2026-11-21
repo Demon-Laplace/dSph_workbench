@@ -78,3 +78,12 @@ Yang现有绝对标定已使用Muñoz，二者不当作独立光度约束；M/L�
 试点Fornax100：同文件系统移动15份隔离文件到主模型isolation/，旧目录改相对链接；
 旧路径与新路径为同一文件，主模型正式IC及快照未动，主工作流list可发现新位置。
 其余206个实体目录、配方源码入口和旧资料待批量迁移；未重新生成、全量读取、同步服务器粒子或提交作业。
+
+[LOCAL-ISOLATION-CONSOLIDATION-20261121] 2026-11-21
+接续Fornax100试点：205个实体模型隔离目录同文件系统直接迁入主工作区；
+历史Fornax1004为空，存回滚归档，不覆盖其现有isolation视频。迁入208份本地历史参数及14项旧资料。
+旧根现在仅为主工作区workspace/legacy-isolation的兼容链接；旧Git及配置归档，
+新IC只用tools/dSph_workbench配方与构建器，保留旧generated查询和目录总表历史入口。
+校验迁移元数据及319个链接；真实新旧入口参数检查、历史构建定位与隔离dry-run通过，
+32项定向测试通过。没有复制/重建粒子，没有动服务器、科学参数或作业。
+本地清单：workspace/catalog/legacy-isolation-merge-20261121/migration.json。

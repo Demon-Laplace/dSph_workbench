@@ -38,9 +38,33 @@ Fornax8003/
 `model/Fornax/Fornax100/isolation/`，旧路径保留为相对符号链接。
 主目录下原有的正式模型粒子 INI 和快照保留，不与隔离文件混用。
 
-这是单模型试点，不代表旧工作区已经退役。尚余 206 个实体模型目录（其中 17 个
-在主工作区有同名模型）、208 份未跟踪的历史参数，以及旧笔记本和构建记录。
-后续批量迁移先按模型检查目标路径、保留冲突版本，再原位移动并保留旧链接。
-源码入口应最终归一到主工作区的 `tools/dSph_workbench`；切换前须保留历史参数和构建的访问。
+试点后完整迁移了剩余 206 个历史模型目录中的 205 个；另一个 `Fornax1004` 原目录为空，
+保留在旧工作树归档中，主模型 `isolation/` 中现有视频不动。208 份仅本地的历史参数和
+笔记本、旧构建等资料也已迁入。参数按原 Git 规则保留，不将旧编号参数新增到上游。
+
+```text
+model/Fornax/                              # 唯一本地工作目录
+  workflow.py, workflow.json
+  IniFile/ -> tools/dSph_workbench/IniFile/
+  model_tool.py, makeini.py -> tools/dSph_workbench/ 中同名入口
+  FornaxNNNN/
+    isolation/                             # 初态、隔离结果，平铺
+    analysis/                              # 正式分析（若有）
+    …                                      # 正式结果、快照保持原位
+  tools/dSph_workbench/                     # 唯一活动源码库和 IC 参数总表
+  workspace/
+    ic-builds/<model>/<build>/              # 指向平铺文件的工具链接
+    legacy-isolation/                      # 旧路径视图；含历史笔记本及验证构建
+    archive/legacy-ic-checkout-20261121/    # 原 Git 工作树、旧配置和回滚资料
+    catalog/legacy-isolation-merge-20261121/migration.json
+model/IsolationModel/Fornax -> ../Fornax/workspace/legacy-isolation
+```
+
+在 `model/Fornax/` 下，先用 `python3 workflow.py check-ini 8003` 核对配方；
+要新生成一次，可用 `python3 workflow.py build-ic --model Fornax8003 --name build-v2`，
+或改用 `python3 model_tool.py build 8003`，不要两条都执行。提交已有初态时
+用 `workflow.py isolation MODEL --ic-run BUILD --name RUN --profile PROFILE --submit`；
+不提交时可用 `--dry-run`。后续常规约 3 Gyr 的测试选用 `TimeMax=3.0` 的服务器配置。
+
 不要直接把整个旧工作区链接到主根目录：旧入口下的 `Fornax.ini` 应继续解析到隔离输入，
 而不是主模型目录同名的正式模拟输入。服务器和正在进行的运行不变。
