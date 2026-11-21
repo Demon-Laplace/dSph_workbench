@@ -72,3 +72,13 @@ Yang观测mu/误差、其既有标定不改；角半径仅在显示时换算，�
 共305帧，固定范围约到2.97 Gyr，未把进行中的模拟标为完成。
 视频和density_evolution.csv已回传本地Fornax8001/isolation，文件前缀Fornax8001_available_s000-304_。
 原始快照不复制、不迁移，模拟不中断；回传清单Fornax_workspace/isolation_available_20261120/returned.json。
+
+[F8001-VS5028-IC-20261121] 2026-11-21
+按用户要求比较归档5028原始IC与8001完整build4258fa52；配方差异仅恒星icbeta=0，
+初始轨道采样从Eddington改轴对称Jeans，保留ickappa=.70及最终含流beta目标=-.1。
+两模型同一mesopsl1作业236890、单节点16核顺序测量，COMPLETED 0:0，无求解器演化。
+5 kpc内恒星Vphi 0.013→5.556 km/s、顺行49.98→74.18%、V/sigma_1d .0014→.6462，
+含流beta基本不变、去流beta -.1019→+.0926；半质量半径差-.20%、气体总体变化小。
+对照报告/JSON/CSV/图已回传本地Fornax8001/isolation/Fornax5028_vs_Fornax8001_IC_20261121_*。
+服务器方案、脚本和结果在workspace/analysis-contexts/ic-5028-8001-20261121/；
+不以ID比对；原始IC和现有运行未改。随机种子及长期稳定性限度保留。
