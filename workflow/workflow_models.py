@@ -45,6 +45,11 @@ def initial_directory(args, model, name):
     return runtime.confined(base, base / 'workspace/ic-builds' / model / runtime.label(name))
 
 
+def historical_ic_root(args, root):
+    history = runtime.config(args.root).get('ic', {}).get('legacy_root')
+    return (args.root / history).resolve() if history else root
+
+
 def find_initial(args, name, model=None):
     runtime.label(name)
     if model:
@@ -64,7 +69,11 @@ def find_initial(args, name, model=None):
         if matches:
             return runtime.confined(base, matches[0])
     root, _ = ic_paths(args)
-    return runtime.confined(root, root / 'generated' / name)
+    current = runtime.confined(root, root / 'generated' / name)
+    if current.exists():
+        return current
+    history = historical_ic_root(args, root)
+    return runtime.confined(history, history / 'generated' / name)
 
 
 def ic_catalog(args):
@@ -73,7 +82,7 @@ def ic_catalog(args):
     if args.run:
         command += ['--run', str(find_initial(args, args.run, getattr(args, 'model', None)))]
     else:
-        command += ['--history-root', str(root)]
+        command += ['--history-root', str(historical_ic_root(args, root))]
     return subprocess.run(command).returncode
 
 

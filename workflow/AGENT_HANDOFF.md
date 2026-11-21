@@ -95,8 +95,8 @@ sbatch/srun、不多申请节点或 CPU；每 15 秒读一次 info.txt，其余�
 ## 1. 三端职责与边界
 
 - 本地分析工作区：`/home/x-huang/simulation/model/Fornax`，统一入口 `python3 workflow.py`。
-- IC 工具与独立 Git checkout：`../IsolationModel/Fornax`。IC 参数在其 `IniFile/`；新模型生成结果落入分析工作区 `<model>/ic/<build>/`。
-- 本地源码 checkout：`tools/dSph_workbench`，GitHub `Demon-Laplace/dSph_workbench`，只使用远端 `main`。先检查 status/fetch，禁止覆盖用户修改或 force-push。
+- IC 工具和参数与本地源码共用 `tools/dSph_workbench`；工作区 `IniFile/` 与 `model_tool.py` 是链接。新模型结果写到 `<model>/isolation/`。旧 `../IsolationModel/Fornax` 仅为本地兼容入口，不用作第二个工作目录。
+- 本地唯一活动源码 checkout：`tools/dSph_workbench`，GitHub `Demon-Laplace/dSph_workbench`，只使用远端 `main`。先检查 status/fetch，禁止覆盖用户修改或 force-push。
 - 服务器：`xhuang@mesopsl`，经 `xhuang@rubicon.obspm.fr` 跳转。使用现有 SSH 配置和凭据，绝不复制/打印密钥。连接示例：`ssh -J xhuang@rubicon.obspm.fr xhuang@mesopsl`。
 - **服务器写入仅限 `/travail/xhuang`，它是用户的 data 目录。** `/obs/...` 下转换器、求解器只能读取/执行，不得修改。
 - 服务器源码 checkout：`data/workspace/code/github-sync`。根目录 `workflow*.py` 是已安装副本；更新代码必须同步 GitHub main 和安装副本。
@@ -107,8 +107,7 @@ sbatch/srun、不多申请节点或 CPU；每 15 秒读一次 info.txt，其余�
 
 ```text
 本地 <model>/
-  ic/<build>/                 新生成且冻结的 IC
-  isolation/                  旧 IC、孤立模型结果；保留一级
+  isolation/                  初态 IC、孤立模型结果；保留一级
     IC_density_<model>_*.mp4 检查视频，直接放在 isolation/
     density_evolution.csv     密度统计表
 本地 workspace/receipts/isolation/<model>/<run>/  上传与运行回执

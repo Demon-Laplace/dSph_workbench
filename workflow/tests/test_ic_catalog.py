@@ -180,6 +180,27 @@ class ICCatalogTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             models.build_ic(args)
 
+    def test_consolidated_checkout_keeps_historical_catalogue_and_build_lookup(self):
+        root = self.root
+        checkout = root / 'tools/dSph_workbench'
+        checkout.mkdir(parents=True)
+        (root / 'workflow.py').touch()
+        history = root / 'workspace/legacy-isolation'
+        historical = history / 'generated/older-run'
+        historical.mkdir(parents=True)
+        config = {'ic': {'root': 'tools/dSph_workbench', 'legacy_root': 'workspace/legacy-isolation'}}
+        (root / 'workflow.json').write_text(json.dumps(config))
+        args = SimpleNamespace(root=root, repo=checkout, run=None)
+        self.assertEqual(models.find_initial(args, 'older-run', 'Fornax7003'), historical)
+        with patch.object(models.subprocess, 'run', return_value=SimpleNamespace(returncode=0)) as run:
+            self.assertEqual(models.ic_catalog(args), 0)
+            self.assertEqual(run.call_args.args[0][-2:], ['--history-root', str(history)])
+        spec = importlib.util.spec_from_file_location('ic_model_tool', SOURCE.parents[2] / 'model_tool.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        with patch.object(tool, 'PROJECT_ROOT', checkout):
+            self.assertEqual(tool.build_workbench(), (root, root / 'workflow.py'))
+
     def test_flat_build_retains_catalogue_identity_without_particle_hashing(self):
         spec = importlib.util.spec_from_file_location('catalog_flat_layout', SOURCE.with_name('flat_layout.py'))
         layout = importlib.util.module_from_spec(spec)

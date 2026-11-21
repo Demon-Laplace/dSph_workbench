@@ -286,21 +286,21 @@ python3 workflow.py remote simulate Fornax9001 --name sim9001-run --launcher sub
 
 本机 `simulation` Conda 环境已有 AGAMA，当前默认 Python 未安装该模块。`workflow.json` 的 `ic_python` 指定建模解释器，也可用 `--python` 显式覆盖。统一建模入口会拒绝已有输出目录，冻结输入参数、记录随机种子和求解器 SHA256，生成独立粒子 IC；不会把粒子数据推入 GitHub：
 
-参数与生成工具在 `model/IsolationModel/Fornax/`；构建器自动把粒子 IC、参数快照和初态图
-发布到 `model/Fornax/<模型名>/isolation/`。有重名时使用构建名前缀并保留旧版。
+本地统一在 `model/Fornax/` 工作。参数与生成工具由 `tools/dSph_workbench/` 管理；
+工作区的 `IniFile/`、`model_tool.py` 是入口链接。构建器自动把粒子 IC、参数快照和初态图
+发布到 `<模型名>/isolation/`。有重名时使用构建名前缀并保留旧版。
 固定文件名的工具链接位于 `workspace/ic-builds/<模型名>/<构建名>/`；详见[本地布局](LOCAL_LAYOUT.md)。
-在分析目录的 `workflow.json` 配置 `ic.root` 和 `ic.repository`，二者均为
-`../IsolationModel/Fornax`；在 IC 工作区配置为 `.`，`github.checkout` 为 `.`。
+在本地 `workflow.json` 中，`ic.root`、`ic.repository` 与 `github.checkout` 均指向
+`tools/dSph_workbench`；迁移机器用 `ic.legacy_root` 保留历史构建及目录访问。
 `ic_python` 指向安装了 AGAMA 的 Python。路径相对于各自工作区，服务器需要单独配置到 data/ 内。
 
 ```text
-IsolationModel/Fornax/
-  IniFile/              # 已确认的参数；原有文件保留
-  drafts/               # new-ini 产生的参数草稿
-  generated/<旧运行名>/ # 兼容旧 IC 运行，新任务写入模型目录
-  Fornax2047+/          # 指向统一模型内历史目录的兼容链接
-  IC_MODELS.csv         # 自动维护并同步 GitHub 的参数总表
-  local_tools/ic_generation/  # 版本化生成程序
+Fornax/
+  IniFile/                          # 指向源码库的参数入口
+  <模型名>/isolation/                # 初态及隔离结果
+  tools/dSph_workbench/drafts/       # new-ini 产生的参数草稿
+  tools/dSph_workbench/IC_MODELS.csv # 自动维护并同步 GitHub 的参数总表
+  workspace/legacy-isolation/       # 历史资料和旧路径兼容，非新构建目的地
 ```
 
 在分析工作区运行：
@@ -308,10 +308,10 @@ IsolationModel/Fornax/
 ```bash
 python3 workflow.py build-ic --model Fornax7003 --name Fornax7003-v1 --threads 2 --seed 42
 python3 workflow.py new-ini 7004 --base 7003 --set Density_stellar.axisRatioZ=0.6
-python3 workflow.py build-ic --ini ../IsolationModel/Fornax/drafts/IC_Fornax7004.ini --name Fornax7004-v1
+python3 workflow.py build-ic --ini tools/dSph_workbench/drafts/IC_Fornax7004.ini --name Fornax7004-v1
 ```
 
-在 IC 工作区也可使用 `python3 workflow.py ...`，或者批量生成：
+批量生成也在同一个工作区运行：
 
 ```bash
 python3 model_tool.py build "7002-7003" --processes 2 --threads 2 --seed 42

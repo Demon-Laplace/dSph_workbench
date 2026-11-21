@@ -15,8 +15,8 @@
     "url": "https://github.com/Demon-Laplace/dSph_workbench.git"
   },
   "ic": {
-    "root": "../IsolationModel/Fornax",
-    "repository": "../IsolationModel/Fornax"
+    "root": "tools/dSph_workbench",
+    "repository": "tools/dSph_workbench"
   },
   "ic_python": "python3",
   "models_root": ".",

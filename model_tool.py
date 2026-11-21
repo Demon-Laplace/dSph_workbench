@@ -43,6 +43,7 @@ New build versions preserve existing figures instead of overwriting them.
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -438,11 +439,25 @@ def command_sync(args):
     return 0
 
 
+def build_workbench():
+    if (PROJECT_ROOT / 'workflow.json').is_file():
+        return PROJECT_ROOT, PROJECT_ROOT / 'workflow/workflow.py'
+    for root in PROJECT_ROOT.parents:
+        config = root / 'workflow.json'
+        entry = root / 'workflow.py'
+        if not config.is_file() or not entry.is_file():
+            continue
+        ic_root = json.loads(config.read_text()).get('ic', {}).get('root')
+        if ic_root and (root / ic_root).resolve() == PROJECT_ROOT:
+            return root, entry
+    raise IniError('No Fornax workflow.json selects this IC checkout; use workflow.py build-ic in the workbench')
+
+
 def build_one(task):
-    model_name, ini_path, threads, seed = task
+    model_name, ini_path, threads, seed, root, workflow = task
     name = model_name + '-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:8]
-    command = [sys.executable, str(PROJECT_ROOT / 'workflow/workflow.py'),
-               '--root', str(PROJECT_ROOT), '--repo', str(PROJECT_ROOT),
+    command = [sys.executable, str(workflow),
+               '--root', str(root), '--repo', str(PROJECT_ROOT),
                'build-ic', '--ini', str(ini_path), '--name', name,
                '--threads', str(threads), '--seed', str(seed)]
     result = subprocess.run(command)
@@ -496,9 +511,10 @@ def command_build(args):
                 processes, threads, available
             )
         )
+    root, workflow = build_workbench()
     # Preserve the established parameter synchronization policy before builds.
     sync_generated_models(paths)
-    tasks = [(name, path, threads, args.seed) for name, path in models]
+    tasks = [(name, path, threads, args.seed, root, workflow) for name, path in models]
     print(
         "building {} model(s) with {} process(es) and {} AGAMA thread(s) per model"
         .format(len(tasks), processes, threads)
