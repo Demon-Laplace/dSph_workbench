@@ -1,0 +1,10 @@
+[F8005-MSTAR5P5E7-LOCAL-T3-20261121] 2026-11-21
+以Fornax8004的解析配方与build e913d247-0679-4446-881b-db6ad2a9ce3d为基准，非演化快照。
+恒星质量4e7→5.5e7 Msun、粒子数400000→550000，保持名义100 Msun/粒子；
+气体1.45e8 Msun、14500粒子，恒星20000轨道，其他配置不变。
+重新计算总势和两分量速度；构建cold-disk-mstar5p5e7-20261121-v1，
+build_id=9919a21b-61ec-4a45-b0e1-3221f20351dc，seed42，564500粒子及5张图完成，
+见本机Fornax8005/isolation/build.json、parameters.ini；总表20fdee0。
+本机原生隔离cold-disk-local-t3以8 MPI进程启动，TimeMax=3.0、反馈16.6、PAF4.0，
+低调度优先级；workspace/local-isolation/Fornax8005/cold-disk-local-t3状态与进度为依据。
+未提交Slurm或上传粒子；本机耗时待实测，未验收科学稳定性。
