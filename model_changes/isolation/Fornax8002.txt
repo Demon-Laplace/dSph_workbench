@@ -71,3 +71,8 @@ CODE_VERSION=ic-figures-v4-munoz-published-profile，63项定向测试与真实�
 其余快照、检查点与IC未在提交前移动或复制。
 续跑Job314033（IC001/P003，astro_thin单节点24 MPI、24小时），已提交；
 依据：原运行目录.resume-001/submission.json与GZWJL.PARAM。未认定到达终点或稳定性通过。
+
+[F8002-REMOVE-PRE-RESUME-SNAPSHOT-20261121] 2026-11-21
+用户明确不需要备份可能被续跑重写的上一段末帧，并要求删除已另存的文件。
+仅删除cold-disk-test-IC001-P002-01/prior-output-job314006/snapshot_306.hdf5，
+即314006原末帧；确认不在314033的OutputDir内，未动output内快照、检查点、参数或作业。
