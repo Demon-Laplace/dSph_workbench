@@ -53,3 +53,10 @@ astro_thin单节点24 MPI，TimeMax=0.5、timescale_fd=16.6、PartAllocFactor=4.
 服务器 314028 与 314029 的运行请求均绑定 build08392e71；没有找到旧构建的演化快照，
 两次运行及其快照未修改。314029 已 COMPLETED/0:0，snapshot_307 代码时间约 3.068136。
 本次未重建初态、未提交演化，也不据此宣称冷盘长期稳定。
+
+[F8003-CLEAN-FAILED-314028-20261121] 2026-11-21
+按用户要求仅清理失败短测 cold-disk-test（Job314028，build08392e71，IC001/P001）。
+Slurm FAILED/1:0、运行 43 秒，求解器日志 EXIT CODE: 11；仅有 t=0 初态快照、无重启文件。
+按一次性失败清理入口删除该运行目录（含初态快照、重复的运行输入和日志，
+清理前占用约 42 MiB），保留小型记录 workspace/receipts/isolation-cleaned/Fornax8003/cold-disk-test.json。
+未改共用初态和成功序列 cold-disk-test-IC001-P002-01（Job314029）；未提交或停止其他作业。
