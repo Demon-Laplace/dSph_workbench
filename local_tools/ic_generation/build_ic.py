@@ -155,7 +155,6 @@ def main():
             publish_flat(output, args.flat_output)
         raise
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
-    print(f'Built {sum(counts)} particles: {destination}')
     if args.no_plots:
         manifest['plots'] = {'state': 'disabled'}
     else:
@@ -167,7 +166,12 @@ def main():
             print(f'IC generation succeeded, but default figures failed: {error}', file=sys.stderr)
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
     if args.flat_output:
-        publish_flat(output, args.flat_output)
+        publication = publish_flat(output, args.flat_output)
+        directory, prefix = Path(publication['directory']), publication['prefix']
+        print(f'Built {sum(counts)} particles: {directory / (prefix + destination.name)}')
+        print(f'IC parameter snapshot: {directory / (prefix + params.name)}')
+    else:
+        print(f'Built {sum(counts)} particles: {destination}')
     try:
         catalog.register(output, args.catalog_repo)
     except Exception as error:

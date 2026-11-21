@@ -286,8 +286,9 @@ python3 workflow.py remote simulate Fornax9001 --name sim9001-run --launcher sub
 
 本机 `simulation` Conda 环境已有 AGAMA，当前默认 Python 未安装该模块。`workflow.json` 的 `ic_python` 指定建模解释器，也可用 `--python` 显式覆盖。统一建模入口会拒绝已有输出目录，冻结输入参数、记录随机种子和求解器 SHA256，生成独立粒子 IC；不会把粒子数据推入 GitHub：
 
-参数与生成工具在 `model/IsolationModel/Fornax/`；粒子 IC 统一生成到
-`model/Fornax/<模型名>/ic/<运行名>/`，与同模型的 isolation 和正式模拟归在一起。
+参数与生成工具在 `model/IsolationModel/Fornax/`；构建器自动把粒子 IC、参数快照和初态图
+发布到 `model/Fornax/<模型名>/isolation/`。有重名时使用构建名前缀并保留旧版。
+固定文件名的工具链接位于 `workspace/ic-builds/<模型名>/<构建名>/`；详见[本地布局](LOCAL_LAYOUT.md)。
 在分析目录的 `workflow.json` 配置 `ic.root` 和 `ic.repository`，二者均为
 `../IsolationModel/Fornax`；在 IC 工作区配置为 `.`，`github.checkout` 为 `.`。
 `ic_python` 指向安装了 AGAMA 的 Python。路径相对于各自工作区，服务器需要单独配置到 data/ 内。
@@ -316,7 +317,7 @@ python3 workflow.py build-ic --ini ../IsolationModel/Fornax/drafts/IC_Fornax7004
 python3 model_tool.py build "7002-7003" --processes 2 --threads 2 --seed 42
 ```
 
-旧 `makeini.py` 兼容入口转交给 `model_tool.py`。批量命令生成带时间和随机标识的独立目录；
+旧 `makeini.py` 兼容入口转交给 `model_tool.py`。批量命令为每次构建生成带时间和随机标识的版本名；
 `--overwrite` 已停用。旧流程的关联扁率修正和 Fornax2047+ 参数同步保留，在批量生成前执行。
 新 `build-ic` 使用指定参数的原样快照，不自动修正科学参数。`--ini` 路径相对于工作区；
 `--model` 从 IC 工作区的 `IniFile/` 读取。草稿没有自动成为正式参数文件。
@@ -446,7 +447,7 @@ Slurm 提交和结束时间检查串起来。服务器首次需要配置 `isolat
 python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --dry-run
 # 一条命令：生成 -> 登记总表 -> 校验上传 -> 提交隔离模拟
 python3 workflow.py isolation Fornax7003 --name Fornax7003-iso-v1 --submit
-# 复用模型 ic/ 中已完成的 IC（兼容旧 generated/），不重复计算
+# 按构建名复用已发布到模型 isolation/ 的 IC（也兼容旧目录），不重复计算
 python3 workflow.py isolation Fornax7003 --ic-run Fornax7003-v1 --name Fornax7003-iso-v2 --submit
 python3 workflow.py isolation-status --name Fornax7003-iso-v1
 ```
@@ -474,6 +475,8 @@ python3 workflow.py isolation-status --name Fornax7003-iso-v1
 - `sbatch`：资源配置，可用 clusters、qos、partition、account、nodes、ntasks、cpus-per-task、time、mem、constraint。
 - `parameter_overrides`：明确指定的参数覆盖；默认保留模板物理参数。输入和输出路径自动重写，
   `ResubmitOn` 置零，由本流程负责记录提交，避免旧脚本自动重提绕开防重复保护。
+  后续常规约 3 Gyr 的 Fornax 隔离测试在所选 profile 中直接设 `TimeMax=3.0`（代码时间）；
+  不改已提交运行，单位与精确终点见[续跑说明](ISOLATION_CONTINUATION.md)。
 
 模板、脚本、配置和输入 SHA256 一同冻结；修改已准备的参数会被拒绝。求解器及转换器可以
 只读调用现有安装，所有新文件限制在指定 data 根目录内。GitHub 仍只同步源码和 IC 总表。

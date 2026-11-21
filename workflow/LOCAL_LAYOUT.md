@@ -23,7 +23,9 @@ Fornax8003/
 
 - 不再创建 `<model>/ic/<build>/`；isolation内不创建构建子目录。
 - 原文件名尽量不变。不同版本重名时使用 `<build>__<原文件名>`，不覆盖旧版本。
-- `workflow.py build-ic`、`model_tool.py build` 的实际输出都采用此布局。
+- `workflow.py build-ic`、`model_tool.py build` 自动创建并发布到对应模型的
+  `isolation/`，不需要另跑同步命令。成功时打印发布后的粒子 INI 和参数快照路径；
+  已有无前缀文件仍属于旧构建，不作为最新版入口。
 - 工具需要固定文件名和独立工作目录，内部链接视图放在
   `workspace/ic-builds/<model>/<build>/`；实际数据只在isolation存一份。
 - `--ic-run BUILD` 仍用原构建名，build_id、随机种子和科学参数不变。

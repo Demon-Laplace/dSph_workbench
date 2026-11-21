@@ -3,10 +3,12 @@
 ## 续跑
 
 ```bash
-python3 workflow.py isolation-resume MODEL --name RUN --time-max 3.0681360790075956 --submit
+python3 workflow.py isolation-resume MODEL --name RUN --time-max 3.0 --submit
 ```
 
-- `--time-max` 是总终点的求解器代码时间；当前非宇宙学单位下，上例对应总物理时间3 Gyr。
+- `--time-max` 是总终点的求解器代码时间。后续常规约 3 Gyr 的 Fornax 隔离测试，
+  不论新跑还是续跑，直接设 `TimeMax=3.0`（约 2.93 Gyr）。只有明确要求精确到 3 Gyr
+  才用 `3.0681360790075956`；既有已提交运行不追改。
 - 不加 `--submit` 只显示计划，不提交、不查询调度器或修改参数。
 - 沿用原 `RUN/output`、原主restart和MPI数，求解器使用二进制restart标志1，
   跳过converter/AGAMA。不再为续跑另建一套数据目录或复制restart。

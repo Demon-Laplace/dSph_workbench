@@ -31,7 +31,8 @@ that has such a constraint is copied from the referenced ``Density_*``
 section. Section and option names are matched case-insensitively. Before builds,
 changed ``Fornax2047+`` parameter files are synchronized to ``origin/main``.
 Successful builds automatically update and push ``IC_MODELS.csv``. Configure
-``ic.root`` and ``ic_python`` in workflow.json; outputs use unique per-model ic/ runs.
+``ic.root``, ``ic_python`` and ``models_root`` in workflow.json. Builds publish
+automatically to ``<model>/isolation/`` and print the final particle INI path.
 The shared builder also generates initial spatial, surface-density, mass-budget
 and kinematic figures by default, directly in the local model's isolation/ folder.
 The profile figure keeps mass density separate from the stellar V-band
@@ -450,7 +451,7 @@ def build_one(task):
 
 def command_build(args):
     if args.overwrite:
-        raise IniError("--overwrite is retired; each build now creates a separate per-model ic/ run")
+        raise IniError("--overwrite is retired; each build preserves existing model files")
     paths = existing_ini_paths(args.models)
     models = []
     for path in paths:

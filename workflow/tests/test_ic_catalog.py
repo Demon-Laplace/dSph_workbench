@@ -1,5 +1,7 @@
+from contextlib import redirect_stdout
 import csv
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -191,6 +193,19 @@ class ICCatalogTests(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec('numpy'), 'numpy required for particle export fixture')
     def test_numbered_particle_export_retains_legacy_name(self):
+        self.check_numbered_export(self.root / 'numbered-export')
+
+    @unittest.skipUnless(importlib.util.find_spec('numpy'), 'numpy required for particle export fixture')
+    def test_build_reports_actual_published_paths_for_first_and_later_versions(self):
+        flat = self.root / 'models/Fornax9001/isolation'
+        self.assertFalse(flat.exists())
+        first = self.check_numbered_export(self.root / 'workspace/v1', flat)
+        self.assertEqual(first, flat / 'Fornax9001.ini')
+        second = self.check_numbered_export(self.root / 'workspace/v2', flat)
+        self.assertEqual(second, flat / 'v2__Fornax9001.ini')
+        self.assertEqual((flat / 'Fornax.ini').resolve(), first)
+
+    def check_numbered_export(self, output, flat=None):
         import numpy as np
         import sys
         builder_spec = importlib.util.spec_from_file_location('ic_builder', SOURCE.with_name('build_ic.py'))
@@ -199,22 +214,31 @@ class ICCatalogTests(unittest.TestCase):
             builder_spec.loader.exec_module(builder)
         source = self.root / 'IC_Fornax9001.ini'
         source.write_text(INI)
-        output = self.root / 'numbered-export'
         def worker(*args, **kwargs):
             for group, count in [('gas', 2), ('stellar', 3)]:
                 data = np.zeros((count, 7))
                 data[:, 6] = 0.01
                 np.savetxt(Path(kwargs['cwd']) / ('model_component_' + group + '.nbody'), data)
         argv = ['build_ic.py', '--ini', str(source), '--output', str(output)]
+        if flat is not None:
+            argv += ['--flat-output', str(flat)]
         original_find = importlib.util.find_spec
+        stdout = io.StringIO()
         with patch.object(sys, 'argv', argv), patch.object(builder.subprocess, 'run', side_effect=worker), \
              patch.object(builder.subprocess, 'check_output', return_value='test-generator-revision\n'), \
              patch.object(builder, 'generate_default_plots', return_value={'state': 'complete', 'directory': str(output)}) as plots, \
              patch.object(builder.catalog, 'register'), \
-             patch.object(builder.importlib.util, 'find_spec', side_effect=lambda name: True if name == 'agama' else original_find(name)):
-            self.assertEqual(builder.main(), 0)
+             patch.object(builder.importlib.util, 'find_spec', side_effect=lambda name: True if name == 'agama' else original_find(name)), \
+             redirect_stdout(stdout):
+             self.assertEqual(builder.main(), 0)
         self.assertTrue((output / 'Fornax.ini').is_symlink())
-        self.assertEqual((output / 'Fornax.ini').resolve(), output / 'Fornax9001.ini')
+        particle = (output / 'Fornax9001.ini').resolve(strict=True)
+        self.assertEqual((output / 'Fornax.ini').resolve(), particle)
+        self.assertIn(f'Built 5 particles: {particle}', stdout.getvalue().splitlines())
+        if flat is not None:
+            params = (output / 'parameters.ini').resolve(strict=True)
+            self.assertEqual(params.parent, flat)
+            self.assertIn(f'IC parameter snapshot: {params}', stdout.getvalue().splitlines())
         manifest = json.loads((output / 'build.json').read_text())
         self.assertEqual(manifest['particle_ic'], 'Fornax9001.ini')
         self.assertIsNone(manifest['particle_sha256'])
@@ -224,6 +248,7 @@ class ICCatalogTests(unittest.TestCase):
         plots.assert_called_once()
         self.assertEqual(manifest['plots']['state'], 'complete')
         self.assertEqual(np.loadtxt(output / 'Fornax9001.ini', skiprows=1).shape, (5, 10))
+        return particle
 
 
 if __name__ == '__main__':
