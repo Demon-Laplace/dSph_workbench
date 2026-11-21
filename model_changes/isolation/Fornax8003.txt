@@ -60,3 +60,10 @@ Slurm FAILED/1:0、运行 43 秒，求解器日志 EXIT CODE: 11；仅有 t=0 �
 按一次性失败清理入口删除该运行目录（含初态快照、重复的运行输入和日志，
 清理前占用约 42 MiB），保留小型记录 workspace/receipts/isolation-cleaned/Fornax8003/cold-disk-test.json。
 未改共用初态和成功序列 cold-disk-test-IC001-P002-01（Job314029）；未提交或停止其他作业。
+
+[F8003-DENSITY-VIDEO-20261121] 2026-11-21
+使用成功的 cold-disk-test-IC001-P002-01（314029，build08392e71）已有快照000–307，
+与8004共用mesopsl1单节点16核、顺序处理，分析Job236892已COMPLETED/0:0。
+工作流回传视频与密度表至本机Fornax8003/isolation；视频另存X10 Pro的
+Fornax/SimulationData/Fornax8003/Fornax8003_cold-disk-test-IC001-P002-01_s000-307_IC_density.mp4。
+未下载快照、重新演化或据此验收长期稳定性。

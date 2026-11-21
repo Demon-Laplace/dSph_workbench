@@ -15,3 +15,10 @@ astro_thin单节点24 MPI、24小时；PartAllocFactor=6.5按初始内存布局�
 未改求解器或其它物理参数。
 Job314032（cold-disk-test，IC001/P001）已提交并进入RUNNING；
 依据：服务器isoFornax/Fornax8004/runs/cold-disk-test/与本地server.json回执，演化终点及稳定性待验收。
+
+[F8004-DENSITY-VIDEO-20261121] 2026-11-21
+使用 cold-disk-test（314032，build e913d247）已有快照000–601，与8003共用
+mesopsl1单节点16核、顺序处理，分析Job236892已COMPLETED/0:0。
+工作流回传视频与密度表至本机Fornax8004/isolation；视频另存X10 Pro的
+Fornax/SimulationData/Fornax8004/Fornax8004_cold-disk-test_s000-601_IC_density.mp4。
+未下载快照、重新演化或据此验收长期稳定性。
