@@ -87,3 +87,11 @@ Yang现有绝对标定已使用Muñoz，二者不当作独立光度约束；M/L�
 校验迁移元数据及319个链接；真实新旧入口参数检查、历史构建定位与隔离dry-run通过，
 32项定向测试通过。没有复制/重建粒子，没有动服务器、科学参数或作业。
 本地清单：workspace/catalog/legacy-isolation-merge-20261121/migration.json。
+
+[LOCAL-FORNAX-VIEWER-20261121] 2026-11-21
+把旧3D notebooks的查看用途改成独立Python桌面选择器与离线网页；支持本地IC/HDF5、
+快照切换、分量和速度着色、质量及动力学统计、相机联动的恒星面亮度图和径向轮廓。
+固定M/L和独立光度抽样仅用于预览，不改观测合同、模型、求解器或历史输入。
+17份非空notebook归到workspace/notebooks，3个空占位进回收站，旧实验.py归档保留入口。
+23项定向测试通过；实际8004初态、Fornax81 HDF5导出、Tk窗口与Firefox相机事件通过。
+不作正式观测拟合、不部署服务器或提交作业；使用说明LOCAL_VIEWER.md。
