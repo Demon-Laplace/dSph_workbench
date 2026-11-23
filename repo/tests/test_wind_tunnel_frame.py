@@ -3,9 +3,11 @@
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
+import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -69,3 +71,31 @@ def test_wind_snapshot_keeps_stellar_drift_and_native_age(tmp_path):
         require_summary_frame([], simulation.wind_tunnel)
     with pytest.raises(ValueError, match='outside'):
         simulation.wind_tunnel.at_time(time - 60 / simulation.wind_tunnel.time_to_myr)
+
+
+def test_wind_sfh_uses_member_birth_times_and_partial_final_bin():
+    from PlotFig import _wind_sfr_series, SFH_SFR_UNIT_MSUN_PER_YEAR
+
+    frame = SimpleNamespace(time_to_myr=1000., time_begin_code=.5)
+    snapshot = dict(
+        simulation=SimpleNamespace(wind_tunnel=frame), tsnap=.623,
+        total_dw_star_mask=np.array([True, True, True, True, True, False, True]),
+        df=pd.DataFrame(dict(
+            tp=[2, 4, 4, 4, 4, 4, 4],
+            birth=[.42, .475, .515, .615, np.nan, .60, .64],
+            stellar_age_gyr=[.203, .148, .108, .008, .063, .023, -1.],
+            m=[900., 50., 75., 23., 10., 130., 300.],
+        )),
+    )
+    edges, sfr = _wind_sfr_series(snapshot, .123)
+    np.testing.assert_allclose(edges, [-.05, 0., .05, .10, .123])
+    recovered_mass = sfr * np.diff(edges) * 1.e9 * SFH_SFR_UNIT_MSUN_PER_YEAR
+    np.testing.assert_allclose(recovered_mass, [50., 75., 10., 23.])
+
+
+def test_wind_sfh_observations_use_the_explicit_lookback_reference():
+    from PlotFig import _observed_sfh_on_wind_clock
+
+    edges, sfr = _observed_sfh_on_wind_clock(pd.DataFrame(dict(age=[.25, 1.25], sfr=[1., 3.])), .6)
+    np.testing.assert_allclose(edges, [-.9, -.4, .1, .6])
+    np.testing.assert_allclose(sfr, [3., np.nan, 1.])

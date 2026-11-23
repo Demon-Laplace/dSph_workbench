@@ -58,6 +58,11 @@ class WindTunnelFrame:
             self.host_mass = _table(self.host_mass_path, 2)
         self.gas_origin = config.get('gas_origin')
         self.free_flow_half_width_fraction = config.get('free_flow_half_width_fraction')
+        self.sfh_reference_elapsed_gyr = config.get('sfh_reference_elapsed_gyr')
+        if self.sfh_reference_elapsed_gyr is not None:
+            self.sfh_reference_elapsed_gyr = float(self.sfh_reference_elapsed_gyr)
+            if not np.isfinite(self.sfh_reference_elapsed_gyr):
+                raise ValueError(f'Expected a finite SFH reference epoch in {path}')
 
     def at_time(self, time_code):
         elapsed = (float(time_code) - self.time_begin_code) * self.time_to_myr

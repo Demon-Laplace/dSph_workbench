@@ -618,14 +618,18 @@ def build_plot_context():
         dw_elinfo['rhalf_circularized'].to_numpy(dtype=float),
     )
     history_context = {}
+    sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
     if wind_tunnel:
         history_limit = max(.01, float(dw_elinfo['age'].max()))
+        reference_epoch = wind_tunnel.sfh_reference_elapsed_gyr
+        if reference_epoch is not None:
+            observed_sfh = pd.read_csv(sfh_path)
+            history_context['wind_observed_sfh'] = _observed_sfh_on_wind_clock(observed_sfh, reference_epoch)
     else:
         index_peri = distance_series.idxmin()
         t_peri = dw_elinfo.loc[index_peri, 'age']
         history_limit = t_peri
         Tage = dw_elinfo.loc[distance_series.loc[:index_peri].sub(d_today).abs().idxmin(), 'age']
-        sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
         sfh_dw = pd.read_csv(sfh_path)
         dw_sfrmass = Analysis.GetSFH_sim(folder_path=folder_path, Tage=Tage, snapshot_num=elinfo_snapshots[-1])
         sfr_t_peri_gyr = t_peri * dw_sfrmass.attrs.get('time_code_to_gyr', 1.)
@@ -1457,6 +1461,11 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     }
 
 
+def _binned_simulated_sfr(formation_gyr, mass_msun, edges_gyr):
+    mass_by_bin, _ = np.histogram(formation_gyr, bins=edges_gyr, weights=mass_msun)
+    return mass_by_bin / (np.diff(edges_gyr) * 1.e9) / SFH_SFR_UNIT_MSUN_PER_YEAR
+
+
 def _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri, bin_width=0.5):
     if dw_sfrmass is None or len(dw_sfrmass) == 0:
         bins = np.arange(0 - bin_width, t_peri * 1.2, bin_width)
@@ -1473,13 +1482,66 @@ def _compute_sfr_series(sfh_dw, dw_sfrmass, t_peri, bin_width=0.5):
     sfh_mass = filtered_sfrmass['m'].to_numpy()
     bins = np.arange(0 - bin_width, t_peri * 1.2, bin_width)
 
-    mass_sim, edges_sim = np.histogram(lookback, bins=bins, weights=sfh_mass)
-    dt = np.diff(edges_sim)
-    sfr_sim = mass_sim / (dt * 1.0e9) / SFH_SFR_UNIT_MSUN_PER_YEAR
-    lookback_sim = edges_sim[:-1]
+    sfr_sim = _binned_simulated_sfr(lookback, sfh_mass, bins)
+    lookback_sim = bins[:-1]
     lookback_obs, sfr_obs = DataProcessor.GetSFR(sfh_dw, bins=bins)
 
     return lookback_sim, sfr_sim, lookback_obs, sfr_obs
+
+
+def _wind_sfr_series(snapshot, elapsed_gyr, bin_width_gyr=.05):
+    """Bin the current member stars formed in the simulation by formation time."""
+    df = snapshot['df']
+    stars = df.loc[snapshot['total_dw_star_mask'] & (df['tp'] == 4), ['birth', 'stellar_age_gyr', 'm']]
+    frame = snapshot['simulation'].wind_tunnel
+    time_to_gyr = frame.time_to_myr / 1000.
+    birth = (stars['birth'].to_numpy(dtype=float) - frame.time_begin_code) * time_to_gyr
+    age = stars['stellar_age_gyr'].to_numpy(dtype=float)
+    birth = np.where(np.isfinite(birth), birth, elapsed_gyr - age)
+    mass = stars['m'].to_numpy(dtype=float)
+    # The stored stellar times can be rounded to float32 at the snapshot boundary.
+    time_slop = abs(np.spacing(np.float32(snapshot['tsnap']))) * time_to_gyr
+    valid = np.isfinite(birth) & (birth <= elapsed_gyr + time_slop) & np.isfinite(mass) & (mass > 0.)
+    if not valid.any():
+        return np.array([]), np.array([])
+    birth = np.minimum(birth[valid], elapsed_gyr)
+    first_bin = int(np.floor(min(0., birth.min()) / bin_width_gyr))
+    last_bin = int(np.ceil(elapsed_gyr / bin_width_gyr))
+    edges = np.arange(first_bin, last_bin) * bin_width_gyr
+    edges = np.append(edges[edges < elapsed_gyr - time_slop], elapsed_gyr)
+    return edges, _binned_simulated_sfr(birth, mass[valid], edges)
+
+
+def _observed_sfh_on_wind_clock(sfh, reference_elapsed_gyr):
+    """Transform observed lookback bins to the wind tunnel elapsed-time axis."""
+    observed = sfh.loc[np.isfinite(sfh['age']) & np.isfinite(sfh['sfr']) & (sfh['age'] >= 0.)]
+    if len(observed) < 2:
+        raise ValueError('The observed SFH needs at least two finite lookback and SFR measurements')
+    n_bins = max(1, int(np.ceil(observed['age'].max() / .5)))
+    lookback_edges = .5 * np.arange(n_bins + 1)
+    _, sfr = DataProcessor.GetSFR(observed, bins=lookback_edges)
+    counts, _ = np.histogram(observed['age'], bins=lookback_edges)
+    sfr[counts == 0] = np.nan
+    return reference_elapsed_gyr - lookback_edges[::-1], sfr[::-1]
+
+
+def _plot_wind_sfh_panel(ax, snapshot, elapsed_gyr, observed=None):
+    edges, sfr = _wind_sfr_series(snapshot, elapsed_gyr)
+    if len(sfr) == 0:
+        ax.set_axis_off()
+        return
+    ax.stairs(sfr, edges, baseline=None, color='black', lw=2, label='Simulated')
+    if observed is not None:
+        obs_edges, obs_sfr = observed
+        overlaps = (obs_edges[:-1] < edges[-1]) & (obs_edges[1:] > edges[0])
+        if np.any(overlaps & np.isfinite(obs_sfr)):
+            ax.stairs(np.where(overlaps, obs_sfr, np.nan), obs_edges,
+                      baseline=None, color='darkorange', lw=2, label='Observed')
+    ax.axvline(0, color='gray', lw=1.5, ls='--', label='Wind tunnel insertion')
+    _style_axis(ax, 'Time since insertion (Gyr)', r'SFR ($10^{-4}\,M_\odot\,\mathrm{yr}^{-1}$)',
+                xlim=(edges[0], edges[-1]))
+    ax.set_ylim(bottom=0)
+    ax.legend(loc='best', fontsize=12)
 
 
 def _plot_gas_loss_panel(ax, dw_elinfo, gas_loss_rate, tsnap, t_peri):
@@ -1623,11 +1685,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     fig = plt.figure(figsize=(21, 15), dpi=150)
     gs = gridspec.GridSpec(3, 4)
 
-    # Create axes excluding (2,3) position
+    # The formal-orbit frame uses its final cell for figure annotations.
     axes = [[None]*4 for _ in range(3)]
     for i in range(3):
         for j in range(4):
-            if not (i == 2 and j == 3):  # Skip the (2,3) position
+            if wind_tunnel or (i, j) != (2, 3):
                 axes[i][j] = fig.add_subplot(gs[i, j])
 
     axes = np.array(axes) 
@@ -1814,7 +1876,8 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # axes[2, 2].hlines(dw_cold_gas_lower_limit, -0.1, T_peri*2, lw=2, ls='--', color='paleturquoise', label='lower limit of HI mass')
 
     if wind_tunnel:
-        _plot_wind_history(axes[2, 1], dw_elinfo, tsnap, history_limit, (
+        _plot_wind_sfh_panel(axes[2, 1], snapshot, tsnap, context.get('wind_observed_sfh'))
+        _plot_wind_history(axes[2, 3], dw_elinfo, tsnap, history_limit, (
             ('wind_prescribed_Pram_dyn_cm2', 'Input at the box centre'),
             ('wind_upstream12_20_Pram_dyn_cm2', 'Upstream, 12–20 kpc'),
             ('wind_upstream20_40_Pram_dyn_cm2', 'Upstream, 20–40 kpc'),
@@ -1865,18 +1928,14 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     if wind_tunnel:
         stellar_offset = np.linalg.norm(snapshot['wind_tunnel']['stellar_center_box_kpc'])
         stellar_drift = np.linalg.norm(snapshot['wind_tunnel']['stellar_bulk_r5_box_kms'])
-        info = fig.add_subplot(gs[2, 3])
-        info.set_axis_off()
-        info.text(
-            0, .97,
-            'Stellar centre relative to the box\n'
-            f'Offset  {stellar_offset:.3f} kpc\n'
-            f'Drift speed  {stellar_drift:.2f} km/s\n\n'
-            f'$R_{{\\mathrm{{half}}}}$  {metrics["r_half"]:.2f} kpc\n'
-            f'$M_\\star(<{stellar_region_tex_label})$  {sm_str} $M_\\odot$\n'
-            f'$M_{{\\mathrm{{HI}}}}(<{stellar_region_tex_label})$  {cg_str} $M_\\odot$\n'
+        fig.text(
+            .05, .023,
+            f'Stellar offset from box centre  {stellar_offset:.3f} kpc    Drift speed  {stellar_drift:.2f} km/s    '
+            f'$R_{{\\mathrm{{half}}}}$  {metrics["r_half"]:.2f} kpc    '
+            f'$M_\\star(<{stellar_region_tex_label})$  {sm_str} $M_\\odot$    '
+            f'$M_{{\\mathrm{{HI}}}}(<{stellar_region_tex_label})$  {cg_str} $M_\\odot$    '
             f'Feedback decay time  {context["fd_value"]:g} Myr',
-            transform=info.transAxes, fontsize=15, va='top', linespacing=1.6,
+            fontsize=12, va='bottom',
         )
     else:
         d_peri = context["d_peri"]

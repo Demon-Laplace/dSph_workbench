@@ -51,6 +51,15 @@ centre. The measured pressures use CGM in the specified cone.
 The wind plot compares the prescribed box track with the measured stellar
 track. Wind pressure and gas origin are shown at saved epochs on the
 time-since-insertion axis.
+PlotFig also bins the recorded formation times of current type-4 member
+stars in 50 Myr intervals on that axis. The curve includes stars formed
+during the inherited isolation evolution and stars formed in the wind
+tunnel. It uses current particle masses and the elapsed width of the final
+partial interval. For the observed SFH comparison, set the optional
+`sfh_reference_elapsed_gyr` to the elapsed epoch corresponding to zero
+observational lookback time. PlotFig reads the usual observation CSV
+(`DSPH_SFH_OBSERVATION` or `../SFH_<dwarf>.csv`) and applies its standard
+0.5 Gyr lookback binning on the configured time axis.
 CSV and display identities carry the run ID for safe resume.
 
 ## H I statistics correction (2026-10-16; fraction updated 2026-10-21)
