@@ -6,6 +6,7 @@ from data_processing import DataProcessor
 from particle_selection import ParticleSelectionMixin
 from snapshot_io import SnapshotLoaderMixin
 from variable import fornax_core_radius, folder_path
+from wind_tunnel_frame import wind_tunnel_frame
 
 core_radius = fornax_core_radius
 
@@ -51,6 +52,7 @@ class GalaxySimulation(SnapshotLoaderMixin, ParticleSelectionMixin):
         self.folder_path = folder_path
         self.snapshot_num = snapshot_num
         self.boxsize = boxsize
+        self.wind_tunnel = wind_tunnel_frame(folder_path)
         self.df = None
         self.time = None    
 

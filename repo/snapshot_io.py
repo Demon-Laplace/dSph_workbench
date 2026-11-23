@@ -58,7 +58,11 @@ class SnapshotLoaderMixin:
         """Resolve physical time units from explicit input or the actual run parameters."""
         from pathlib import Path
         seconds_per_gyr = 365.25 * 86400 * 1.e9
-        if 'DSPH_STELLAR_TIME_CODE_TO_GYR' in os.environ:
+        wind_tunnel = getattr(self, 'wind_tunnel', None)
+        if wind_tunnel is not None:
+            self.stellar_time_code_to_gyr = wind_tunnel.time_to_myr / 1000.
+            self.stellar_time_unit_source = str(wind_tunnel.path)
+        elif 'DSPH_STELLAR_TIME_CODE_TO_GYR' in os.environ:
             self.stellar_time_code_to_gyr = float(os.environ['DSPH_STELLAR_TIME_CODE_TO_GYR'])
             self.stellar_time_unit_source = 'explicit DSPH_STELLAR_TIME_CODE_TO_GYR'
         elif 'stellar_time_code_to_gyr' in self.__dict__:
@@ -226,6 +230,7 @@ class SnapshotLoaderMixin:
         if resolved is None:
             return None
         selected_types = self._resolve_particle_types(particle_types)
+        wind_tunnel = getattr(self, 'wind_tunnel', None)
 
         fname, fname_base, fname_ext = resolved
         with h5py.File(fname, 'r') as first_file:
@@ -236,6 +241,16 @@ class SnapshotLoaderMixin:
             mass_table = np.asarray(header['MassTable'], dtype=np.float64)
             numfiles = int(header['NumFilesPerSnapshot'])
             flag_cooling = int(header['Flag_Cooling'])
+            if wind_tunnel is not None:
+                self.boxsize = float(header['BoxSize'])
+                if not np.isfinite(self.boxsize) or self.boxsize <= 0:
+                    raise ValueError('A wind tunnel snapshot needs a positive Header/BoxSize')
+
+        mass_to_msun = wind_tunnel.mass_to_msun if wind_tunnel else 1e10
+        energy_scale = wind_tunnel.velocity_to_kms ** 2 if wind_tunnel else 1.
+        density_scale = 404.7
+        if wind_tunnel:
+            density_scale *= (mass_to_msun / 1e10) * (LENGTH_CODE_TO_KPC / wind_tunnel.length_to_kpc) ** 3
 
         total_particles = int(sum(int(npart_total[tp]) for tp in selected_types))
         gas_columns, star_columns = self._resolve_requested_fields(
@@ -306,9 +321,9 @@ class SnapshotLoaderMixin:
                     df_data['tp'][slice_idx] = tp
 
                     if mass_table[tp] > 0.0:
-                        self._fill_constant(df_data['m'], slice_idx, mass_table[tp] * 1e10)
+                        self._fill_constant(df_data['m'], slice_idx, mass_table[tp] * mass_to_msun)
                     else:
-                        df_data['m'][slice_idx] = np.asarray(group['Masses'][:],dtype=np.float64) * 1e10
+                        df_data['m'][slice_idx] = np.asarray(group['Masses'][:],dtype=np.float64) * mass_to_msun
 
                     if tp == 0 and dftype >= 2:
                         need_ugas = ('ugas' in gas_columns) or ('temp' in gas_columns)
@@ -329,9 +344,10 @@ class SnapshotLoaderMixin:
                         if 'ugas' in gas_columns:
                             df_data['ugas'][slice_idx] = ugas
                         if 'temp' in gas_columns:
-                            df_data['temp'][slice_idx] = zim.unitconversion(ugas, ne)
+                            df_data['temp'][slice_idx] = zim.unitconversion(
+                                ugas if energy_scale == 1. else ugas * energy_scale, ne)
                         if 'rho' in gas_columns:
-                            df_data['rho'][slice_idx] = group['Density'][:] * 404.7
+                            df_data['rho'][slice_idx] = group['Density'][:] * density_scale
                         if 'nh' in gas_columns:
                             df_data['nh'][slice_idx] = nh
                         if 'sfr' in gas_columns and 'StarFormationRate' in group:
@@ -351,7 +367,10 @@ class SnapshotLoaderMixin:
             self.boxsize = round(np.ptp(df_data['x']), -1)
             self._announce_auto_boxsize_once(self.boxsize)
 
-        if box:
+        if wind_tunnel:
+            # Keep raw periodic coordinates for the moving-frame transform.
+            pass
+        elif box:
             box_center = self.boxsize / 2
             df_data['x'] -= box_center
             df_data['y'] -= box_center
@@ -377,6 +396,8 @@ class SnapshotLoaderMixin:
             )
             if direct_result is not None:
                 return direct_result
+            if getattr(self, 'wind_tunnel', None) is not None:
+                raise FileNotFoundError(f'No wind tunnel HDF5 snapshot {self.snapshot_num} under {self.folder_path}')
 
             header_ptype = selected_types[0]
             hdr = self._readsnap_quiet(self.folder_path, self.snapshot_num, header_ptype, header_only=1)

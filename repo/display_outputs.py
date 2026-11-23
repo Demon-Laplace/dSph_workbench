@@ -11,7 +11,7 @@ from canonical_display import TAN_DISPLAY_CONTRACT_ID, DISPLAY_RELATIVE_DIR
 RENDER_REVISION = 5
 DISPLAY_IDENTITY_FIELDS = (
     'canonical_observer_id', 'member_selection_id', 'display_contract_id',
-    'relative_directory', 'render_revision',
+    'relative_directory', 'render_revision', 'wind_tunnel_run_id',
 )
 _ordinary_display_identities = {}
 
@@ -45,15 +45,20 @@ def write_json_atomic(path, value):
 
 def display_identity(summary):
     identities = []
+    wind_tunnel_run_id = None
     with Path(summary).open(encoding='utf-8') as stream:
         for line in stream:
             if line.startswith('# canonical_observer_id='):
                 identities.append(dict(item.split('=', 1) for item in line[2:].split() if '=' in item))
+            elif line.startswith('# wind_tunnel_run_id='):
+                wind_tunnel_run_id = line.partition('=')[2].strip()
             elif line.strip() and not line.startswith('#'):
                 break
     if len(identities) != 1:
         raise ValueError('Display requires one canonical summary identity')
     identity = identities[0]
+    if wind_tunnel_run_id is not None:
+        identity['wind_tunnel_run_id'] = wind_tunnel_run_id
     required = ('canonical_observer_id', 'member_selection_id')
     if any(not identity.get(key) for key in required):
         raise ValueError('Incomplete canonical summary identity')
@@ -63,7 +68,7 @@ def display_identity(summary):
         identity.update(display_contract_id=TAN_DISPLAY_CONTRACT_ID,
                         relative_directory=DISPLAY_RELATIVE_DIR,
                         render_revision=RENDER_REVISION)
-        return {key: identity[key] for key in DISPLAY_IDENTITY_FIELDS}
+        return {key: identity[key] for key in DISPLAY_IDENTITY_FIELDS if key in identity}
     source = Path(__file__).resolve().parent
     identity.update(display_contract_id=TAN_DISPLAY_CONTRACT_ID,
                     display_module_sha256=file_sha256(source / 'canonical_display.py'),

@@ -2,7 +2,6 @@ from multiprocessing import get_context
 import argparse
 import ctypes
 import os
-import resource
 import time
 from basefunc import DataProcessor, GalaxySimulation
 from snapshot_context import prepare_snapshot_context
@@ -10,6 +9,7 @@ from snapshot_metrics import compute_snapshot_summary, require_hi_fraction_csv
 from canonical_observer import require_canonical_csv, canonical_csv_comment, production_output_root
 from display_outputs import ordinary_media_reuse
 from variable import core_radius_dict, folder_path, gizmo_config, orbit_file
+from wind_tunnel_frame import WIND_CSV_COLUMNS, require_summary_frame, wind_tunnel_frame
 from pathlib import Path
 import sys
 import csv
@@ -21,6 +21,12 @@ try:
     import fcntl
 except ImportError:
     fcntl = None
+    import msvcrt
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 try:
     from tqdm.auto import tqdm
@@ -85,17 +91,22 @@ def format_limited_ints(values, limit=20):
 
 @contextmanager
 def exclusive_file_lock(lock_path):
-    if fcntl is None:
-        yield
-        return
-
     lock_path = Path(lock_path)
-    with lock_path.open('w') as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    with lock_path.open('a+b') as lock_file:
+        fd = lock_file.fileno()
+        if fcntl is None:
+            lock_file.seek(0)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            if fcntl is None:
+                lock_file.seek(0)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def read_elinfo_csv(path, expected_columns=ELINFO_COLUMNS):
@@ -245,7 +256,9 @@ def get_rss_mb():
         page_size = os.sysconf("SC_PAGE_SIZE")
         return rss_pages * page_size / (1024.0 * 1024.0)
     except Exception:
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        if resource is not None:
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+        return float('nan')
 
 
 def init_worker(worker_threads):
@@ -257,7 +270,10 @@ def init_worker(worker_threads):
 class GetInfo:
 
     def __init__(self):
-        model_info = DataProcessor.parse_model_name_details()
+        self.wind_tunnel = wind_tunnel_frame(folder_path)
+        model_info = DataProcessor.parse_model_name_details(
+            self.wind_tunnel.model_name if self.wind_tunnel else None)
+        self.columns = ELINFO_COLUMNS + list(WIND_CSV_COLUMNS) if self.wind_tunnel else ELINFO_COLUMNS
         self.modelname = model_info['modelname']
         self.base_modelname = model_info['base_modelname']
         self.dwarf_name = model_info['dwarf_name']
@@ -330,7 +346,7 @@ class GetInfo:
                 ])
             print("[GetInfoProfile] " + " ".join(parts), flush=True)
         
-        return [summary[column] for column in ELINFO_COLUMNS]
+        return [summary[column] for column in self.columns]
 
     def get_info_block(self, numsp_block):
         return [self.get_info(numsp) for numsp in numsp_block]
@@ -346,12 +362,18 @@ class GetInfo:
 
         lock_path = self.output_csv_file.with_name(f".{self.output_csv_file.name}.lock")
         with exclusive_file_lock(lock_path):
-            report = read_elinfo_csv(self.output_csv_file)
+            report = self.read_summary()
             output_comments = report['comments'] or comments
             rows_by_numsp = report['rows_by_numsp']
             for numsp, formatted_row in formatted_rows:
                 rows_by_numsp[numsp] = formatted_row
-            write_elinfo_csv_atomic(self.output_csv_file, output_comments, rows_by_numsp)
+            write_elinfo_csv_atomic(self.output_csv_file, output_comments, rows_by_numsp, columns=self.columns)
+        return report
+
+    def read_summary(self):
+        report = read_elinfo_csv(self.output_csv_file, self.columns)
+        if report['comments']:
+            require_summary_frame(report['comments'], self.wind_tunnel)
         return report
 
     def warn_about_csv_report(self, report):
@@ -397,12 +419,14 @@ class GetInfo:
 
     def main(self):
         os.environ.setdefault("DSPH_RUN_ID", str(os.getpid()))
-        orbit_data = DataProcessor.read_orbit_parameters(orbit_file)
+        orbit_data = (self.wind_tunnel.orbit[0, 1:7] if self.wind_tunnel
+                      else DataProcessor.read_orbit_parameters(orbit_file))
         if orbit_data is None:
             print("Failed to read orbit data.")
             sys.exit(1)
 
-        fd_value = DataProcessor.read_feedback_value(gizmo_config)
+        fd_value = (self.wind_tunnel.feedback_timescale_myr if self.wind_tunnel
+                    else DataProcessor.read_feedback_value(gizmo_config))
         if fd_value is None:
             print("Failed to extract timescale value.")
             sys.exit(1)
@@ -455,8 +479,11 @@ class GetInfo:
         self.show_progress = not args.no_progress
         self.output_csv_file = args.output_csv.resolve()
         if args.rebuild and self.output_csv_file.exists():
-            require_canonical_csv(self.output_csv_file)
-            self.output_csv_file.unlink()
+            lock_path = self.output_csv_file.with_name(f".{self.output_csv_file.name}.lock")
+            with exclusive_file_lock(lock_path):
+                if self.output_csv_file.exists():
+                    require_summary_frame(require_canonical_csv(self.output_csv_file), self.wind_tunnel)
+                    self.output_csv_file.unlink()
 
         start, end = map(int, args.range.split(','))
         requested_numsp = filter_available_snapshots(start, end, available_snapshots)
@@ -473,7 +500,7 @@ class GetInfo:
             )
 
         output_comments = [
-            f"# Orbit Data: {','.join(map(str, orbit_data))}\n",
+            f"# Orbit Data: {','.join(str(float(value)) for value in orbit_data)}\n",
             f"# Timescale_fd: {fd_value}\n",
             canonical_csv_comment(),
             "# HI: M_HI=0.76*sum(M_gas*NeutralHydrogenAbundance), both temperature phases; coldgas_* are legacy HI aliases\n",
@@ -491,6 +518,15 @@ class GetInfo:
             "# Walker R5, velocity maps/profiles, and sigma_x/y/z include old+new member stars; light/size retain the old-star reference cohort\n",
             "# sigma_gradient_kms_per_kpc: fitted planar LOS velocity-gradient amplitude in that aperture\n",
         ]
+        if self.wind_tunnel:
+            output_comments.extend((
+                self.wind_tunnel.csv_comment(),
+                "# age: native GIZMO code time; wind_elapsed_Gyr: physical time since wind tunnel insertion\n",
+                "# mw_mass_r: enclosed mass from the imposed host profile at distance_gal\n",
+                "# distance_gal and vr/vtheta/vphi follow the measured stellar density centre and its r<5 kpc mass-weighted stellar bulk\n",
+                "# wind_prescribed_Pram: input at the box centre; wind_upstream*: measured CGM ram pressure relative to the stellar bulk inside r<5 kpc\n",
+                "# wind_dwarf_gas* and wind_ambient_gas*: configured gas-parent labels within strict spherical apertures centred on the measured stellar density centre\n",
+            ))
 
         # 断点续写：读取已完成的numsp。读取时会清理历史中断留下的乱序、重复或坏行。
         finished_numsp = set()
@@ -498,12 +534,12 @@ class GetInfo:
             if ordinary_media_reuse():
                 # Normal resume parsing supplies the work list; do not reread
                 # or rewrite an otherwise reusable CSV as an acceptance step.
-                existing_report = read_elinfo_csv(self.output_csv_file)
+                existing_report = self.read_summary()
                 self.warn_about_csv_report(existing_report)
             else:
                 cleanup_report = self.merge_rows_sorted([], comments=output_comments)
                 self.warn_about_csv_report(cleanup_report)
-                existing_report = read_elinfo_csv(self.output_csv_file)
+                existing_report = self.read_summary()
             finished_numsp = set(existing_report['rows_by_numsp'])
         except ValueError as e:
             print(str(e))
@@ -523,7 +559,7 @@ class GetInfo:
         )
 
         if numsp_list:
-            with get_context("fork").Pool(
+            with get_context("spawn" if os.name == "nt" else "fork").Pool(
                 processes=args.processes,
                 maxtasksperchild=args.maxtasksperchild,
                 initializer=init_worker,
@@ -551,7 +587,7 @@ class GetInfo:
         self.warn_about_csv_report(report)
 
     def validate_output(self, requested_numsp):
-        report = read_elinfo_csv(self.output_csv_file)
+        report = self.read_summary()
         expected_numsp = set(requested_numsp)
         found_numsp = set(report['rows_by_numsp'])
         missing_numsp = sorted(expected_numsp - found_numsp)

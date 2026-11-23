@@ -12,6 +12,7 @@ from analysis_core import Analysis as AnalysisCore
 from coordinate_transform import CoordinateTransform
 from canonical_observer import LENGTH_CODE_TO_KPC, VELOCITY_CODE_TO_KMS, CANONICAL_OBSERVER_ID, MEMBER_SELECTION_ID, observer_contract_sha256
 from variable import fornax_core_radius
+from wind_tunnel_frame import box_displacement
 
 
 core_radius = fornax_core_radius
@@ -119,7 +120,8 @@ class ParticleSelectionMixin:
         if not getattr(self, '_canonical_MW_centered', False):
             raise ValueError('Locate the physical host before selecting dwarf members')
         spatial, _ = _shared_spatial_helpers()
-        context = self._spatial_seed_context()
+        wind_tunnel = getattr(self, 'wind_tunnel', None)
+        context = {} if wind_tunnel else self._spatial_seed_context()
         tp = df['tp'].to_numpy()
         rows = np.flatnonzero(np.isin(tp, [2, 3, 4]))
         position = df.iloc[rows][['x', 'y', 'z']].to_numpy()
@@ -131,7 +133,7 @@ class ParticleSelectionMixin:
         if len(p) < 2:
             raise ValueError('Fewer than two finite physical stellar rows')
         raw_seed, method = _snapshot_seed(context.get('center_seeds', {}), self.snapshot_num)
-        if raw_seed is None and int(self.snapshot_num) == 0:
+        if not wind_tunnel and raw_seed is None and int(self.snapshot_num) == 0:
             raw_seed = _vector(context.get('initial_seed_raw', context.get('initial_center_raw')))
             if raw_seed is None:
                 raw_seed, _ = spatial.initial_seed_from_mergers(context['run_dir'])
@@ -144,14 +146,15 @@ class ParticleSelectionMixin:
             # This explicitly labelled property-only fallback is retained for
             # genuinely new runs without a reference trajectory. It is never
             # an ID/cohort recovery and never uses a global stellar COM.
-            radius = np.linalg.norm(p, axis=1)
-            outer = radius > float(r_exclude)
-            if not np.any(outer):
+            eligible = (np.ones(len(p), dtype=bool) if wind_tunnel
+                        else np.linalg.norm(p, axis=1) > float(r_exclude))
+            if not np.any(eligible):
                 raise ValueError('No spatial dwarf seed outside the host exclusion sphere')
             density = AnalysisCore.estimate_local_density(p[:, 0], p[:, 1], p[:, 2], k=min(int(k_density), len(p)))
-            peak = np.argmax(np.where(outer & ~np.isnan(density), density, -np.inf))
+            peak = np.argmax(np.where(eligible & ~np.isnan(density), density, -np.inf))
             seed = p[peak]
-            method = 'untracked_current_stellar_density_peak_outside_host_exclusion'
+            method = ('wind_tunnel_current_stellar_density_peak' if wind_tunnel
+                      else 'untracked_current_stellar_density_peak_outside_host_exclusion')
             search_radius = max(5., float(dwarf_radius))
         center = spatial.shrinking_center(p, m, seed, 1., initial_radius_kpc=search_radius,
                                           min_radius_kpc=.3, min_count=128)
@@ -164,13 +167,17 @@ class ParticleSelectionMixin:
             seed_context_path=context.get('seed_context_path'))
         dwarf = np.zeros(len(df), dtype=bool)
         dwarf[rows] = np.linalg.norm(p - center, axis=1) < float(dwarf_radius)
-        return stellar & ~dwarf, dwarf
+        # The moving box has no live MW stellar population. Stripped stars
+        # outside the dwarf aperture also remain outside the host sample.
+        return (np.zeros(len(df), dtype=bool) if wind_tunnel else stellar & ~dwarf), dwarf
 
     def center_on_MW(self, r_init=300.0, r_min=5.0, shrink=0.8):
         """Use the shared host-seeded centre and the unchanged strict r5 bulk."""
         df = self.df
         if getattr(self, '_canonical_MW_centered', False):
             return df
+        if getattr(self, 'wind_tunnel', None) is not None:
+            return self._center_wind_tunnel_frame()
         _, physical = _shared_spatial_helpers()
         context = self._spatial_seed_context()
         host_seed, seed_method = _snapshot_seed(context.get('host_center_seeds', {}), self.snapshot_num)
@@ -209,6 +216,33 @@ class ParticleSelectionMixin:
             host_seed_input_code=host_seed.tolist(), seed_context_path=context.get('seed_context_path'),
             canonical_observer_id=CANONICAL_OBSERVER_ID, member_selection_id=MEMBER_SELECTION_ID,
             observer_config_sha256=observer_contract_sha256())
+        self._canonical_MW_centered = True
+        return df
+
+    def _center_wind_tunnel_frame(self):
+        frame = self.wind_tunnel
+        epoch = frame.at_time(self.time)
+        length = frame.length_to_kpc
+        velocity = frame.velocity_to_kms
+        position_grf = epoch['box_center_grf_kpc']
+        velocity_grf = epoch['box_velocity_grf_kms']
+        df = self.df
+        for axis, center in zip(('x', 'y', 'z'), position_grf):
+            offset = box_displacement(df[axis].to_numpy(dtype=float), self.boxsize)
+            df[axis] = center + offset * length
+        df['r'] = np.sqrt(df['x'] ** 2 + df['y'] ** 2 + df['z'] ** 2)
+        for axis, bulk in zip(('vx', 'vy', 'vz'), velocity_grf):
+            df[axis] = bulk + df[axis].to_numpy(dtype=float) * velocity
+        self.observer_host_state = dict(
+            host_center_input_code=(.5 * self.boxsize - position_grf / length).tolist(),
+            host_bulk_input_code=(-velocity_grf / velocity).tolist(),
+            length_to_kpc=length, velocity_to_kms=velocity,
+            host_reference_status='prescribed_moving_box_frame', bulk_particle_count=0,
+            host_center_method='prescribed position of the box centre relative to the MW',
+            box_size_code=self.boxsize, snapshot_time_code=self.time,
+            wind_tunnel_run_id=frame.run_id, orbit_table=str(frame.orbit_path),
+            canonical_observer_id=CANONICAL_OBSERVER_ID, member_selection_id=MEMBER_SELECTION_ID,
+            observer_config_sha256=observer_contract_sha256(), **epoch)
         self._canonical_MW_centered = True
         return df
     def convert_coordinates(self, df=None, copy_df=True, include_galactic=True):

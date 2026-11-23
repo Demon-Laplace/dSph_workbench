@@ -2,6 +2,7 @@ import numpy as np
 
 from basefunc import Analysis, GalaxySimulation
 from canonical_observer import production_sky, production_motion, walker61_zero_error, CANONICAL_OBSERVER_ID, MEMBER_SELECTION_ID, observer_contract_sha256, write_snapshot_observer_metadata
+from wind_tunnel_frame import measure_wind_snapshot
 
 
 def prepare_snapshot_context(
@@ -19,13 +20,14 @@ def prepare_snapshot_context(
     include_star_birth=False,
 ):
     simulation = GalaxySimulation(folder_path=folder_path, snapshot_num=snapshot_num)
+    wind_tunnel = getattr(simulation, 'wind_tunnel', None)
     particle_types = (0, 1, 2, 3, 4) if include_dark_matter else (0, 2, 3, 4)
     dftype = 3 if include_star_birth else 2
     star_fields = ('birth',) if include_star_birth else ()
     df, tsnap = simulation.load_snapshot(
         dftype=dftype,
         box=False,
-        gas_fields=('temp', 'nh'),
+        gas_fields=('temp', 'nh', 'ugas') if wind_tunnel else ('temp', 'nh'),
         star_fields=star_fields,
         particle_types=particle_types,
     )
@@ -73,13 +75,16 @@ def prepare_snapshot_context(
         gas_apertures_kpc=[5, 15], gas_outer_annulus_kpc=[5, 15],
         gas_preselection_radius_kpc=preselection_radius,
         gas_temperature_split_K=float(gas_temperature_split),
-        velocity_reference='native MW-centred GRF after the same snapshot host bulk subtraction',
+        velocity_reference=('Galactocentric after adding the prescribed box velocity'
+                            if wind_tunnel else 'native MW-centred GRF after the same snapshot host bulk subtraction'),
         stellar_age=getattr(simulation, 'stellar_age_metadata', []),
         catalogue_alignment='analysis_row_index; source_particle_id is optional metadata only',
         source_id_availability=getattr(simulation, 'source_id_metadata', []))
     mw_gas_mask = None
-    if include_mw_gas:
+    if include_mw_gas and not wind_tunnel:
         mw_gas_mask = simulation.find_MW_gas(radius=mw_gas_radius)
+
+    wind_measurements = measure_wind_snapshot(simulation, radius_squared, star_masks[5]) if wind_tunnel else None
 
     dw_hot_gas_mask = dw_gas_mask & (df.temp >= gas_temperature_split)
     dw_cold_gas_mask = dw_gas_mask & (df.temp < gas_temperature_split)
@@ -106,7 +111,9 @@ def prepare_snapshot_context(
     rotra_dw_cold_gas=cold_gas_coords['_sky']['delta_RA_deg']
     rotdec_dw_cold_gas=cold_gas_coords['_sky']['delta_Dec_deg']
     d_mean=sky['center_distance_kpc']
-    d_mean_gal=np.linalg.norm(np.average(star_df.loc[old,['x','y','z']].to_numpy(dtype=float),axis=0,weights=star_mass[old]))
+    galactic_center = dwarf_center if wind_tunnel else np.average(
+        star_df.loc[old, ['x', 'y', 'z']].to_numpy(dtype=float), axis=0, weights=star_mass[old])
+    d_mean_gal = np.linalg.norm(galactic_center)
     # Physical profiles retain true gnomonic east/north, rather than treating raw dRA as east distance.
     x_kpc,y_kpc=sky['east_kpc'],sky['north_kpc']
     hot_gas_x_kpc,hot_gas_y_kpc=hot_gas_coords['_sky']['east_kpc'],hot_gas_coords['_sky']['north_kpc']
@@ -115,8 +122,9 @@ def prepare_snapshot_context(
     fit_R5=sky['fit_R5_mask']
     walker=walker61_zero_error(sky,star_coords['vlos'],fit_mask=fit_R5)
     motion=production_motion(star_coords,sky,star_mass,fit_R5)
+    observer_options = {'wind_tunnel': wind_measurements} if wind_tunnel else {}
     observer_metadata_path=write_snapshot_observer_metadata(folder_path,snapshot_num,
-        simulation.observer_host_state,membership_state,star_coords,walker,motion)
+        simulation.observer_host_state,membership_state,star_coords,walker,motion,**observer_options)
     cx, cy, cz = dw_xc, dw_yc, dw_zc
 
     return {
@@ -133,6 +141,7 @@ def prepare_snapshot_context(
         "observer_metadata_path": observer_metadata_path,
         "df": df,
         "tsnap": tsnap,
+        "wind_tunnel": wind_measurements,
         "mw_star_mask": mw_star_mask,
         "dw_star_mask": dw_star_mask,
         "dw_gas_mask": dw_gas_mask,

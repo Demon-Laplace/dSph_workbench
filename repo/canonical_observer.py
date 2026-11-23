@@ -84,7 +84,7 @@ def require_canonical_csv(path):
     """Refuse mixed/legacy CSV instead of relabelling or silently continuing it."""
     from pathlib import Path
     p=Path(path)
-    if not p.exists(): return
+    if not p.exists(): return []
     comments=[]
     with p.open("r",encoding="utf-8") as handle:
         for line in handle:
@@ -92,6 +92,7 @@ def require_canonical_csv(path):
             elif line.strip(): break
     if canonical_csv_comment().strip() not in comments:
         raise ValueError("Legacy or different-observer CSV: use a NEW analysis output path and rerun GetInfo; existing CSV is preserved: "+str(p))
+    return comments
 
 def canonical_csv_comment():
     return ("# canonical_observer_id=" + CANONICAL_OBSERVER_ID +
@@ -156,7 +157,8 @@ def frozen_cohort_mask(snapshot_particle_id,folder_path):
     return mask,dict(cohort_definition='explicit_historical_ID_reference',cohort_path=str(path),cohort_N=len(cohort),
         not_claimed_to_be_all_initial_IC_stars=True)
 
-def write_snapshot_observer_metadata(folder_path,snapshot_num,host_state,cohort,star_coords,walker,motion):
+def write_snapshot_observer_metadata(folder_path,snapshot_num,host_state,cohort,star_coords,walker,motion,
+                                     *, wind_tunnel=None):
     """Small atomic sidecar; source snapshot/particle arrays are never modified."""
     import os,json,tempfile
     from pathlib import Path
@@ -173,6 +175,8 @@ def write_snapshot_observer_metadata(folder_path,snapshot_num,host_state,cohort,
         host=host_state,membership=cohort,snapshot_num=int(snapshot_num),snapshot_source_directory=str(Path(folder_path)),
         kinematic_tracer=KINEMATIC_TRACER_DEFINITION,
         walker_R5={k:v for k,v in walker.items() if k not in ('fit_particle_id',)},motion_R5=motion)
+    if wind_tunnel is not None:
+        result['wind_tunnel'] = wind_tunnel
     target=root/('observer_snapshot_'+str(int(snapshot_num)).zfill(3)+'.json')
     with tempfile.NamedTemporaryFile('w',encoding='utf-8',dir=str(root),prefix='.observer-',suffix='.json',delete=False) as f:
         temp=Path(f.name);json.dump(serial(result),f,ensure_ascii=False,indent=2)

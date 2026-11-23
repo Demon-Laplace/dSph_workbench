@@ -346,13 +346,25 @@ def compute_snapshot_summary(snapshot, numsp):
     cold_m = m_all[dw_cold_gas_mask]
     cold_nh = nh_all[dw_cold_gas_mask]
 
-    mw_star_r = total_mw_star_mask & (r_all <= d_mean_gal)
-    mw_gas_r = np.zeros_like(r_all, dtype=bool) if mw_gas_mask is None else (mw_gas_mask & (r_all <= d_mean_gal))
-    mw_dm_r = (tp_all == 1) & (r_all <= d_mean_gal)
-    mass_mw_star_r = m_all[mw_star_r].sum()
-    mass_mw_gas_r = m_all[mw_gas_r].sum()
-    mass_mw_dm_r = m_all[mw_dm_r].sum()
-    mw_mass_r = mass_mw_star_r + mass_mw_gas_r + mass_mw_dm_r
+    wind_columns = {}
+    wind = snapshot.get('wind_tunnel')
+    if wind is None:
+        mw_star_r = total_mw_star_mask & (r_all <= d_mean_gal)
+        mw_gas_r = np.zeros_like(r_all, dtype=bool) if mw_gas_mask is None else (mw_gas_mask & (r_all <= d_mean_gal))
+        mw_dm_r = (tp_all == 1) & (r_all <= d_mean_gal)
+        mw_mass_r = m_all[mw_star_r].sum() + m_all[mw_gas_r].sum() + m_all[mw_dm_r].sum()
+    else:
+        frame = snapshot['simulation'].wind_tunnel
+        mw_mass_r = frame.enclosed_host_mass(d_mean_gal)
+        wind_columns['wind_elapsed_Gyr'] = snapshot['observer_host_state']['elapsed_since_insertion_Myr'] / 1000.
+        wind_columns['wind_prescribed_Pram_dyn_cm2'] = wind['prescribed_Pram_dyn_cm2']
+        for label in ('upstream12_20', 'upstream20_40'):
+            probe = wind.get(label, {})
+            wind_columns[f'wind_{label}_Pram_dyn_cm2'] = probe['P_ram_bulk_dyn_cm2'] if probe.get('supported') else np.nan
+        origin_apertures = wind.get('origin_apertures', {})
+        wind_columns['wind_dwarf_gas_r2_msun'] = origin_apertures.get('2', {}).get('dwarf_gas_msun', np.nan)
+        wind_columns['wind_dwarf_gas_r5_msun'] = origin_apertures.get('5', {}).get('dwarf_gas_msun', np.nan)
+        wind_columns['wind_ambient_gas_r5_msun'] = origin_apertures.get('5', {}).get('ambient_gas_msun', np.nan)
 
     projected_shape = Analysis.calculate_projected_shape(
         obs_x_kpc,
@@ -519,14 +531,20 @@ def compute_snapshot_summary(snapshot, numsp):
         center_y=shape_center_y_kpc,
     )
 
-    v_r, v_theta, v_phi = Analysis.cartesian_to_spherical(
-        obs_star_x[dw_old_star_stellar_region_mask],
-        obs_star_y[dw_old_star_stellar_region_mask],
-        obs_star_z[dw_old_star_stellar_region_mask],
-        obs_star_vx[dw_old_star_stellar_region_mask],
-        obs_star_vy[dw_old_star_stellar_region_mask],
-        obs_star_vz[dw_old_star_stellar_region_mask],
-    )
+    if wind is not None:
+        v_r, v_theta, v_phi = Analysis.cartesian_to_spherical(
+            *np.asarray(wind['stellar_center_grf_kpc']).reshape(3, 1),
+            *np.asarray(wind['stellar_bulk_r5_grf_kms']).reshape(3, 1),
+        )
+    else:
+        v_r, v_theta, v_phi = Analysis.cartesian_to_spherical(
+            obs_star_x[dw_old_star_stellar_region_mask],
+            obs_star_y[dw_old_star_stellar_region_mask],
+            obs_star_z[dw_old_star_stellar_region_mask],
+            obs_star_vx[dw_old_star_stellar_region_mask],
+            obs_star_vy[dw_old_star_stellar_region_mask],
+            obs_star_vz[dw_old_star_stellar_region_mask],
+        )
 
     dw_star_500pc_mask = Analysis.get_3d_radial_mask(
         star_x - dw_xc,
@@ -588,6 +606,7 @@ def compute_snapshot_summary(snapshot, numsp):
 
     return {
         **spatial_aperture_inventory(snapshot),
+        **wind_columns,
         "star_mass": star_mass,
         "star_mass_old_tracer": star_mass_old_tracer,
         "star_mass_new": star_mass_new,

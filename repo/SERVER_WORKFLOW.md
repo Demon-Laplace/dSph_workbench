@@ -5,6 +5,54 @@ The maintained entry is `workflow.py` in the simulation data root. See
 synchronization, and releases. Follow `AGENTS.md` in this source directory after
 changing code. Historical per-model launchers remain for compatibility.
 
+## Translating wind-tunnel snapshots
+
+Use the usual `GetInfo.py` and `PlotFig.py` from the wind-tunnel run directory.
+Put the HDF5 snapshots in `output/` and register the run in
+`_support/wind_tunnel_analysis.json`. The same commands accept snapshot ranges,
+resume a run's summary, and draw the standard heliocentric maps and profiles.
+Use `PlotFig.py --frames-only` for individual frames. Both entry points also
+run on Windows with the same scientific Python dependencies. A standalone
+package needs the usual `observing_core.py` and spatial helpers, including
+`gas_parameters.py` on `DSPH_SPATIAL_HELPERS_DIRECTORY` for wind probes.
+
+The run configuration supplies `model_name`, a distinct `run_id`,
+`time_begin_code`, `unit_length_cm`, `unit_velocity_cm_s`, `unit_mass_g`,
+`feedback_timescale_myr` and `orbit_table`. Table paths are relative to the
+configuration. The orbit table has 15 columns in solver order: elapsed Myr,
+box position (kpc), box velocity (km/s), frame acceleration
+((km/s)^2/kpc), box-frame wind (km/s), density (solar masses/kpc^3) and
+thermal pressure (dyn/cm^2). The three vectors for the box and the wind use
+the fixed Galactic axes. An optional `host_mass_table` supplies spherical
+enclosed mass in solar masses versus radius in kpc.
+
+The processor uses HDF5 `Time` and the run's `TimeBegin` to interpolate the
+prescribed box state, unwraps positions about `Header/BoxSize / 2`, and adds
+the box position and velocity in physical units. It then measures the stellar
+density centre and the mass-weighted stellar bulk inside 5 kpc. The centre
+and bulk can drift in the box. `distance_gal` and the Galactic velocity
+components follow the measured stars. The heliocentric observer and the
+stellar and gas diagnostics use their usual apertures and estimators.
+`age` retains native code time for compatibility. `wind_elapsed_Gyr` is
+physical time since insertion and is the clock for wind-tunnel history plots.
+
+Supply `gas_origin` with `parent_id_bits` and `ambient_first_id` only for runs
+whose solver uses that convention. The resulting gas-origin breakdown is
+diagnostic. The standard gas and H I apertures include all sources. With gas
+origin information, GetInfo measures CGM in the 12–20 and 20–40 kpc upstream
+cones about the stellar centre, with half-angle 60° and the prescribed
+upstream direction. It records gas velocity relative to the stellar bulk,
+density and thermal and ram pressures in the observer sidecar. The optional
+`free_flow_half_width_fraction` indicates whether the region used for a probe
+is entirely inside the free-flow zone. The 20–40 kpc cone may sample the
+buffer. Pressures from the forcing table describe conditions at the box
+centre. The measured pressures use CGM in the specified cone.
+
+The wind plot compares the prescribed box track with the measured stellar
+track. Wind pressure and gas origin are shown at saved epochs on the
+time-since-insertion axis.
+CSV and display identities carry the run ID for safe resume.
+
 ## H I statistics correction (2026-10-16; fraction updated 2026-10-21)
 
 NeutralHydrogenAbundance is n_HI/n_H. The solver uses HYDROGEN_MASSFRAC=0.76,

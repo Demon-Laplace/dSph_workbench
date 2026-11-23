@@ -1,7 +1,6 @@
 import gc
 import os
 import ctypes
-import resource
 import shutil
 import subprocess
 import sys
@@ -29,6 +28,7 @@ from multiprocessing import get_context
 from snapshot_context import prepare_snapshot_context
 from snapshot_metrics import old_star_projected_kinematics, member_star_projected_kinematics, hi_particle_masses, hi_fraction, require_hi_fraction_csv
 from canonical_observer import require_canonical_csv, production_output_root
+from wind_tunnel_frame import WIND_CSV_COLUMNS, require_summary_frame, wind_tunnel_frame
 from canonical_display import (DISPLAY_RELATIVE_DIR, tangent_coordinates, tangent_velocity_grid40,
     tangent_motion_arrow, tangent_kpc_to_display, raw_offsets_to_tangent, tangent_pixel_area_arcsec2)
 from display_outputs import (display_identity, frame_is_current, record_frame,
@@ -233,7 +233,7 @@ def render_video_from_frames(output_dir, modelname, start_numsp, frame_count,
 
 
 def finalize_display_outputs(output_dir, modelname, snapshots, *, identity=None,
-                             video_name=None):
+                             video_name=None, encode_video=True):
     if not snapshots:
         raise ValueError('No snapshots selected for video generation')
     if identity is None:
@@ -241,14 +241,14 @@ def finalize_display_outputs(output_dir, modelname, snapshots, *, identity=None,
     if video_name is None and PLOT_CONTEXT is not None:
         video_name = PLOT_CONTEXT.get('video_name')
     videos = []
-    if snapshots_are_consecutive(snapshots) or ordinary_media_reuse():
+    if encode_video and (snapshots_are_consecutive(snapshots) or ordinary_media_reuse()):
         video = render_video_from_frames(
             output_dir, modelname, snapshots[0], len(snapshots),
             snapshots=snapshots if ordinary_media_reuse() else None,
             video_name=video_name)
         if video is not None:
             videos.append(video)
-    else:
+    elif encode_video:
         print("[PlotFigVideo] Skip video generation: requested snapshots are not consecutive")
     record_display_manifest(Path(output_dir).parent, identity, snapshots, videos)
 
@@ -365,6 +365,9 @@ def get_rss_mb():
         page_size = os.sysconf("SC_PAGE_SIZE")
         return rss_pages * page_size / (1024.0 * 1024.0)
     except Exception:
+        if os.name == "nt":
+            return float('nan')
+        import resource
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 
 
@@ -550,7 +553,8 @@ def _normalize_elinfo_schema(dw_elinfo):
 
 
 def build_plot_context():
-    model_info = DataProcessor.parse_model_name_details()
+    wind_tunnel = wind_tunnel_frame(folder_path)
+    model_info = DataProcessor.parse_model_name_details(wind_tunnel.model_name if wind_tunnel else None)
     modelname = model_info['modelname']
     base_modelname = model_info['base_modelname']
     dwarf_name = model_info['dwarf_name']
@@ -566,10 +570,17 @@ def build_plot_context():
     if core_radius is None:
         raise ValueError(f"please input '{dwarf_name}''s radius")
 
-    require_canonical_csv(elinfo_path)
+    require_summary_frame(require_canonical_csv(elinfo_path), wind_tunnel)
     require_hi_fraction_csv(elinfo_path)
     dw_elinfo = DataProcessor.read_csv_with_comments(elinfo_path, dtype=DataProcessor.ELINFO_DTYPE_MAP)
     dw_elinfo = _normalize_elinfo_schema(dw_elinfo)
+    if wind_tunnel:
+        missing = set(WIND_CSV_COLUMNS) - set(dw_elinfo)
+        if missing:
+            raise ValueError('Run GetInfo for this wind tunnel summary. Missing columns: ' + ', '.join(sorted(missing)))
+        # This copy is for display. The CSV and stellar-age calculations keep
+        # native GIZMO time so formation times retain their original clock.
+        dw_elinfo = dw_elinfo.assign(age=dw_elinfo['wind_elapsed_Gyr'])
     if 'numsp' not in dw_elinfo.columns:
         raise ValueError("The elinfo file does not contain a numsp column")
     elinfo_numsp_values = pd.to_numeric(dw_elinfo['numsp'], errors='coerce').dropna()
@@ -579,7 +590,7 @@ def build_plot_context():
     elinfo_by_numsp = dw_elinfo.set_index('numsp', drop=False)
 
     if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+        os.makedirs(output_folder, exist_ok=True)
         print(f"Created output folder: {output_folder}")
 
     ini_x, ini_y, ini_z, ini_vx, ini_vy, ini_vz, fd_value = DataProcessor.get_ini_data(elinfo_path=elinfo_path)
@@ -589,16 +600,13 @@ def build_plot_context():
     else:
         fd_factor_str = f"{fd_factor_raw:.1f}"
 
-    sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
-    sfh_dw = pd.read_csv(sfh_path)
     factor = obs_surface_brightness_factor_base
     obs_surface_brightness = _load_surface_brightness_observation(dwarf_name, factor)
     dprof = obs_surface_brightness['dprof']
     mag_obs = obs_surface_brightness['mag_obs']
     mag_obs_err = obs_surface_brightness['mag_obs_err']
 
-    gas_loss_rate = Analysis.calculate_gas_loss_rate(dw_elinfo['age'].to_numpy(), dw_elinfo['coldgas_half_mass'].to_numpy())
-    distance_series = dw_elinfo['distance']
+    distance_series = dw_elinfo['distance_gal' if wind_tunnel else 'distance']
     sigma_mw = np.where(
         dw_elinfo.sigma >= dw_elinfo.tsigma,
         np.sqrt(dw_elinfo.sigma**2 - dw_elinfo.tsigma**2),
@@ -609,24 +617,25 @@ def build_plot_context():
         distance_series.to_numpy(),
         dw_elinfo['rhalf_circularized'].to_numpy(dtype=float),
     )
-    index_peri = distance_series.idxmin()
-    d_peri = distance_series.loc[index_peri]
-    t_peri = dw_elinfo.loc[index_peri, 'age']
-
-    Tage = dw_elinfo.loc[
-        distance_series.loc[:index_peri]
-        .sub(d_today)
-        .abs()
-        .idxmin(),
-        'age'
-    ]
-    dw_sfrmass = Analysis.GetSFH_sim(
-        folder_path=folder_path,
-        Tage=Tage,
-        snapshot_num=elinfo_snapshots[-1],
-    )
-    sfr_t_peri_gyr = t_peri * dw_sfrmass.attrs.get('time_code_to_gyr', 1.)
-    lookback_sim, sfr_sim, lookback_obs, sfr_obs = _compute_sfr_series(sfh_dw, dw_sfrmass, sfr_t_peri_gyr)
+    history_context = {}
+    if wind_tunnel:
+        history_limit = max(.01, float(dw_elinfo['age'].max()))
+    else:
+        index_peri = distance_series.idxmin()
+        t_peri = dw_elinfo.loc[index_peri, 'age']
+        history_limit = t_peri
+        Tage = dw_elinfo.loc[distance_series.loc[:index_peri].sub(d_today).abs().idxmin(), 'age']
+        sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
+        sfh_dw = pd.read_csv(sfh_path)
+        dw_sfrmass = Analysis.GetSFH_sim(folder_path=folder_path, Tage=Tage, snapshot_num=elinfo_snapshots[-1])
+        sfr_t_peri_gyr = t_peri * dw_sfrmass.attrs.get('time_code_to_gyr', 1.)
+        lookback_sim, sfr_sim, lookback_obs, sfr_obs = _compute_sfr_series(sfh_dw, dw_sfrmass, sfr_t_peri_gyr)
+        history_context.update(
+            gas_loss_rate=Analysis.calculate_gas_loss_rate(dw_elinfo['age'].to_numpy(), dw_elinfo['coldgas_half_mass'].to_numpy()),
+            d_peri=distance_series.loc[index_peri], t_peri=t_peri, Tage=Tage, sfh_dw=sfh_dw,
+            dw_sfrmass=dw_sfrmass, sfr_t_peri_gyr=sfr_t_peri_gyr,
+            lookback_sim=lookback_sim, sfr_sim=sfr_sim, lookback_obs=lookback_obs, sfr_obs=sfr_obs,
+        )
 
     return {
         'modelname': modelname,
@@ -650,7 +659,6 @@ def build_plot_context():
         'ini_vz': ini_vz,
         'fd_value': fd_value,
         'fd_factor_str': fd_factor_str,
-        'sfh_dw': sfh_dw,
         'dprof': dprof,
         'mag_obs': mag_obs,
         'mag_obs_err': mag_obs_err,
@@ -659,20 +667,13 @@ def build_plot_context():
         'obs_positive_net_bins': obs_surface_brightness['positive_net_bins'],
         'obs_surface_brightness_path': obs_surface_brightness['source_path'],
         'obs_surface_brightness_preprocessed': obs_surface_brightness['preprocessed'],
-        'gas_loss_rate': gas_loss_rate,
         'distance_series': distance_series,
         'sigma_mw': sigma_mw,
         'sigma_mw_theoretical': sigma_mw_theoretical,
-        'd_peri': d_peri,
-        't_peri': t_peri,
-        'sfr_t_peri_gyr': sfr_t_peri_gyr,
-        'Tage': Tage,
-        'dw_sfrmass': dw_sfrmass,
-        'lookback_sim': lookback_sim,
-        'sfr_sim': sfr_sim,
-        'lookback_obs': lookback_obs,
-        'sfr_obs': sfr_obs,
+        'wind_tunnel': wind_tunnel,
+        'history_limit': history_limit,
         'output_folder': output_folder,
+        **history_context,
     }
 
 
@@ -846,9 +847,12 @@ def _plot_gas_sky_panel(
     y_contour_kpc,
     cd_smooth,
     field_half_width_kpc,
+    *,
+    wind_tunnel=False,
 ):
-    ax.scatter(20, 20, s=18, color='aquamarine', label='HI Gas')
-    ax.scatter(20, 20, s=18, color='orange', label='HII Gas')
+    cold_label, hot_label = ('Cold gas', 'Warm and hot gas') if wind_tunnel else ('HI Gas', 'HII Gas')
+    ax.scatter(20, 20, s=18, color='aquamarine', label=cold_label)
+    ax.scatter(20, 20, s=18, color='orange', label=hot_label)
     ax.scatter(cold_gas_x_kpc, cold_gas_y_kpc, s=4, color='aquamarine')
     ax.scatter(hot_gas_x_kpc, hot_gas_y_kpc, s=5, color='orange')
     levels = _gas_contour_levels(cd_smooth, mode="morphology")
@@ -863,8 +867,8 @@ def _plot_gas_sky_panel(
         )
     _style_axis(
         ax,
-        'RA (kpc)',
-        'DEC (kpc)',
+        'East (kpc)' if wind_tunnel else 'RA (kpc)',
+        'North (kpc)' if wind_tunnel else 'DEC (kpc)',
         xlim=(-field_half_width_kpc, field_half_width_kpc),
         ylim=(-field_half_width_kpc, field_half_width_kpc),
         invert_x=True,
@@ -892,6 +896,7 @@ def _plot_stellar_sky_panel(
     shape_center_dec=0.0,
     arrow_tip=None,
     shape_outline=None,
+    gas_center_label='HI Center',
 ):
     arrow_length = 1.5
     norm = np.hypot(mean_pmra, mean_pmdec)
@@ -915,7 +920,7 @@ def _plot_stellar_sky_panel(
     )
 
     im = ax.imshow(img.T, origin='lower', extent=extent, cmap='bone_r', vmin=22, vmax=34)
-    ax.scatter(cold_gas_center_ra, cold_gas_center_dec, s=50, marker='x', color='red', label='HI Center')
+    ax.scatter(cold_gas_center_ra, cold_gas_center_dec, s=50, marker='x', color='red', label=gas_center_label)
 
     levels = _gas_contour_levels(cd_smooth, mode="threshold")
     if levels is not None:
@@ -955,7 +960,8 @@ def _plot_vlos_panel(fig, ax, vf, extent_vf, arrow_tip=None):
     _append_colorbar(fig, ax, sc, r'$\langle v_{los}\rangle-v_0$ (km/s)')
 
 
-def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, star_z, cy, cz):
+def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, star_z, cy, cz,
+                      *, wind_tunnel=False):
     arrow_length = 7
     total_distance = np.hypot(cy, cz)
     if total_distance > 0:
@@ -979,8 +985,9 @@ def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, 
     ax.scatter(cold_gas_y - cy, cold_gas_z - cz, c='aquamarine', s=4, lw=0)
     ax.scatter(hot_gas_y - cy, hot_gas_z - cz, c='orange', s=2, lw=0)
     ax.scatter(star_y - cy, star_z - cz, c='gray', s=2, lw=0)
-    ax.scatter(50, 50, s=70, color='aquamarine', label='HI Gas')
-    ax.scatter(50, 50, s=70, color='orange', label='HII Gas')
+    cold_label, hot_label = ('Cold gas', 'Warm and hot gas') if wind_tunnel else ('HI Gas', 'HII Gas')
+    ax.scatter(50, 50, s=70, color='aquamarine', label=cold_label)
+    ax.scatter(50, 50, s=70, color='orange', label=hot_label)
     ax.scatter(50, 50, s=70, color='gray', label='Stars')
     _style_axis(ax, 'Y (kpc)', 'Z (kpc)', xlim=(-20, 20), ylim=(-20, 20))
     ax.legend(loc='lower left', fontsize=14)
@@ -1122,7 +1129,8 @@ def _plot_surface_brightness_profile(
     ax.legend(fontsize=12, loc='upper right')
 
 
-def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_stellar_region, t_peri):
+def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_stellar_region, t_peri,
+                             *, time_label='Simulation Time (Gyr)'):
     gas_half_series = np.asarray(
         dw_elinfo.hi_half_fraction.to_numpy(),
         dtype=float,
@@ -1155,12 +1163,13 @@ def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_ste
         zorder=5,
     )
     ax.vlines(tsnap, 0, 1.05, color='gray', lw=2, ls='--', zorder=0)
-    _style_axis(ax, 'Simulation Time (Gyr)', r'$f_{\mathrm{HI}} = M_{\mathrm{HI}}/(M_\star+M_{\mathrm{HI}})$', xlim=(0, t_peri), ylim=(1e-4, 1.05))
+    _style_axis(ax, time_label, r'$f_{\mathrm{HI}} = M_{\mathrm{HI}}/(M_\star+M_{\mathrm{HI}})$', xlim=(0, t_peri), ylim=(1e-4, 1.05))
     ax.set_yscale('log')
     ax.legend(loc='lower left', fontsize=15)
 
 
-def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsnap, sigma_value, t_peri, sigma_x, sigma_y, sigma_z):
+def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsnap, sigma_value, t_peri, sigma_x, sigma_y, sigma_z,
+                              *, time_label='Simulation Time (Gyr)'):
     ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.sigma.to_numpy(), lw=2, color='black', label=r'$\sigma_{los}$')
     ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.tsigma.to_numpy(), lw=2, color='gray', label=r'$\sigma_{baryon}$')
     if 'tsigma_xyz' in dw_elinfo.columns:
@@ -1168,7 +1177,7 @@ def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsn
     ax.plot(dw_elinfo.age.to_numpy(), sigma_mw_theoretical, lw=2, color='lightcoral', label=r'$\sigma_{MW}$')
     ax.plot(dw_elinfo.age.to_numpy(), sigma_mw, lw=2, color='c', label=r'$\sigma_{est}$')
     ax.scatter(tsnap, sigma_value, s=70, zorder=5, color='red')
-    _style_axis(ax, 'Simulation Time (Gyr)', 'velocity dispersion (km/s)', xlim=(0, t_peri * 1.2), ylim=(-0.08, 20.9))
+    _style_axis(ax, time_label, 'velocity dispersion (km/s)', xlim=(0, t_peri * 1.2), ylim=(-0.08, 20.9))
     ax.vlines(tsnap, 0, 25, color='gray', lw=2, ls='--', zorder=0)
     ax.legend(loc='upper left', fontsize=15)
     ax.text(
@@ -1486,8 +1495,31 @@ def _plot_sfr_panel(ax, lookback_sim, sfr_sim, lookback_obs, sfr_obs, t_peri):
     ax.legend(loc='upper left')
 
 
-def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta, vphi, vgsr):
-    ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.distance.to_numpy(), color='black', lw=3, zorder=1)
+def _plot_wind_history(ax, history, tsnap, history_limit, series, ylabel, scale):
+    for column, label in series:
+        available = history[column].notna()
+        if available.any():
+            ax.scatter(history.loc[available, 'age'], history.loc[available, column] / scale, label=label)
+    ax.axvline(tsnap, color='gray', lw=1.5, ls='--', zorder=0)
+    _style_axis(ax, 'Time since insertion (Gyr)', ylabel, xlim=(0, history_limit * 1.2))
+    if ax.collections:
+        ax.legend(loc='best', fontsize=12)
+
+
+def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta, vphi, vgsr, *, wind_tunnel=None):
+    if wind_tunnel:
+        elapsed = wind_tunnel.orbit[:, 0] / 1000.
+        plotted = elapsed <= t_peri * 1.2
+        box_radius = np.linalg.norm(wind_tunnel.orbit[plotted, 1:4], axis=1)
+        ax.plot(elapsed[plotted], box_radius, color='gray', ls='--', lw=2, label='Prescribed box centre')
+        ax.scatter(dw_elinfo.age, dw_elinfo.distance_gal, color='black', s=16, label='Stellar centre')
+        xlabel, ylabel, ylim = 'Time since insertion (Gyr)', 'Galactocentric distance (kpc)', None
+        distance_label = r'$R_{\rm GC}$'
+    else:
+        ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.distance.to_numpy(), color='black', lw=3, zorder=1)
+        ax.hlines(d_today, -0.1, t_peri * 3, color='gray', lw=2, ls='--', zorder=0)
+        xlabel, ylabel, ylim = 'Simulation Time (Gyr)', 'Distance (kpc)', (30, 820)
+        distance_label = '$D$'
     ax.scatter(
         tsnap,
         current_distance,
@@ -1496,13 +1528,15 @@ def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta
         zorder=3,
         label=f'{tsnap:.2f} Gyr',
     )
-    ax.hlines(d_today, -0.1, t_peri * 3, color='gray', lw=2, ls='--', zorder=0)
-    _style_axis(ax, 'Simulation Time (Gyr)', 'Distance (kpc)', xlim=(0, t_peri * 1.2), ylim=(30, 820))
+    _style_axis(ax, xlabel, ylabel, xlim=(0, t_peri * 1.2), ylim=ylim)
+    if wind_tunnel:
+        ax.legend(loc='upper right', fontsize=12)
+        return
     ax.legend(loc='lower left', fontsize=16)
     ax.text(
         0.05,
         0.95,
-        f'D : {current_distance:.2f} kpc\n'
+        f'{distance_label} : {current_distance:.2f} kpc\n'
         f'$v_{{r}}$ : {vr:.2f} km/s\n'
         f'$v_{{\\theta}}$ : {vtheta:.2f} km/s\n'
         f'$v_{{\\phi}}$ : {vphi:.2f} km/s\n'
@@ -1529,20 +1563,14 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     ini_vy = context['ini_vy']
     ini_vz = context['ini_vz']
     fd_factor_str = context['fd_factor_str']
-    sfh_dw = context['sfh_dw']
     dprof = context['dprof']
     mag_obs = context['mag_obs']
     mag_obs_err = context['mag_obs_err']
-    gas_loss_rate = context['gas_loss_rate']
     sigma_mw = context['sigma_mw']
     sigma_mw_theoretical = context['sigma_mw_theoretical']
-    d_peri = context['d_peri']
-    t_peri = context['t_peri']
-    dw_sfrmass = context['dw_sfrmass']
-    lookback_sim = context['lookback_sim']
-    sfr_sim = context['sfr_sim']
-    lookback_obs = context['lookback_obs']
-    sfr_obs = context['sfr_obs']
+    wind_tunnel = context.get('wind_tunnel')
+    history_limit = context['history_limit']
+    time_label = 'Time since insertion (Gyr)' if wind_tunnel else 'Simulation Time (Gyr)'
     output_folder = context['output_folder']
 
     if show_mem:
@@ -1564,7 +1592,8 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     after_prepare_rss = get_rss_mb() if profile_memory else None
     simulation = snapshot['simulation']
     df = snapshot['df']
-    tsnap = snapshot['tsnap']
+    tsnap = (snapshot['observer_host_state']['elapsed_since_insertion_Myr'] / 1000.
+             if wind_tunnel else snapshot['tsnap'])
     hot_gas_x_kpc = snapshot['hot_gas_x_kpc']
     hot_gas_y_kpc = snapshot['hot_gas_y_kpc']
     cold_gas_x_kpc = snapshot['cold_gas_x_kpc']
@@ -1608,13 +1637,14 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         right=0.95, 
         top=0.95,   
         bottom=0.08,
-        wspace=0.35, 
+        wspace=0.48 if wind_tunnel else 0.35,
         hspace=0.22
     )
 
     #--- Title ---#
 
-    fig.suptitle(f'{modelname}', fontsize=22)
+    title = f'{modelname} wind tunnel, snapshot {numsp:03d}' if wind_tunnel else modelname
+    fig.suptitle(title, fontsize=22)
 
     if verbose:
         print('Begin plotting...')
@@ -1631,6 +1661,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['y_contour_kpc'],
         metrics['cd_smooth'],
         metrics['sky_field_half_width_kpc'],
+        wind_tunnel=wind_tunnel,
     )
 
     if verbose:
@@ -1657,6 +1688,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['shape_center_dec'],
         arrow_tip=metrics['arrow_tip'],
         shape_outline=metrics['shape_outline'],
+        gas_center_label='Cold-gas centre' if wind_tunnel else 'HI Center',
     )
 
     if verbose:
@@ -1679,6 +1711,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['star_z'],
         metrics['cy'],
         metrics['cz'],
+        wind_tunnel=wind_tunnel,
     )
 
     if verbose:
@@ -1725,7 +1758,8 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         tsnap,
         gas_half_frac,
         gas_frac_stellar_region,
-        t_peri,
+        history_limit * 1.2 if wind_tunnel else history_limit,
+        time_label=time_label,
     )
 
     if verbose:
@@ -1739,10 +1773,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         sigma_mw,
         tsnap,
         row['sigma'],
-        t_peri,
+        history_limit,
         metrics['sigma_x'],
         metrics['sigma_y'],
         metrics['sigma_z'],
+        time_label=time_label,
     )
     
     if verbose:
@@ -1752,7 +1787,14 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
 
     #--- Central Gas Density ---#
 
-    _plot_gas_loss_panel(axes[2, 2], dw_elinfo, gas_loss_rate, tsnap, t_peri)
+    if wind_tunnel:
+        _plot_wind_history(axes[2, 2], dw_elinfo, tsnap, history_limit, (
+            ('wind_dwarf_gas_r2_msun', r'Dwarf-origin gas, $r<2$ kpc'),
+            ('wind_dwarf_gas_r5_msun', r'Dwarf-origin gas, $r<5$ kpc'),
+            ('wind_ambient_gas_r5_msun', r'CGM-origin gas, $r<5$ kpc'),
+        ), r'Gas mass ($10^6\,M_\odot$)', 1.e6)
+    else:
+        _plot_gas_loss_panel(axes[2, 2], dw_elinfo, context['gas_loss_rate'], tsnap, history_limit)
 
     #--- Evolution Histroy ---#
 
@@ -1771,10 +1813,15 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # axes[2, 2].vlines(tsnap, 0, 1e11, color='gray', lw=2, ls='--')
     # axes[2, 2].hlines(dw_cold_gas_lower_limit, -0.1, T_peri*2, lw=2, ls='--', color='paleturquoise', label='lower limit of HI mass')
 
-    _plot_sfr_panel(axes[2, 1], lookback_sim, sfr_sim, lookback_obs, sfr_obs, context.get('sfr_t_peri_gyr', t_peri))
-
-    if verbose:
-        print('SFR plotted.')
+    if wind_tunnel:
+        _plot_wind_history(axes[2, 1], dw_elinfo, tsnap, history_limit, (
+            ('wind_prescribed_Pram_dyn_cm2', 'Input at the box centre'),
+            ('wind_upstream12_20_Pram_dyn_cm2', 'Upstream, 12–20 kpc'),
+            ('wind_upstream20_40_Pram_dyn_cm2', 'Upstream, 20–40 kpc'),
+        ), r'Ram pressure ($10^{-15}$ dyn cm$^{-2}$)', 1.e-15)
+    else:
+        _plot_sfr_panel(axes[2, 1], context['lookback_sim'], context['sfr_sim'],
+                        context['lookback_obs'], context['sfr_obs'], context['sfr_t_peri_gyr'])
 
     #--- oribt ---#
 
@@ -1782,12 +1829,13 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         axes[1, 3],
         dw_elinfo,
         tsnap,
-        row['distance'],
-        t_peri,
+        row['distance_gal' if wind_tunnel else 'distance'],
+        history_limit,
         metrics['vr'],
         metrics['vtheta'],
         metrics['vphi'],
         metrics['vgsr'],
+        wind_tunnel=wind_tunnel,
     )
 
     #--- Tidal Effect ---#
@@ -1814,46 +1862,55 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # cax.tick_params(axis='both', which='both', direction='in')
     # cax.minorticks_on()
 
-    #--- Infomation ---#
+    if wind_tunnel:
+        stellar_offset = np.linalg.norm(snapshot['wind_tunnel']['stellar_center_box_kpc'])
+        stellar_drift = np.linalg.norm(snapshot['wind_tunnel']['stellar_bulk_r5_box_kms'])
+        info = fig.add_subplot(gs[2, 3])
+        info.set_axis_off()
+        info.text(
+            0, .97,
+            'Stellar centre relative to the box\n'
+            f'Offset  {stellar_offset:.3f} kpc\n'
+            f'Drift speed  {stellar_drift:.2f} km/s\n\n'
+            f'$R_{{\\mathrm{{half}}}}$  {metrics["r_half"]:.2f} kpc\n'
+            f'$M_\\star(<{stellar_region_tex_label})$  {sm_str} $M_\\odot$\n'
+            f'$M_{{\\mathrm{{HI}}}}(<{stellar_region_tex_label})$  {cg_str} $M_\\odot$\n'
+            f'Feedback decay time  {context["fd_value"]:g} Myr',
+            transform=info.transAxes, fontsize=15, va='top', linespacing=1.6,
+        )
+    else:
+        d_peri = context["d_peri"]
+        info_orbit_text = (
+            f"Orbit : {ini_x:.2f}, {ini_y:.2f}, {ini_z:.2f}\n"
+            f"        {ini_vx:.2f}, {ini_vy:.2f}, {ini_vz:.2f}\n"
+        )
 
-    info_orbit_text = (
-        f"Orbit : {ini_x:.2f}, {ini_y:.2f}, {ini_z:.2f}\n"
-        f"        {ini_vx:.2f}, {ini_vy:.2f}, {ini_vz:.2f}\n"
-    )
 
-    # info_mass_text = (
-    #     f"Star Mass: {sm_str}\n"
-    #     f"Star Half-Mass: {shm_str}\n"
-    #     f"HI Mass: {cg_str}\n"
-    #     f"Cold Gas Half-Mass: {cghm_str}"
-    # )
+        fig.text(
+            0.935, 0.031,
+            info_orbit_text,
+            fontsize=20,
+            verticalalignment='bottom',
+            horizontalalignment='right'
+        )
 
-    fig.text(
-        0.935, 0.031,
-        info_orbit_text, 
-        fontsize=20,
-        verticalalignment='bottom',
-        horizontalalignment='right'
-    )
+        gas_frac_contour = metrics['hi_fraction_contour']
 
-    gas_frac_contour = metrics['hi_fraction_contour']
-
-    fig.text(
-        0.74, 0.32,               
-        # f'{dwarf_name} stellar mass:\n'
-        f'$R_{{half}}$: {metrics["r_half"]:.2f} kpc \n'  
-        f'$D_{{peri}}$: {d_peri:.2f} kpc \n'
-        f'Stellar Mass within ${stellar_region_tex_label}$: {sm_str} $M_{{\\odot}}$ \n'
-        f'Stellar Mass within $R_{{half}}$: {shm_str} $M_{{\\odot}}$ \n'
-        f'$HI Mass_{{{stellar_region_subscript_label}}}$: {cg_str} $M_{{\\odot}}$ \n'
-        f'$HI Mass_{{Rhalf}}$: {cghm_str} $M_{{\\odot}}$ \n'
-        f'HI Fraction in Contour: {gas_frac_contour:.3f} \n'
-        f'HI Fraction in ${stellar_region_tex_label}$: {gas_frac_stellar_region:.3f} \n'
-        f'HI Fraction in $R_{{half}}$: {gas_half_frac:.3f} \n'
-        f'Feedback: {fd_factor_str} median feedback \n',
-        fontsize=20,
-        ha='left', va='top'
-    )
+        fig.text(
+            0.74, 0.32,
+            f'$R_{{half}}$: {metrics["r_half"]:.2f} kpc \n'
+            f'$D_{{peri}}$: {d_peri:.2f} kpc \n'
+            f'Stellar Mass within ${stellar_region_tex_label}$: {sm_str} $M_{{\\odot}}$ \n'
+            f'Stellar Mass within $R_{{half}}$: {shm_str} $M_{{\\odot}}$ \n'
+            f'$HI Mass_{{{stellar_region_subscript_label}}}$: {cg_str} $M_{{\\odot}}$ \n'
+            f'$HI Mass_{{Rhalf}}$: {cghm_str} $M_{{\\odot}}$ \n'
+            f'HI Fraction in Contour: {gas_frac_contour:.3f} \n'
+            f'HI Fraction in ${stellar_region_tex_label}$: {gas_frac_stellar_region:.3f} \n'
+            f'HI Fraction in $R_{{half}}$: {gas_half_frac:.3f} \n'
+            f'Feedback: {fd_factor_str} median feedback \n',
+            fontsize=20,
+            ha='left', va='top'
+        )
 
     if verbose:
         print('Information added.')
@@ -1876,10 +1933,9 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     del df
     del simulation
     del fig
-    del dw_elinfo, dw_sfrmass, cold_gas_x_kpc, cold_gas_y_kpc, hot_gas_x_kpc, hot_gas_y_kpc
+    del dw_elinfo, cold_gas_x_kpc, cold_gas_y_kpc, hot_gas_x_kpc, hot_gas_y_kpc
     del metrics
-    del info_orbit_text
-    del gas_frac_contour, sm_str, shm_str, cg_str, cghm_str, gas_ratio_stellar_region, gas_half_ratio, gas_frac_stellar_region, gas_half_frac
+    del sm_str, shm_str, cg_str, cghm_str, gas_ratio_stellar_region, gas_half_ratio, gas_frac_stellar_region, gas_half_frac
     del snapshot
 
     release_process_memory()
@@ -1921,6 +1977,7 @@ def main():
     parser.add_argument('--range', type=str, default=None, help='the range of snapshots, e.g., "1,20"')
     parser.add_argument('--snapshot-numbers', type=str, help='explicit comma-separated snapshot numbers, including actual gaps')
     parser.add_argument('--video-only', action='store_true', help='encode current frames without loading particle snapshots or the plotting context')
+    parser.add_argument('--frames-only', action='store_true', help='render the selected snapshots without encoding a video')
     parser.add_argument('--video-name', type=str, help='plain output .mp4 filename within the current display directory')
     parser.add_argument('--processes', type=int, default=1, help='number of processes to use')
     parser.add_argument('--chunksize', type=int, default=1, help='chunksize for pool.imap_unordered')
@@ -1935,6 +1992,8 @@ def main():
     parser.add_argument('--show-mem', action='store_true', help='show memory usage for each snapshot')
     parser.add_argument('--replace', action='store_true', help='replace existing .png files')
     args = parser.parse_args()
+    if args.video_only and args.frames_only:
+        parser.error('--video-only and --frames-only are mutually exclusive')
 
     explicit_numbers = None
     if args.snapshot_numbers is not None:
@@ -1943,8 +2002,10 @@ def main():
             raise ValueError('--snapshot-numbers must contain at least one snapshot')
 
     if args.video_only:
-        modelname = DataProcessor.parse_model_name_details()['modelname']
+        wind_tunnel = wind_tunnel_frame(folder_path)
+        modelname = DataProcessor.parse_model_name_details(wind_tunnel.model_name if wind_tunnel else None)['modelname']
         summary = CANONICAL_ANALYSIS_ROOT / f'elinfo_{modelname}.csv'
+        require_summary_frame(require_canonical_csv(summary), wind_tunnel)
         identity = display_identity(summary)
         summary_rows = pd.read_csv(summary, comment='#', usecols=['numsp'])
         summary_numbers = sorted(set(summary_rows['numsp'].astype(int).tolist()))
@@ -2039,7 +2100,7 @@ def main():
     if not pending_numsp:
         if not ordinary_media_reuse() and not validate_plot_outputs(output_dir, requested_numsp):
             sys.exit(2)
-        finalize_display_outputs(output_dir, modelname, requested_numsp)
+        finalize_display_outputs(output_dir, modelname, requested_numsp, encode_video=not args.frames_only)
         print("PlotFig completed: plotted=0, skipped=0")
         return
 
@@ -2055,7 +2116,7 @@ def main():
         for numsp in pending_numsp
     ]
 
-    with get_context("fork").Pool(
+    with get_context("spawn" if os.name == "nt" else "fork").Pool(
         processes=args.processes,
         maxtasksperchild=args.maxtasksperchild,
         initializer=init_worker,
@@ -2092,7 +2153,7 @@ def main():
     if not ordinary_media_reuse() and not validate_plot_outputs(output_dir, requested_numsp):
         sys.exit(2)
 
-    finalize_display_outputs(output_dir, modelname, requested_numsp)
+    finalize_display_outputs(output_dir, modelname, requested_numsp, encode_video=not args.frames_only)
     print(f"PlotFig completed: plotted={plotted}, skipped={skipped}")
 
 
