@@ -18,6 +18,7 @@ from astropy.coordinates import CartesianRepresentation, CartesianDifferential, 
 import astropy.units as u
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+from matplotlib.colors import LogNorm
 import warnings
 
 from basefunc import Analysis, DataProcessor, GalaxySimulation
@@ -841,12 +842,9 @@ def _gas_contour_levels(cd_smooth, mode="threshold"):
     raise ValueError(f"Unsupported gas contour level mode: {mode}")
 
 
-def _plot_gas_sky_panel(
+def _plot_hi_sky_panel(
+    fig,
     ax,
-    cold_gas_x_kpc,
-    cold_gas_y_kpc,
-    hot_gas_x_kpc,
-    hot_gas_y_kpc,
     x_contour_kpc,
     y_contour_kpc,
     cd_smooth,
@@ -854,11 +852,11 @@ def _plot_gas_sky_panel(
     *,
     wind_tunnel=False,
 ):
-    cold_label, hot_label = ('Cold gas', 'Warm and hot gas') if wind_tunnel else ('HI Gas', 'HII Gas')
-    ax.scatter(20, 20, s=18, color='aquamarine', label=cold_label)
-    ax.scatter(20, 20, s=18, color='orange', label=hot_label)
-    ax.scatter(cold_gas_x_kpc, cold_gas_y_kpc, s=4, color='aquamarine')
-    ax.scatter(hot_gas_x_kpc, hot_gas_y_kpc, s=5, color='orange')
+    column = np.ma.masked_less_equal(np.ma.masked_invalid(cd_smooth.T), 0.)
+    if column.count():
+        image = ax.pcolormesh(x_contour_kpc, y_contour_kpc, column / 1.e19,
+                              cmap='BuGn', vmin=0., shading='auto')
+        _append_colorbar(fig, ax, image, r'$N_{\mathrm{H\,I}}$ ($10^{19}\,\mathrm{cm}^{-2}$)')
     levels = _gas_contour_levels(cd_smooth, mode="morphology")
     if levels is not None:
         ax.contour(
@@ -867,7 +865,7 @@ def _plot_gas_sky_panel(
             cd_smooth.T,
             levels=levels,
             colors=GAS_PARTICLE_CONTOUR_COLOR,
-            linewidths=1.2,
+            linewidths=.8,
         )
     _style_axis(
         ax,
@@ -877,7 +875,7 @@ def _plot_gas_sky_panel(
         ylim=(-field_half_width_kpc, field_half_width_kpc),
         invert_x=True,
     )
-    ax.legend(loc='upper left', fontsize=10)
+    ax.set_aspect('equal', adjustable='box')
 
 
 def _plot_stellar_sky_panel(
@@ -964,9 +962,40 @@ def _plot_vlos_panel(fig, ax, vf, extent_vf, arrow_tip=None):
     _append_colorbar(fig, ax, sc, r'$\langle v_{los}\rangle-v_0$ (km/s)')
 
 
-def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, star_z, cy, cz,
-                      *, wind_tunnel=False):
-    arrow_length = 7
+def _plot_scene_panel(fig, ax, snapshot, star_y, star_z):
+    df = snapshot['df']
+    cy, cz = snapshot['cy'], snapshot['cz']
+    wind_tunnel = snapshot.get('wind_tunnel') is not None
+    y_limits = z_limits = (-20., 20.)
+    arrow_length = 7.
+    if wind_tunnel:
+        host = snapshot['observer_host_state']
+        width = host['box_size_code'] * host['length_to_kpc']
+        box_y, box_z = host['box_center_grf_kpc'][1:]
+        y_limits = (box_y - cy - width / 2, box_y - cy + width / 2)
+        z_limits = (box_z - cz - width / 2, box_z - cz + width / 2)
+        arrow_length *= width / 40.
+
+        # This scene projects the full wind tunnel. The sky maps and
+        # measurements use their own stellar-centred gas apertures.
+        gas = df.loc[df['tp'] == 0, ['y', 'z', 'm', 'temp']]
+        bins = max(1, round(width / 2.))
+        mass, y_edges, z_edges = np.histogram2d(
+            gas['y'] - cy, gas['z'] - cz, bins=bins, range=(y_limits, z_limits), weights=gas['m'])
+        area = np.outer(np.diff(y_edges), np.diff(z_edges))
+        surface_density = np.ma.masked_less_equal(mass.T, 0.) / area.T
+        if surface_density.count():
+            background = ax.pcolormesh(y_edges, z_edges, surface_density,
+                                       shading='flat', cmap='YlOrBr', norm=LogNorm(), zorder=0)
+            _append_colorbar(fig, ax, background, r'$\Sigma_{\mathrm{gas}}$ ($M_\odot\,\mathrm{kpc}^{-2}$)')
+        cold_gas = gas.loc[gas['temp'] < snapshot['membership_state']['gas_temperature_split_K']]
+        cold_label = 'Cold gas'
+        ax.set_title('Full wind tunnel', fontsize=13)
+        ax.set_aspect('equal', adjustable='box')
+    else:
+        cold_gas = df.loc[snapshot['dw_cold_gas_mask']]
+        cold_label = 'HI Gas'
+
     total_distance = np.hypot(cy, cz)
     if total_distance > 0:
         normalized_cz = (-cy / total_distance) * arrow_length
@@ -986,15 +1015,13 @@ def _plot_scene_panel(ax, cold_gas_y, cold_gas_z, hot_gas_y, hot_gas_z, star_y, 
         ec='black',
         zorder=6,
     )
-    ax.scatter(cold_gas_y - cy, cold_gas_z - cz, c='aquamarine', s=4, lw=0)
-    ax.scatter(hot_gas_y - cy, hot_gas_z - cz, c='orange', s=2, lw=0)
-    ax.scatter(star_y - cy, star_z - cz, c='gray', s=2, lw=0)
-    cold_label, hot_label = ('Cold gas', 'Warm and hot gas') if wind_tunnel else ('HI Gas', 'HII Gas')
-    ax.scatter(50, 50, s=70, color='aquamarine', label=cold_label)
-    ax.scatter(50, 50, s=70, color='orange', label=hot_label)
-    ax.scatter(50, 50, s=70, color='gray', label='Stars')
-    _style_axis(ax, 'Y (kpc)', 'Z (kpc)', xlim=(-20, 20), ylim=(-20, 20))
-    ax.legend(loc='lower left', fontsize=14)
+    ax.scatter(cold_gas['y'] - cy, cold_gas['z'] - cz, c='aquamarine', s=4, lw=0, label=cold_label)
+    if not wind_tunnel:
+        hot_gas = df.loc[snapshot['dw_hot_gas_mask']]
+        ax.scatter(hot_gas['y'] - cy, hot_gas['z'] - cz, c='orange', s=2, lw=0, label='HII Gas')
+    ax.scatter(star_y - cy, star_z - cz, c='gray', s=2, lw=0, label='Stars')
+    _style_axis(ax, 'Y (kpc)', 'Z (kpc)', xlim=y_limits, ylim=z_limits)
+    ax.legend(loc='lower left', fontsize=14, markerscale=4.)
 
 
 def _plot_velocity_dispersion_panel(ax, bin_centers, vlos_dispersion, tsigma, r_half):
@@ -1239,12 +1266,8 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     vx_star = star_df['vx'].to_numpy()
     vy_star = star_df['vy'].to_numpy()
     vz_star = star_df['vz'].to_numpy()
-    cold_gas_df = df.loc[dw_cold_gas_mask, ['y', 'z', 'nh', 'm']]
-    hot_gas_df = df.loc[snapshot['dw_hot_gas_mask'], ['y', 'z', 'nh', 'm']]
-    cold_gas_y = cold_gas_df['y'].to_numpy()
-    cold_gas_z = cold_gas_df['z'].to_numpy()
-    hot_gas_y = hot_gas_df['y'].to_numpy()
-    hot_gas_z = hot_gas_df['z'].to_numpy()
+    cold_gas_df = df.loc[dw_cold_gas_mask, ['nh', 'm']]
+    hot_gas_df = df.loc[snapshot['dw_hot_gas_mask'], ['nh', 'm']]
 
     gas_ratio_stellar_region = hi_fraction(coldgas_mass, star_mass)
     gas_half_ratio = hi_fraction(coldgas_half_mass, star_half_mass)
@@ -1368,7 +1391,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
 
     vgsr = np.sqrt(vr**2 + vtheta**2 + vphi**2)
 
-    cold_gas_mass_nh = hi_particle_masses(
+    gas_hi_mass = hi_particle_masses(
         np.concatenate((cold_gas_df['m'].to_numpy(), hot_gas_df['m'].to_numpy())),
         np.concatenate((cold_gas_df['nh'].to_numpy(), hot_gas_df['nh'].to_numpy())))
     contour_range_kpc = [
@@ -1380,7 +1403,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     cold_gas_mass_contour, x_contour_kpc, y_contour_kpc, cd_smooth = Analysis.est_gas_contour(
         np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc']))[gas_front],
         np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc']))[gas_front],
-        cold_gas_mass_nh[gas_front],
+        gas_hi_mass[gas_front],
         box=None,
         nbins=GAS_CONTOUR_NBINS,
         smooth_sigma=GAS_CONTOUR_SMOOTH_SIGMA_PIXELS,
@@ -1409,10 +1432,6 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'gas_half_frac': gas_half_frac,
         'star_y': y_star,
         'star_z': z_star,
-        'cold_gas_y': cold_gas_y,
-        'cold_gas_z': cold_gas_z,
-        'hot_gas_y': hot_gas_y,
-        'hot_gas_z': hot_gas_z,
         'cold_gas_center_ra': cold_gas_center_ra,
         'cold_gas_center_dec': cold_gas_center_dec,
         'arrow_tip': arrow_tip,
@@ -1656,10 +1675,6 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     df = snapshot['df']
     tsnap = (snapshot['observer_host_state']['elapsed_since_insertion_Myr'] / 1000.
              if wind_tunnel else snapshot['tsnap'])
-    hot_gas_x_kpc = snapshot['hot_gas_x_kpc']
-    hot_gas_y_kpc = snapshot['hot_gas_y_kpc']
-    cold_gas_x_kpc = snapshot['cold_gas_x_kpc']
-    cold_gas_y_kpc = snapshot['cold_gas_y_kpc']
     metrics = _compute_plot_snapshot_metrics(snapshot, context, numsp)
     after_metrics = time.perf_counter()
     after_metrics_rss = get_rss_mb() if profile_memory else None
@@ -1711,14 +1726,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     if verbose:
         print('Begin plotting...')
 
-    #--- Gas sky map (kpc) ---#
+    #--- H I sky map (kpc) ---#
 
-    _plot_gas_sky_panel(
+    _plot_hi_sky_panel(
+        fig,
         axes[1, 1],
-        cold_gas_x_kpc,
-        cold_gas_y_kpc,
-        hot_gas_x_kpc,
-        hot_gas_y_kpc,
         metrics['x_contour_kpc'],
         metrics['y_contour_kpc'],
         metrics['cd_smooth'],
@@ -1764,16 +1776,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
 
     #--- 3D Scene in Y-Z ---#
     _plot_scene_panel(
+        fig,
         axes[0, 3],
-        metrics['cold_gas_y'],
-        metrics['cold_gas_z'],
-        metrics['hot_gas_y'],
-        metrics['hot_gas_z'],
+        snapshot,
         metrics['star_y'],
         metrics['star_z'],
-        metrics['cy'],
-        metrics['cz'],
-        wind_tunnel=wind_tunnel,
     )
 
     if verbose:
@@ -1992,7 +1999,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     del df
     del simulation
     del fig
-    del dw_elinfo, cold_gas_x_kpc, cold_gas_y_kpc, hot_gas_x_kpc, hot_gas_y_kpc
+    del dw_elinfo
     del metrics
     del sm_str, shm_str, cg_str, cghm_str, gas_ratio_stellar_region, gas_half_ratio, gas_frac_stellar_region, gas_half_frac
     del snapshot

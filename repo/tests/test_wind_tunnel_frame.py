@@ -99,3 +99,30 @@ def test_wind_sfh_observations_use_the_explicit_lookback_reference():
     edges, sfr = _observed_sfh_on_wind_clock(pd.DataFrame(dict(age=[.25, 1.25], sfr=[1., 3.])), .6)
     np.testing.assert_allclose(edges, [-.9, -.4, .1, .6])
     np.testing.assert_allclose(sfr, [3., np.nan, 1.])
+
+
+def test_wind_scene_projects_gas_across_the_whole_box():
+    from matplotlib.collections import QuadMesh
+    from matplotlib.figure import Figure
+    from PlotFig import _plot_scene_panel
+
+    # The two exterior gas cells lie far beyond the stellar-centred aperture.
+    # The non-gas row lies inside the box and carries a larger mass.
+    snapshot = dict(
+        wind_tunnel={}, cy=11., cz=-21.,
+        observer_host_state=dict(box_center_grf_kpc=[0., 10., -20.],
+                                 box_size_code=50., length_to_kpc=2.),
+        membership_state=dict(gas_temperature_split_K=20000.),
+        df=pd.DataFrame(dict(
+            tp=[0, 0, 0, 2],
+            y=[11., 59., -39., 11.], z=[-21., 27., -69., -21.],
+            m=[2., 6., 9., 1000.], temp=[100., 1.e6, 1.e6, 0.],
+        )),
+    )
+    fig = Figure()
+    ax = fig.subplots()
+    _plot_scene_panel(fig, ax, snapshot, np.array([11.]), np.array([-21.]))
+    mesh = next(artist for artist in ax.collections if isinstance(artist, QuadMesh))
+    assert mesh.get_array().sum() * 2.**2 == pytest.approx(17.)
+    assert ax.get_xlim() == (-51., 49.)
+    assert ax.get_ylim() == (-49., 51.)

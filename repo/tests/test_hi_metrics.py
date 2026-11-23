@@ -28,6 +28,21 @@ class HIMassTests(unittest.TestCase):
         self.assertAlmostEqual(cold+warm,4.56,places=6)
         self.assertAlmostEqual(hi_fraction(cold+warm,10),4.56/14.56,places=7)
 
+    def test_hi_sky_panel_draws_column_density_without_gas_particles(self):
+        from matplotlib.collections import QuadMesh
+        from matplotlib.figure import Figure
+        from PlotFig import _plot_hi_sky_panel
+
+        fig = Figure()
+        ax = fig.subplots()
+        x, y = np.meshgrid([-1., 1.], [-1., 1.])
+        column_density = 1.e19 * np.array([[2., 3.], [4., 5.]])
+        with patch.object(ax, 'scatter', wraps=ax.scatter) as scatter:
+            _plot_hi_sky_panel(fig, ax, x, y, column_density, 2.)
+        scatter.assert_not_called()
+        mesh = next(artist for artist in ax.collections if isinstance(artist, QuadMesh))
+        np.testing.assert_array_equal(mesh.get_array().reshape(2, 2), column_density.T / 1.e19)
+
     def test_fraction_limits_and_invalid_masses(self):
         self.assertEqual(hi_fraction(0, 62), 0)
         self.assertEqual(hi_fraction(38, 0), 1)

@@ -51,6 +51,9 @@ centre. The measured pressures use CGM in the specified cone.
 The wind plot compares the prescribed box track with the measured stellar
 track. Wind pressure and gas origin are shown at saved epochs on the
 time-since-insertion axis.
+The H I sky panel maps neutral-hydrogen column density. The wind tunnel Y–Z
+scene projects every gas element in the snapshot as mass per pixel area.
+Its axis limits follow the full box and its origin is the stellar centre.
 PlotFig also bins the recorded formation times of current type-4 member
 stars in 50 Myr intervals on that axis. The curve includes stars formed
 during the inherited isolation evolution and stars formed in the wind
