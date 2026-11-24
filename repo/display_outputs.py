@@ -9,9 +9,11 @@ from canonical_display import TAN_DISPLAY_CONTRACT_ID, DISPLAY_RELATIVE_DIR
 
 
 RENDER_REVISION = 5
+WIND_RENDER_REVISION = 6
 DISPLAY_IDENTITY_FIELDS = (
     'canonical_observer_id', 'member_selection_id', 'display_contract_id',
     'relative_directory', 'render_revision', 'wind_tunnel_run_id',
+    'wind_summary_sha256', 'wind_sfh_reference_snapshot',
 )
 _ordinary_display_identities = {}
 
@@ -43,7 +45,7 @@ def write_json_atomic(path, value):
             os.unlink(temporary)
 
 
-def display_identity(summary):
+def display_identity(summary, *, wind_sfh_snapshot=None):
     identities = []
     wind_tunnel_run_id = None
     with Path(summary).open(encoding='utf-8') as stream:
@@ -58,7 +60,9 @@ def display_identity(summary):
         raise ValueError('Display requires one canonical summary identity')
     identity = identities[0]
     if wind_tunnel_run_id is not None:
-        identity['wind_tunnel_run_id'] = wind_tunnel_run_id
+        identity.update(wind_tunnel_run_id=wind_tunnel_run_id, render_revision=WIND_RENDER_REVISION,
+                        wind_summary_sha256=file_sha256(summary),
+                        wind_sfh_reference_snapshot=wind_sfh_snapshot)
     required = ('canonical_observer_id', 'member_selection_id')
     if any(not identity.get(key) for key in required):
         raise ValueError('Incomplete canonical summary identity')
@@ -67,7 +71,7 @@ def display_identity(summary):
         require_canonical_csv(summary)
         identity.update(display_contract_id=TAN_DISPLAY_CONTRACT_ID,
                         relative_directory=DISPLAY_RELATIVE_DIR,
-                        render_revision=RENDER_REVISION)
+                        render_revision=identity.get('render_revision', RENDER_REVISION))
         return {key: identity[key] for key in DISPLAY_IDENTITY_FIELDS if key in identity}
     source = Path(__file__).resolve().parent
     identity.update(display_contract_id=TAN_DISPLAY_CONTRACT_ID,

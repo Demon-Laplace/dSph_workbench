@@ -1,4 +1,5 @@
 import gc
+import json
 import os
 import ctypes
 import shutil
@@ -70,6 +71,21 @@ GAS_CONTOUR_NBINS = 50
 GAS_CONTOUR_SMOOTH_SIGMA_PIXELS = 2.0
 GAS_PARTICLE_CONTOUR_PERCENTILES = (35.0, 55.0, 75.0, 90.0, 94.0, 97.0, 99.0)
 GAS_PARTICLE_CONTOUR_COLOR = '#303030'
+WIND_HI_HALF_WIDTH_KPC = 5.
+WIND_HI_GRID_HALF_WIDTH_KPC = 15.
+WIND_HI_COLOR_MAX = 100.  # 10^19 cm^-2
+WIND_HI_CONTOURS = np.array([1., 3., 6., 10., 30., 100.]) * 1.e19
+WIND_SURFACE_DENSITY_LIMITS = (1.e4, 1.e8)  # Msun kpc^-2
+WIND_GAS_HISTORY = (
+    ('wind_dwarf_gas_r2_msun', r'Dwarf-origin gas, $r<2$ kpc'),
+    ('wind_dwarf_gas_r5_msun', r'Dwarf-origin gas, $r<5$ kpc'),
+    ('wind_ambient_gas_r5_msun', r'CGM-origin gas, $r<5$ kpc'),
+)
+WIND_PRESSURE_HISTORY = (
+    ('wind_prescribed_Pram_dyn_cm2', 'Input at the box centre'),
+    ('wind_upstream12_20_Pram_dyn_cm2', 'Upstream, 12–20 kpc'),
+    ('wind_upstream20_40_Pram_dyn_cm2', 'Upstream, 20–40 kpc'),
+)
 OBS_BACKGROUND_MIN_RADIUS_DEG = 5.0
 OBS_BACKGROUND_MIN_BINS = 3
 OBS_BACKGROUND_FALLBACK_RADIUS_QUANTILE = 0.9
@@ -619,9 +635,18 @@ def build_plot_context():
         dw_elinfo['rhalf_circularized'].to_numpy(dtype=float),
     )
     history_context = {}
+    wind_sfh_snapshot = None
     sfh_path = os.environ.get('DSPH_SFH_OBSERVATION', f'../SFH_{dwarf_name}.csv')
     if wind_tunnel:
-        history_limit = max(.01, float(dw_elinfo['age'].max()))
+        history_limit = wind_tunnel.orbit[-1, 0] / 1000.
+        matching = set(DataProcessor.list_snapshot_numbers(folder_path)).intersection(elinfo_snapshots)
+        if not matching:
+            raise FileNotFoundError('No snapshots are present in both the output directory and the elinfo file')
+        wind_sfh_snapshot = max(matching)
+        history_context.update(
+            wind_history_limits=_wind_history_limits(wind_tunnel, dw_elinfo),
+            wind_sfh=_wind_reference_sfh(folder_path, wind_sfh_snapshot, core_radius),
+        )
         reference_epoch = wind_tunnel.sfh_reference_elapsed_gyr
         if reference_epoch is not None:
             observed_sfh = pd.read_csv(sfh_path)
@@ -651,7 +676,7 @@ def build_plot_context():
         'inifile': inifile,
         'dw_particles': dw_particles,
         'elinfo_path': elinfo_path,
-        'display_identity': display_identity(elinfo_path),
+        'display_identity': display_identity(elinfo_path, wind_sfh_snapshot=wind_sfh_snapshot),
         'core_radius': core_radius,
         'dw_elinfo': dw_elinfo,
         'elinfo_by_numsp': elinfo_by_numsp,
@@ -717,10 +742,10 @@ def _style_axis(ax, xlabel, ylabel, xlim=None, ylim=None, invert_x=False):
     ax.grid(True)
 
 
-def _append_colorbar(fig, ax, mappable, label):
+def _append_colorbar(fig, ax, mappable, label, **kwargs):
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="4%", pad=0.05)
-    cbar = fig.colorbar(mappable, cax=cax)
+    cbar = fig.colorbar(mappable, cax=cax, **kwargs)
     cbar.set_label(label, fontsize=14)
     cax.tick_params(axis='both', which='both', direction='in')
     cax.minorticks_on()
@@ -842,6 +867,14 @@ def _gas_contour_levels(cd_smooth, mode="threshold"):
     raise ValueError(f"Unsupported gas contour level mode: {mode}")
 
 
+def _wind_hi_levels(column, minimum=0.):
+    finite = column[np.isfinite(column)]
+    if not finite.size:
+        return np.array([])
+    return WIND_HI_CONTOURS[(WIND_HI_CONTOURS >= minimum)
+                           & (WIND_HI_CONTOURS > finite.min()) & (WIND_HI_CONTOURS < finite.max())]
+
+
 def _plot_hi_sky_panel(
     fig,
     ax,
@@ -853,12 +886,17 @@ def _plot_hi_sky_panel(
     wind_tunnel=False,
 ):
     column = np.ma.masked_less_equal(np.ma.masked_invalid(cd_smooth.T), 0.)
-    if column.count():
+    if wind_tunnel or column.count():
         image = ax.pcolormesh(x_contour_kpc, y_contour_kpc, column / 1.e19,
-                              cmap='BuGn', vmin=0., shading='auto')
-        _append_colorbar(fig, ax, image, r'$N_{\mathrm{H\,I}}$ ($10^{19}\,\mathrm{cm}^{-2}$)')
-    levels = _gas_contour_levels(cd_smooth, mode="morphology")
-    if levels is not None:
+                              cmap='BuGn', vmin=0., vmax=WIND_HI_COLOR_MAX if wind_tunnel else None,
+                              shading='auto')
+        _append_colorbar(fig, ax, image, r'$N_{\mathrm{H\,I}}$ ($10^{19}\,\mathrm{cm}^{-2}$)',
+                         extend='max' if wind_tunnel else 'neither')
+    if wind_tunnel:
+        levels = _wind_hi_levels(cd_smooth)
+    else:
+        levels = _gas_contour_levels(cd_smooth, mode="morphology")
+    if levels is not None and len(levels):
         ax.contour(
             x_contour_kpc,
             y_contour_kpc,
@@ -899,6 +937,7 @@ def _plot_stellar_sky_panel(
     arrow_tip=None,
     shape_outline=None,
     gas_center_label='HI Center',
+    fixed_gas_levels=False,
 ):
     arrow_length = 1.5
     norm = np.hypot(mean_pmra, mean_pmdec)
@@ -924,8 +963,8 @@ def _plot_stellar_sky_panel(
     im = ax.imshow(img.T, origin='lower', extent=extent, cmap='bone_r', vmin=22, vmax=34)
     ax.scatter(cold_gas_center_ra, cold_gas_center_dec, s=50, marker='x', color='red', label=gas_center_label)
 
-    levels = _gas_contour_levels(cd_smooth, mode="threshold")
-    if levels is not None:
+    levels = _wind_hi_levels(cd_smooth, cd_threshold) if fixed_gas_levels else _gas_contour_levels(cd_smooth, mode="threshold")
+    if levels is not None and len(levels):
         ax.contour(x_contour, y_contour, cd_smooth.T, levels=levels, colors='teal')
         ax.plot([], [], color='teal', label=f'$N_{{HI}} > {cd_threshold_str} atoms/cm^2$')
 
@@ -968,32 +1007,34 @@ def _plot_scene_panel(fig, ax, snapshot, star_y, star_z):
     wind_tunnel = snapshot.get('wind_tunnel') is not None
     y_limits = z_limits = (-20., 20.)
     arrow_length = 7.
+    star_y_offset, star_z_offset = star_y - cy, star_z - cz
     if wind_tunnel:
         host = snapshot['observer_host_state']
         width = host['box_size_code'] * host['length_to_kpc']
-        box_y, box_z = host['box_center_grf_kpc'][1:]
-        y_limits = (box_y - cy - width / 2, box_y - cy + width / 2)
-        z_limits = (box_z - cz - width / 2, box_z - cz + width / 2)
+        y_limits = z_limits = (-width / 2, width / 2)
         arrow_length *= width / 40.
 
-        # This scene projects the full wind tunnel. The sky maps and
-        # measurements use their own stellar-centred gas apertures.
+        # Centre each periodic image on the stars while retaining the full box.
         gas = df.loc[df['tp'] == 0, ['y', 'z', 'm', 'temp']]
+        gas_y, gas_z = _periodic_scene_offsets(gas['y'] - cy, gas['z'] - cz, width)
+        star_y_offset, star_z_offset = _periodic_scene_offsets(star_y_offset, star_z_offset, width)
         bins = max(1, round(width / 2.))
         mass, y_edges, z_edges = np.histogram2d(
-            gas['y'] - cy, gas['z'] - cz, bins=bins, range=(y_limits, z_limits), weights=gas['m'])
+            gas_y, gas_z, bins=bins, range=(y_limits, z_limits), weights=gas['m'])
         area = np.outer(np.diff(y_edges), np.diff(z_edges))
         surface_density = np.ma.masked_less_equal(mass.T, 0.) / area.T
-        if surface_density.count():
-            background = ax.pcolormesh(y_edges, z_edges, surface_density,
-                                       shading='flat', cmap='YlOrBr', norm=LogNorm(), zorder=0)
-            _append_colorbar(fig, ax, background, r'$\Sigma_{\mathrm{gas}}$ ($M_\odot\,\mathrm{kpc}^{-2}$)')
-        cold_gas = gas.loc[gas['temp'] < snapshot['membership_state']['gas_temperature_split_K']]
+        background = ax.pcolormesh(y_edges, z_edges, surface_density, shading='flat', cmap='YlOrBr',
+                                   norm=LogNorm(*WIND_SURFACE_DENSITY_LIMITS), zorder=0)
+        _append_colorbar(fig, ax, background, r'$\Sigma_{\mathrm{gas}}$ ($M_\odot\,\mathrm{kpc}^{-2}$)',
+                         extend='both')
+        cold = gas['temp'].to_numpy() < snapshot['membership_state']['gas_temperature_split_K']
+        cold_y, cold_z = gas_y[cold], gas_z[cold]
         cold_label = 'Cold gas'
         ax.set_title('Full wind tunnel', fontsize=13)
         ax.set_aspect('equal', adjustable='box')
     else:
         cold_gas = df.loc[snapshot['dw_cold_gas_mask']]
+        cold_y, cold_z = cold_gas['y'] - cy, cold_gas['z'] - cz
         cold_label = 'HI Gas'
 
     total_distance = np.hypot(cy, cz)
@@ -1015,13 +1056,18 @@ def _plot_scene_panel(fig, ax, snapshot, star_y, star_z):
         ec='black',
         zorder=6,
     )
-    ax.scatter(cold_gas['y'] - cy, cold_gas['z'] - cz, c='aquamarine', s=4, lw=0, label=cold_label)
+    ax.scatter(cold_y, cold_z, c='aquamarine', s=4, lw=0, label=cold_label)
     if not wind_tunnel:
         hot_gas = df.loc[snapshot['dw_hot_gas_mask']]
         ax.scatter(hot_gas['y'] - cy, hot_gas['z'] - cz, c='orange', s=2, lw=0, label='HII Gas')
-    ax.scatter(star_y - cy, star_z - cz, c='gray', s=2, lw=0, label='Stars')
+    ax.scatter(star_y_offset, star_z_offset, c='gray', s=2, lw=0, label='Stars')
     _style_axis(ax, 'Y (kpc)', 'Z (kpc)', xlim=y_limits, ylim=z_limits)
     ax.legend(loc='lower left', fontsize=14, markerscale=4.)
+
+
+def _periodic_scene_offsets(y_offset, z_offset, width):
+    return tuple(np.remainder(np.asarray(offset) + width / 2, width) - width / 2
+                 for offset in (y_offset, z_offset))
 
 
 def _plot_velocity_dispersion_panel(ax, bin_centers, vlos_dispersion, tsigma, r_half):
@@ -1084,6 +1130,8 @@ def _plot_surface_brightness_profile(
     mag_profile,
     adaptive_ml_profile=None,
     adaptive_ml_summary=None,
+    *,
+    fixed_view_profile=None,
 ):
     r_centers_plot = np.asarray(r_centers, dtype=float)
     mag_profile_plot = np.asarray(mag_profile, dtype=float)
@@ -1106,7 +1154,8 @@ def _plot_surface_brightness_profile(
     ax.plot(
         r_centers_plot[finite_profile],
         mag_profile_plot[finite_profile],
-        label=f'Simulation M/L={sim_plot_mass_to_light_ratio:g}',
+        label=(f'Orbit view, M/L={sim_plot_mass_to_light_ratio:g}' if fixed_view_profile is not None
+               else f'Simulation M/L={sim_plot_mass_to_light_ratio:g}'),
         color='black',
         lw=1.2,
         zorder=3,
@@ -1121,7 +1170,11 @@ def _plot_surface_brightness_profile(
         ms=3,
         zorder=3.1,
     )
-    if adaptive_ml_profile is not None and adaptive_ml_summary is not None:
+    if fixed_view_profile is not None:
+        finite, _ = _surface_brightness_profile_masks(r_centers_plot, fixed_view_profile)
+        ax.plot(r_centers_plot[finite], fixed_view_profile[finite], color='tab:blue', ls='--',
+                lw=1.4, label=f'Fixed view, circular, M/L={sim_plot_mass_to_light_ratio:g}')
+    elif adaptive_ml_profile is not None and adaptive_ml_summary is not None:
         adaptive_ml_profile_plot = np.asarray(adaptive_ml_profile, dtype=float)
         adaptive_finite_profile, adaptive_marker_mask = _surface_brightness_profile_masks(
             r_centers_plot,
@@ -1200,7 +1253,7 @@ def _plot_gas_fraction_panel(ax, dw_elinfo, tsnap, gas_half_ratio, gas_ratio_ste
 
 
 def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsnap, sigma_value, t_peri, sigma_x, sigma_y, sigma_z,
-                              *, time_label='Simulation Time (Gyr)'):
+                              *, time_label='Simulation Time (Gyr)', time_end=None):
     ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.sigma.to_numpy(), lw=2, color='black', label=r'$\sigma_{los}$')
     ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.tsigma.to_numpy(), lw=2, color='gray', label=r'$\sigma_{baryon}$')
     if 'tsigma_xyz' in dw_elinfo.columns:
@@ -1208,7 +1261,8 @@ def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsn
     ax.plot(dw_elinfo.age.to_numpy(), sigma_mw_theoretical, lw=2, color='lightcoral', label=r'$\sigma_{MW}$')
     ax.plot(dw_elinfo.age.to_numpy(), sigma_mw, lw=2, color='c', label=r'$\sigma_{est}$')
     ax.scatter(tsnap, sigma_value, s=70, zorder=5, color='red')
-    _style_axis(ax, time_label, 'velocity dispersion (km/s)', xlim=(0, t_peri * 1.2), ylim=(-0.08, 20.9))
+    _style_axis(ax, time_label, 'velocity dispersion (km/s)', xlim=(0, t_peri * 1.2 if time_end is None else time_end),
+                ylim=(-0.08, 20.9))
     ax.vlines(tsnap, 0, 25, color='gray', lw=2, ls='--', zorder=0)
     ax.legend(loc='upper left', fontsize=15)
     ax.text(
@@ -1222,6 +1276,17 @@ def _plot_sigma_history_panel(ax, dw_elinfo, sigma_mw_theoretical, sigma_mw, tsn
         va='top',
         fontsize=14,
     )
+
+
+def _fixed_view_light_profile(star_position, mass, center, los, distance, **profile_kwargs):
+    offsets = star_position - center
+    radius_squared = np.einsum('ij,ij->i', offsets, offsets) - (offsets @ los) ** 2
+    radius = np.sqrt(np.maximum(radius_squared, 0.))
+    _, profile = Analysis.radial_magnitude_profile(
+        radius, np.zeros_like(radius), mass, distance, ep=0.,
+        m_l_relation=sim_plot_mass_to_light_ratio, **profile_kwargs,
+    )
+    return profile
 
 
 def _compute_plot_snapshot_metrics(snapshot, context, numsp):
@@ -1330,14 +1395,22 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         center_y=shape_center_y_kpc,
         **profile_kwargs,
     )
-    adaptive_ml_summary = _fit_adaptive_scalar_mass_to_light(
-        r_centers,
-        mag_profile,
-        context['dprof'],
-        context['mag_obs'],
-        context['mag_obs_err'],
-        r_half,
-    )
+    wind_tunnel = context.get('wind_tunnel')
+    fixed_view_profile = adaptive_ml_summary = None
+    if wind_tunnel:
+        native = snapshot['star_coords']['_native']
+        sun = native['observer']['sun_position_kpc']
+        los = wind_tunnel.orbit[0, 1:4] - sun
+        los /= np.linalg.norm(los)
+        pointing = snapshot['star_coords']['_sky']['center_h_native_kpc'] + sun
+        fixed_view_profile = _fixed_view_light_profile(
+            np.column_stack((x_star, y_star, z_star)), star_mass_array, pointing,
+            los, d_mean, **profile_kwargs,
+        )
+    else:
+        adaptive_ml_summary = _fit_adaptive_scalar_mass_to_light(
+            r_centers, mag_profile, context['dprof'], context['mag_obs'], context['mag_obs_err'], r_half,
+        )
     adaptive_ml_profile = (
         None if adaptive_ml_summary is None else adaptive_ml_summary['mag_profile']
     )
@@ -1400,10 +1473,11 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     ]
     gas_front = np.concatenate((snapshot['cold_gas_coords']['_sky']['front_mask'],
                                 snapshot['hot_gas_coords']['_sky']['front_mask']))
+    gas_east = np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc']))[gas_front]
+    gas_north = np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc']))[gas_front]
+    gas_mass = gas_hi_mass[gas_front]
     cold_gas_mass_contour, x_contour_kpc, y_contour_kpc, cd_smooth = Analysis.est_gas_contour(
-        np.concatenate((cold_gas_x_kpc, snapshot['hot_gas_x_kpc']))[gas_front],
-        np.concatenate((cold_gas_y_kpc, snapshot['hot_gas_y_kpc']))[gas_front],
-        gas_hi_mass[gas_front],
+        gas_east, gas_north, gas_mass,
         box=None,
         nbins=GAS_CONTOUR_NBINS,
         smooth_sigma=GAS_CONTOUR_SMOOTH_SIGMA_PIXELS,
@@ -1416,7 +1490,19 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
     star_hist, _, _ = np.histogram2d(np.asarray(snapshot['x_kpc'])[star_front], np.asarray(snapshot['y_kpc'])[star_front], bins=GAS_CONTOUR_NBINS,
         range=contour_range_kpc, weights=df.loc[total_dw_star_mask, 'm'].to_numpy()[star_front])
     star_mass_contour = star_hist[cd_smooth > cd_threshold].sum(dtype=np.float64)
-    x_contour,y_contour=tangent_kpc_to_display(snapshot['star_coords']['_sky'],x_contour_kpc,y_contour_kpc)
+    hi_map = (x_contour_kpc, y_contour_kpc, cd_smooth, sky_field_half_width_kpc)
+    overlay_east, overlay_north, overlay_column = x_contour_kpc, y_contour_kpc, cd_smooth
+    if wind_tunnel:
+        half_width = WIND_HI_GRID_HALF_WIDTH_KPC
+        limits = (-half_width, half_width)
+        bins = round(GAS_CONTOUR_NBINS * half_width / WIND_HI_HALF_WIDTH_KPC)
+        _, overlay_east, overlay_north, overlay_column = Analysis.est_gas_contour(
+            gas_east, gas_north, gas_mass, box=None, nbins=bins,
+            smooth_sigma=GAS_CONTOUR_SMOOTH_SIGMA_PIXELS, histogram_range=(limits, limits),
+            smooth_mode='constant',
+        )
+        hi_map = (overlay_east, overlay_north, overlay_column, WIND_HI_HALF_WIDTH_KPC)
+    x_contour, y_contour = tangent_kpc_to_display(snapshot['star_coords']['_sky'], overlay_east, overlay_north)
 
     return {
         'display_grid': display_grid,
@@ -1451,6 +1537,7 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'mag_profile': mag_profile,
         'adaptive_ml_profile': adaptive_ml_profile,
         'adaptive_ml_summary': adaptive_ml_summary,
+        'fixed_view_profile': fixed_view_profile,
         'vlos_array': vlos_array,
         'vlos_detrended': vlos_detrended,
         'velocity_gradient': member_kinematics['velocity_gradient'],
@@ -1476,7 +1563,9 @@ def _compute_plot_snapshot_metrics(snapshot, context, numsp):
         'x_contour': x_contour,
         'y_contour': y_contour,
         'cd_smooth': cd_smooth,
+        'overlay_column': overlay_column,
         'sky_field_half_width_kpc': sky_field_half_width_kpc,
+        'hi_map': hi_map,
     }
 
 
@@ -1531,6 +1620,42 @@ def _wind_sfr_series(snapshot, elapsed_gyr, bin_width_gyr=.05):
     return edges, _binned_simulated_sfr(birth, mass[valid], edges)
 
 
+def _wind_reference_sfh(source_directory, snapshot_number, core_radius):
+    """Use one reference output for the SFH shown throughout the sequence."""
+    simulation = GalaxySimulation(folder_path=source_directory, snapshot_num=snapshot_number)
+    _, time = simulation.load_snapshot(
+        dftype=3, box=False, gas_fields=(), star_fields=('birth',), particle_types=(2, 3, 4),
+    )
+    stars = simulation.center_on_MW()
+    _, members = simulation.classify_mw_dwarf(df=stars, r_exclude=5, dwarf_radius=3 * core_radius,
+                                              k_density=16)
+    elapsed = simulation.wind_tunnel.at_time(time)['elapsed_since_insertion_Myr'] / 1000.
+    return _wind_sfr_series(dict(simulation=simulation, tsnap=time, df=stars,
+                                total_dw_star_mask=members), elapsed)
+
+
+def _history_upper_limit(values, step):
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    return max(step, np.ceil(1.05 * finite.max(initial=0.) / step) * step)
+
+
+def _wind_history_limits(frame, history):
+    limits = {}
+    for name, series, units, step in (
+        ('gas_mass', WIND_GAS_HISTORY, 1.e6, 20.),
+        ('ram_pressure', WIND_PRESSURE_HISTORY, 1.e-15, 10.),
+    ):
+        data = history[[column for column, _ in series]].to_numpy(dtype=float)
+        limits[name] = (0., _history_upper_limit(data / units, step))
+    distances = np.r_[np.linalg.norm(frame.orbit[:, 1:4], axis=1),
+                      history[['distance', 'distance_gal']].to_numpy().ravel(), d_today]
+    finite = distances[np.isfinite(distances)]
+    limits['distance'] = (max(0., 20. * np.floor((finite.min() - 5.) / 20.)),
+                          _history_upper_limit(finite, 20.))
+    return limits
+
+
 def _observed_sfh_on_wind_clock(sfh, reference_elapsed_gyr):
     """Transform observed lookback bins to the wind tunnel elapsed-time axis."""
     observed = sfh.loc[np.isfinite(sfh['age']) & np.isfinite(sfh['sfr']) & (sfh['age'] >= 0.)]
@@ -1544,23 +1669,25 @@ def _observed_sfh_on_wind_clock(sfh, reference_elapsed_gyr):
     return reference_elapsed_gyr - lookback_edges[::-1], sfr[::-1]
 
 
-def _plot_wind_sfh_panel(ax, snapshot, elapsed_gyr, observed=None):
-    edges, sfr = _wind_sfr_series(snapshot, elapsed_gyr)
-    if len(sfr) == 0:
-        ax.set_axis_off()
-        return
-    ax.stairs(sfr, edges, baseline=None, color='black', lw=2, label='Simulated')
+def _plot_wind_sfh_panel(ax, series, elapsed_gyr, clock_range, observed=None):
+    edges, sfr = series
+    first, last = clock_range
+    values = list(sfr)
+    if len(sfr):
+        first = min(first, edges[0])
+        ax.stairs(sfr, edges, baseline=None, color='black', lw=2, label='Simulated SFH')
     if observed is not None:
         obs_edges, obs_sfr = observed
-        overlaps = (obs_edges[:-1] < edges[-1]) & (obs_edges[1:] > edges[0])
+        overlaps = (obs_edges[:-1] < last) & (obs_edges[1:] > first)
         if np.any(overlaps & np.isfinite(obs_sfr)):
             ax.stairs(np.where(overlaps, obs_sfr, np.nan), obs_edges,
-                      baseline=None, color='darkorange', lw=2, label='Observed')
-    ax.axvline(0, color='gray', lw=1.5, ls='--', label='Wind tunnel insertion')
+                      baseline=None, color='darkorange', lw=2, label='Observed SFH')
+            values.extend(obs_sfr[overlaps])
+    ax.axvline(0, color='gray', lw=1.4, ls='--', label='Insertion')
+    ax.axvline(elapsed_gyr, color='firebrick', lw=1.4, label='Current time')
     _style_axis(ax, 'Time since insertion (Gyr)', r'SFR ($10^{-4}\,M_\odot\,\mathrm{yr}^{-1}$)',
-                xlim=(edges[0], edges[-1]))
-    ax.set_ylim(bottom=0)
-    ax.legend(loc='best', fontsize=12)
+                xlim=(first, last), ylim=(0., max(25., _history_upper_limit(values, 5.))))
+    ax.legend(loc='upper right', fontsize=11)
 
 
 def _plot_gas_loss_panel(ax, dw_elinfo, gas_loss_rate, tsnap, t_peri):
@@ -1576,26 +1703,27 @@ def _plot_sfr_panel(ax, lookback_sim, sfr_sim, lookback_obs, sfr_obs, t_peri):
     ax.legend(loc='upper left')
 
 
-def _plot_wind_history(ax, history, tsnap, history_limit, series, ylabel, scale):
+def _plot_wind_history(ax, history, tsnap, history_limit, series, ylabel, scale, ylim):
     for column, label in series:
         available = history[column].notna()
         if available.any():
             ax.scatter(history.loc[available, 'age'], history.loc[available, column] / scale, label=label)
     ax.axvline(tsnap, color='gray', lw=1.5, ls='--', zorder=0)
-    _style_axis(ax, 'Time since insertion (Gyr)', ylabel, xlim=(0, history_limit * 1.2))
+    _style_axis(ax, 'Time since insertion (Gyr)', ylabel, xlim=(0, history_limit), ylim=ylim)
     if ax.collections:
-        ax.legend(loc='best', fontsize=12)
+        ax.legend(loc='upper right', fontsize=10)
 
 
-def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta, vphi, vgsr, *, wind_tunnel=None):
+def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta, vphi, vgsr,
+                      *, wind_tunnel=None, wind_distance_limits=None):
     if wind_tunnel:
         elapsed = wind_tunnel.orbit[:, 0] / 1000.
-        plotted = elapsed <= t_peri * 1.2
-        box_radius = np.linalg.norm(wind_tunnel.orbit[plotted, 1:4], axis=1)
-        ax.plot(elapsed[plotted], box_radius, color='gray', ls='--', lw=2, label='Prescribed box centre')
-        ax.scatter(dw_elinfo.age, dw_elinfo.distance_gal, color='black', s=16, label='Stellar centre')
-        xlabel, ylabel, ylim = 'Time since insertion (Gyr)', 'Galactocentric distance (kpc)', None
-        distance_label = r'$R_{\rm GC}$'
+        box_radius = np.linalg.norm(wind_tunnel.orbit[:, 1:4], axis=1)
+        ax.plot(elapsed, box_radius, color='gray', ls='--', lw=2, label='Box Galactocentric')
+        ax.plot(dw_elinfo.age, dw_elinfo.distance_gal, color='tab:blue', lw=1.4, label='Stellar Galactocentric')
+        ax.plot(dw_elinfo.age, dw_elinfo.distance, color='black', lw=2, label='Stellar heliocentric')
+        ax.axhline(d_today, color='gray', lw=1., ls=':', zorder=0)
+        xlabel, ylabel, ylim = 'Time since insertion (Gyr)', 'Distance (kpc)', wind_distance_limits
     else:
         ax.plot(dw_elinfo.age.to_numpy(), dw_elinfo.distance.to_numpy(), color='black', lw=3, zorder=1)
         ax.hlines(d_today, -0.1, t_peri * 3, color='gray', lw=2, ls='--', zorder=0)
@@ -1609,9 +1737,9 @@ def _plot_orbit_panel(ax, dw_elinfo, tsnap, current_distance, t_peri, vr, vtheta
         zorder=3,
         label=f'{tsnap:.2f} Gyr',
     )
-    _style_axis(ax, xlabel, ylabel, xlim=(0, t_peri * 1.2), ylim=ylim)
+    _style_axis(ax, xlabel, ylabel, xlim=(0, t_peri if wind_tunnel else t_peri * 1.2), ylim=ylim)
     if wind_tunnel:
-        ax.legend(loc='upper right', fontsize=12)
+        ax.legend(loc='upper right', fontsize=10)
         return
     ax.legend(loc='lower left', fontsize=16)
     ax.text(
@@ -1731,10 +1859,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     _plot_hi_sky_panel(
         fig,
         axes[1, 1],
-        metrics['x_contour_kpc'],
-        metrics['y_contour_kpc'],
-        metrics['cd_smooth'],
-        metrics['sky_field_half_width_kpc'],
+        *metrics['hi_map'],
         wind_tunnel=wind_tunnel,
     )
 
@@ -1751,7 +1876,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['cold_gas_center_dec'],
         metrics['x_contour'],
         metrics['y_contour'],
-        metrics['cd_smooth'],
+        metrics['overlay_column'],
         cd_threshold_str,
         metrics['mean_pmra'],
         metrics['mean_pmdec'],
@@ -1763,6 +1888,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         arrow_tip=metrics['arrow_tip'],
         shape_outline=metrics['shape_outline'],
         gas_center_label='Cold-gas centre' if wind_tunnel else 'HI Center',
+        fixed_gas_levels=bool(wind_tunnel),
     )
 
     if verbose:
@@ -1808,6 +1934,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['mag_profile'],
         metrics['adaptive_ml_profile'],
         metrics['adaptive_ml_summary'],
+        fixed_view_profile=metrics['fixed_view_profile'],
     )
 
     if verbose:
@@ -1817,8 +1944,10 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
                 f"Adaptive M/L={metrics['adaptive_ml_summary']['mass_to_light']:.6g}, "
                 f"RMS={metrics['adaptive_ml_summary']['rms_mag']:.4f} mag."
             )
-        else:
+        elif not wind_tunnel:
             print('Surface luminosity profile plotted. Adaptive M/L unavailable.')
+        else:
+            print('Surface luminosity profiles plotted at a fixed M/L for both views.')
 
     #--- Gas-to-stellar mass ratio ---#
     _plot_gas_fraction_panel(
@@ -1827,7 +1956,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         tsnap,
         gas_half_frac,
         gas_frac_stellar_region,
-        history_limit * 1.2 if wind_tunnel else history_limit,
+        history_limit,
         time_label=time_label,
     )
 
@@ -1847,6 +1976,7 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         metrics['sigma_y'],
         metrics['sigma_z'],
         time_label=time_label,
+        time_end=history_limit if wind_tunnel else None,
     )
     
     if verbose:
@@ -1857,11 +1987,9 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     #--- Central Gas Density ---#
 
     if wind_tunnel:
-        _plot_wind_history(axes[2, 2], dw_elinfo, tsnap, history_limit, (
-            ('wind_dwarf_gas_r2_msun', r'Dwarf-origin gas, $r<2$ kpc'),
-            ('wind_dwarf_gas_r5_msun', r'Dwarf-origin gas, $r<5$ kpc'),
-            ('wind_ambient_gas_r5_msun', r'CGM-origin gas, $r<5$ kpc'),
-        ), r'Gas mass ($10^6\,M_\odot$)', 1.e6)
+        wind_limits = context['wind_history_limits']
+        _plot_wind_history(axes[2, 2], dw_elinfo, tsnap, history_limit, WIND_GAS_HISTORY,
+                           r'Gas mass ($10^6\,M_\odot$)', 1.e6, wind_limits['gas_mass'])
     else:
         _plot_gas_loss_panel(axes[2, 2], dw_elinfo, context['gas_loss_rate'], tsnap, history_limit)
 
@@ -1883,12 +2011,11 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
     # axes[2, 2].hlines(dw_cold_gas_lower_limit, -0.1, T_peri*2, lw=2, ls='--', color='paleturquoise', label='lower limit of HI mass')
 
     if wind_tunnel:
-        _plot_wind_sfh_panel(axes[2, 1], snapshot, tsnap, context.get('wind_observed_sfh'))
-        _plot_wind_history(axes[2, 3], dw_elinfo, tsnap, history_limit, (
-            ('wind_prescribed_Pram_dyn_cm2', 'Input at the box centre'),
-            ('wind_upstream12_20_Pram_dyn_cm2', 'Upstream, 12–20 kpc'),
-            ('wind_upstream20_40_Pram_dyn_cm2', 'Upstream, 20–40 kpc'),
-        ), r'Ram pressure ($10^{-15}$ dyn cm$^{-2}$)', 1.e-15)
+        time_begin = -max(0., wind_tunnel.time_begin_code) * wind_tunnel.time_to_myr / 1000.
+        _plot_wind_sfh_panel(axes[2, 1], context['wind_sfh'], tsnap, (time_begin, history_limit),
+                             context.get('wind_observed_sfh'))
+        _plot_wind_history(axes[2, 3], dw_elinfo, tsnap, history_limit, WIND_PRESSURE_HISTORY,
+                           r'Ram pressure ($10^{-15}$ dyn cm$^{-2}$)', 1.e-15, wind_limits['ram_pressure'])
     else:
         _plot_sfr_panel(axes[2, 1], context['lookback_sim'], context['sfr_sim'],
                         context['lookback_obs'], context['sfr_obs'], context['sfr_t_peri_gyr'])
@@ -1899,13 +2026,14 @@ def plot(numsp, show_mem=False, context=None, profile=False, profile_memory=Fals
         axes[1, 3],
         dw_elinfo,
         tsnap,
-        row['distance_gal' if wind_tunnel else 'distance'],
+        row['distance'],
         history_limit,
         metrics['vr'],
         metrics['vtheta'],
         metrics['vphi'],
         metrics['vgsr'],
         wind_tunnel=wind_tunnel,
+        wind_distance_limits=wind_limits['distance'] if wind_tunnel else None,
     )
 
     #--- Tidal Effect ---#
@@ -2072,11 +2200,16 @@ def main():
         modelname = DataProcessor.parse_model_name_details(wind_tunnel.model_name if wind_tunnel else None)['modelname']
         summary = CANONICAL_ANALYSIS_ROOT / f'elinfo_{modelname}.csv'
         require_summary_frame(require_canonical_csv(summary), wind_tunnel)
-        identity = display_identity(summary)
         summary_rows = pd.read_csv(summary, comment='#', usecols=['numsp'])
         summary_numbers = sorted(set(summary_rows['numsp'].astype(int).tolist()))
         if not summary_numbers:
             raise ValueError('The summary contains no snapshot rows')
+        wind_sfh_snapshot = None
+        if wind_tunnel:
+            manifest_path = DISPLAY_OUTPUT_ROOT / 'display_manifest.json'
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8')) if manifest_path.is_file() else {}
+            wind_sfh_snapshot = manifest.get('wind_sfh_reference_snapshot', summary_numbers[-1])
+        identity = display_identity(summary, wind_sfh_snapshot=wind_sfh_snapshot)
         start, end = map(int, (args.range or f'{summary_numbers[0]},{summary_numbers[-1]}').split(','))
         selected = filter_available_snapshots(start, end, summary_numbers)
         if explicit_numbers is not None:

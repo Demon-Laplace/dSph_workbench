@@ -48,22 +48,37 @@ is entirely inside the free-flow zone. The 20–40 kpc cone may sample the
 buffer. Pressures from the forcing table describe conditions at the box
 centre. The measured pressures use CGM in the specified cone.
 
-The wind plot compares the prescribed box track with the measured stellar
-track. Wind pressure and gas origin are shown at saved epochs on the
-time-since-insertion axis.
-The H I sky panel maps neutral-hydrogen column density. The wind tunnel Y–Z
-scene projects every gas element in the snapshot as mass per pixel area.
-Its axis limits follow the full box and its origin is the stellar centre.
-PlotFig also bins the recorded formation times of current type-4 member
-stars in 50 Myr intervals on that axis. The curve includes stars formed
-during the inherited isolation evolution and stars formed in the wind
-tunnel. It uses current particle masses and the elapsed width of the final
-partial interval. For the observed SFH comparison, set the optional
+The wind plot shows the stellar heliocentric distance alongside the two
+Galactocentric tracks, for the stars and the prescribed box centre. Distance,
+velocity dispersion, H I fraction, gas origin and ram pressure share the
+full prescribed elapsed-time range. History vertical limits use the summary
+for the whole displayed run.
+
+Both stellar light curves use the production fixed mass-to-light ratio. The
+orbital sightline retains the standard elliptical profile. The fixed view
+uses circular annuli and the sightline from the canonical Sun to the box
+centre at insertion. Both views use the same selected stellar sample and
+radial bins. The stellar and velocity sky maps retain their angular fields.
+The dedicated H I panel uses a fixed physical field of ±5 kpc in each
+direction and a fixed column-density colour scale. It shares the physical
+grid and column-density levels with the contours on the stellar sky map.
+The Y–Z scene projects one full periodic wind-tunnel box, centred on the stars,
+with a fixed logarithmic surface-density scale.
+
+The wind SFH follows the latest locally available summary snapshot, as the
+formal history panels also use one reference output for the sequence.
+PlotFig bins the formation times of its type-4 members in 50 Myr intervals
+on the elapsed-time axis. This includes the inherited isolation interval at
+negative times. The curve uses the reference particle masses and the elapsed
+width of its final partial interval. The current-time marker moves across
+the same history in every frame. For the observed SFH comparison, set the optional
 `sfh_reference_elapsed_gyr` to the elapsed epoch corresponding to zero
 observational lookback time. PlotFig reads the usual observation CSV
 (`DSPH_SFH_OBSERVATION` or `../SFH_<dwarf>.csv`) and applies its standard
 0.5 Gyr lookback binning on the configured time axis.
-CSV and display identities carry the run ID for safe resume.
+The wind display manifest records the run, summary and SFH reference used by
+the frames. Use a fresh canonical output root or replace the full frame
+sequence when updating a display produced under a different definition.
 
 ## H I statistics correction (2026-10-16; fraction updated 2026-10-21)
 

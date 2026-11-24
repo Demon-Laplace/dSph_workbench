@@ -104,7 +104,7 @@ def test_wind_sfh_observations_use_the_explicit_lookback_reference():
 def test_wind_scene_projects_gas_across_the_whole_box():
     from matplotlib.collections import QuadMesh
     from matplotlib.figure import Figure
-    from PlotFig import _plot_scene_panel
+    from PlotFig import WIND_SURFACE_DENSITY_LIMITS, _plot_scene_panel
 
     # The two exterior gas cells lie far beyond the stellar-centred aperture.
     # The non-gas row lies inside the box and carries a larger mass.
@@ -115,7 +115,7 @@ def test_wind_scene_projects_gas_across_the_whole_box():
         membership_state=dict(gas_temperature_split_K=20000.),
         df=pd.DataFrame(dict(
             tp=[0, 0, 0, 2],
-            y=[11., 59., -39., 11.], z=[-21., 27., -69., -21.],
+            y=[11., 59., -39.8, 11.], z=[-21., 29.8, -69., -21.],
             m=[2., 6., 9., 1000.], temp=[100., 1.e6, 1.e6, 0.],
         )),
     )
@@ -124,5 +124,66 @@ def test_wind_scene_projects_gas_across_the_whole_box():
     _plot_scene_panel(fig, ax, snapshot, np.array([11.]), np.array([-21.]))
     mesh = next(artist for artist in ax.collections if isinstance(artist, QuadMesh))
     assert mesh.get_array().sum() * 2.**2 == pytest.approx(17.)
-    assert ax.get_xlim() == (-51., 49.)
-    assert ax.get_ylim() == (-49., 51.)
+    assert ax.get_xlim() == ax.get_ylim() == (-50., 50.)
+    assert mesh.get_clim() == WIND_SURFACE_DENSITY_LIMITS
+
+
+def test_wind_hi_panel_keeps_its_scale_when_hi_fades():
+    from matplotlib.figure import Figure
+    from PlotFig import WIND_HI_COLOR_MAX, WIND_HI_HALF_WIDTH_KPC, _plot_hi_sky_panel
+
+    fig = Figure()
+    panels = fig.subplots(1, 2)
+    x, y = np.meshgrid(np.linspace(-4., 4., 3), np.linspace(-4., 4., 3))
+    for ax, peak in zip(panels, (8.e20, 0.)):
+        column = np.array([[0., 0., 0.], [0., peak, 0.], [0., 0., 0.]])
+        _plot_hi_sky_panel(fig, ax, x, y, column, WIND_HI_HALF_WIDTH_KPC, wind_tunnel=True)
+        assert ax.get_xlim() == (WIND_HI_HALF_WIDTH_KPC, -WIND_HI_HALF_WIDTH_KPC)
+        assert ax.get_ylim() == (-WIND_HI_HALF_WIDTH_KPC, WIND_HI_HALF_WIDTH_KPC)
+        assert ax.collections[0].get_clim() == (0., WIND_HI_COLOR_MAX)
+    assert len(fig.axes) == 4  # Both panels reserve the same space for a colour bar.
+
+
+def test_wind_sfh_moves_the_time_marker_on_one_reference_history():
+    from matplotlib.figure import Figure
+    from PlotFig import _plot_wind_sfh_panel
+
+    fig = Figure()
+    early, late = fig.subplots(1, 2)
+    series = np.array([-.05, 0., .05, .1]), np.array([0., 50., 20.])
+    _plot_wind_sfh_panel(early, series, .01, (-.5, 3.))
+    _plot_wind_sfh_panel(late, series, 2.8, (-.5, 3.))
+    assert early.get_xlim() == late.get_xlim() == (-.5, 3.)
+    assert early.get_ylim() == late.get_ylim()
+    np.testing.assert_allclose(early.patches[0].get_data().values, late.patches[0].get_data().values)
+    assert early.lines[-1].get_xdata()[0] == .01
+    assert late.lines[-1].get_xdata()[0] == 2.8
+
+
+def test_wind_fixed_view_uses_circular_physical_annuli():
+    from PlotFig import _fixed_view_light_profile
+    from basefunc import Analysis
+
+    center = np.array([4., -5., 2.])
+    positions = center + np.array([[.2, 0., 5.], [0., .3, -6.], [.6, .8, 3.]])
+    mass = np.array([1.e5, 2.e5, 4.e5])
+    edges = [0., .25, .5, 1.2]
+    fixed = _fixed_view_light_profile(positions, mass, center, np.array([0., 0., 1.]), 100., r_edges=edges)
+    _, expected = Analysis.radial_magnitude_profile([.2, .3, 1.], [0., 0., 0.], mass, 300., ep=0., r_edges=edges)
+    np.testing.assert_allclose(fixed, expected)
+
+
+def test_wind_media_identity_tracks_the_summary_and_sfh_reference(tmp_path, monkeypatch):
+    from canonical_observer import canonical_csv_comment
+    from display_outputs import WIND_RENDER_REVISION, display_identity
+
+    monkeypatch.setenv('DSPH_MEDIA_REUSE', 'scientific')
+    summary = tmp_path / 'elinfo.csv'
+    header = canonical_csv_comment() + '# wind_tunnel_run_id=wind_case\n'
+    summary.write_text(header + 'numsp\n1\n', encoding='utf-8')
+    before = display_identity(summary, wind_sfh_snapshot=1)
+    assert before['render_revision'] == WIND_RENDER_REVISION
+    assert before['wind_sfh_reference_snapshot'] == 1
+    summary.write_text(header + 'numsp\n1\n2\n', encoding='utf-8')
+    after = display_identity(summary, wind_sfh_snapshot=2)
+    assert after['wind_summary_sha256'] != before['wind_summary_sha256']
