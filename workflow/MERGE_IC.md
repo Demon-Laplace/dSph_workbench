@@ -75,7 +75,7 @@ SHA256，逐粒子验证二进制，成功后自动清除自己产生的所有�
 服务器 `workflow.json` 的 `ic_merge` 配置包括 `converter`（参数列表，使用 `{ascii}`、
 `{binary}`）、`setup`（模块环境）、`python`、`compiler`（默认 gcc）和 `sbatch`。
 若未显式指定 converter，复用 isolation 默认 profile 的转换器。Slurm 资源必须显式配置；
-此次服务器采用 mesopsl1、1 个 CPU、8 GiB、1 小时。参数和配置在提交时冻结，执行前后
+此次服务器采用 astro_thin、1 个 CPU、8 GiB、1 小时。参数和配置在提交时冻结，执行前后
 校验输入文件身份；执行时记录原始输入哈希。禁止修改排队任务的输入。
 
 部署时同步 `workflow.py`、`workflow_models.py`、`workflow_merge.py` 和 `ic_merge.c`；

@@ -84,3 +84,7 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 | 2026-11-21 | Fornax8005 / `F8005-LOCAL-MPI12-20261121` | 同一build9919a21b；旧8 MPI运行只到T=9.15527e-05 | 8 MPI用stop退出后按要求删除旧目录；12 MPI在新目录从初态运行至配置TimeMax=3.0 | 确认旧进程退出、仅移除指定旧目录；新运行与初态保留，暂无完整耗时。[备注](model_changes/isolation/Fornax8005.txt) |
 | 2026-11-21 | Fornax8005 / `F8005-LOCAL-PTHREAD12-20261121` | 同一build9919a21b；替换本机12 MPI混合P/E运行 | 临时恢复CPU性能上限及睿频，6个P核的12个逻辑线程一对一绑定，从初态跑TimeMax=3.0 | 实际GIZMO rank绑核已确认；按要求停止并删除旧运行。未改永久系统设置或提交Slurm，耗时待实测。[备注](model_changes/isolation/Fornax8005.txt) |
 | 2026-11-21 | Fornax8005 / `F8005-LOCAL-STOP-MESOPSL1-T3-20261121` | 同一build9919a21b；本机P核试跑停于T=0.00915527，保留检查点 | 夜间暂停本机；服务器用原IC从零跑TimeMax=3.0。mesopsl1单节点16 MPI，反馈16.6，PAF4.5对齐规避 | 236894已在node0095获分配并进入RUNNING（IC001/P001），非零积分与科学稳定性未验收。[备注](model_changes/isolation/Fornax8005.txt) |
+
+## 2026-11-25 · 8002 无宿主引力风洞转 astro_thin
+
+记录 `F8002-WIND-NOHOST-THIN-20261125`。同投放初态、MW1 理论来流与冻结风洞物理，改用 astro_thin 单节点24 MPI、共享内存及核绑定；BufferSize=95、并行写入4，力精度和时间步保留。服务器作业 **314279** 已提交并实际积分，已通过150秒、14.47 Myr启动检查并确认24核独立绑定；完整2.757 Gyr尚未完成。本机两轮保持暂停。服务器现用说明和提交配置已移除停机集群依赖。完整备注：[Fornax8002](model_changes/isolation/Fornax8002.txt)。

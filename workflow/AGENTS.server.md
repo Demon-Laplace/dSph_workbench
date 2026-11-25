@@ -155,3 +155,7 @@ This supersedes conflicting older verification requirements below/above.
 The current receiver takes an explicit project data root and writes each
 model's machine data into its single flat _support directory. Keep only
 necessary resume state while transfer is active, not per-file audit reports.
+
+## 当前计算集群与风洞布局（2026-11-25）
+
+停机集群不再用于新的提交、smoke、检查、IC 合并或批处理默认配置；机器侧 workflow.json 的现用配置改用 astro_thin。当前独立风洞使用 astro_thin 单节点 24 MPI、每进程单线程、节点内 shm 通信及核绑定；节点为 24 核、92000 MiB，没有 GPU 资源。正式轨道默认 astro_fat 的既有约定保留。历史作业、冻结目录和旧用户启动脚本保留原身份，不能作为当前提交配置。

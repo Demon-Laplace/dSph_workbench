@@ -436,7 +436,7 @@ python3 ~/data/workflow_archive.py --root ~/data --plan ~/data/observer_review_d
 Slurm 提交和结束时间检查串起来。服务器首次需要配置 `isolation_profiles.default`；
 配置必须从实际可用的隔离模板和启动脚本核对，不能猜测转换器参数或复制周期边界求解器。
 服务器已配置 default 和 smoke 两套 profile。default 沿用隔离模板与 astro_thin 的
-24 进程、99 小时配置。smoke 使用 mesopsl1 的 4 进程、8 分钟上限及短积分参数。
+24 进程、99 小时配置。smoke 使用 astro_thin 的 4 进程、8 分钟上限及短积分参数。
 真实端到端测试作业 236569 已完成：1536 粒子、3 个快照、最终时间 1e-5，重复命令仍返回
 原 JobID。总表自动提交为 ae63a71；这验证传输、转换和短时积分，不替代长期稳定性检查。
 

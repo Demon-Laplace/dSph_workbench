@@ -138,7 +138,7 @@ sbatch/srun、不多申请节点或 CPU；每 15 秒读一次 info.txt，其余�
 
 1. 读当前目录及目标服务器目录的 AGENTS.md；检查 Git 状态和 `workflow.json`。
 2. `python3 workflow.py --help` 查看实际安装命令；必要时与源码版本比对。
-3. 查 `squeue -M all --me`、目标运行 `status.json` 和 `sacct`，避免重复提交或修改活动目录。
+3. 查 `squeue -M astro_thin,astro_fat,mesopsl2 --me`、目标运行 `status.json` 和 `sacct`，避免重复提交或修改活动目录。
 4. 需要删除的失败运行须显式指定并验证身份和 Slurm 终态；查询失败时停止清理。
 5. 不读/展示凭据文件。服务器 Python 使用 `. /etc/profile.d/z00_lmod.sh && module load python/3.9.1`；Git 模块为 `git/2.23.0`。
 

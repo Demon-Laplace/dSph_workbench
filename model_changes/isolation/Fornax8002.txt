@@ -76,3 +76,12 @@ CODE_VERSION=ic-figures-v4-munoz-published-profile，63项定向测试与真实�
 用户明确不需要备份可能被续跑重写的上一段末帧，并要求删除已另存的文件。
 仅删除cold-disk-test-IC001-P002-01/prior-output-job314006/snapshot_306.hdf5，
 即314006原末帧；确认不在314033的OutputDir内，未动output内快照、检查点、参数或作业。
+
+[F8002-WIND-NOHOST-THIN-20261125] 2026-11-25
+对象：Fornax8002 / wind_tunnel_8002_s041_5028history_mw1_nohost（本机独立风洞的服务器分支，无银河系引力；不是正式轨道或 isolation 基线）。
+来源：复用 SPACEPORT wind_only_5028history_tuned 使用的同一个 s041 投放初态、MW1 预期剖面来流表及冻结风洞求解器；保留旋转、棒、粒子与质量、自引力、软化、力精度、时间步、冷却反馈及共同参考系平移/速度变换，不作 isolation 比较。
+执行：用户要求停止本机测试并迁到 astro_thin；从同一初态重新启动，不跨系统复用六进程原生检查点。TimeBegin=0.40999999921768904、TimeMax=3.2299999959767183，目标施风时长 2757.37622316 Myr，保持完整整数时间网格及原快照时刻列表。
+技术设置：单节点24 MPI、单线程、Intel MPI shm、core绑定；Slurm 72000 MiB、99小时；GIZMO MaxMemSize=2500 MiB/rank、PartAllocFactor=2.5、BufferSize=95 MiB、NumFilesWrittenInParallel=4、TreeDomainUpdateFrequency=.002。在计算节点以-O3 -march=native和常规浮点规则重新编译，不启用快速数学；astro_thin无GPU资源，本分支采用CPU求解器。
+作业：314279;astro_thin，node0166；已实际编译并通过启动检查：连续运行150.18秒，代码时间0.424802（施风后14.47329 Myr），24个进程分别绑定CPU 0–23，startup.json已写出。启动监测已结束，积分继续。尚未完成2.757 Gyr演化或长期物理验证，不将启动当作科学结果。
+维护：移除服务器操作手册中的停机集群配置；当前smoke、检查、IC合并及batch_slurm均改用astro_thin，旧profile名称作对应更新。历史运行与既有用户启动脚本保持原身份。
+依据：该服务器分支的run.json、submission.json、startup.json和GZMB_LONG.PARAM；本盘Fornax8002/_support/wind_only_astrothin_run.json。本机两轮继续暂停，原结果保留。
