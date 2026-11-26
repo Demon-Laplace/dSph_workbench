@@ -1,5 +1,10 @@
 # dSph 工作流：智能体交接与操作说明
 
+2026-11-26 初态绘图更新：共享 plot_ic.py 在原有圆柱 sigma_R/phi/z 之外，
+增加恒星及气体的 XYZ 三轴弥散面板。原生 R 分环、质量加权、扣除各分量环均值；
+XYZ 整环统计保留随方位变化的旋转贡献，不得解释为局部随机或 LOS 弥散。
+正式和实验 IC 构建复用同一代码；更新旧图读取已有粒子，不重算 IC。
+
 2026-11-26 IC 线程默认值：正式本机 `build-ic`、`isolation` 新建 IC、
 `model_tool.py build` / `makeini.py` 继承 AGAMA/OpenMP 与 BLAS 环境，
 仅显式 `--threads N` 才注入线程限制。不指定线程数时批量模型默认顺序执行；

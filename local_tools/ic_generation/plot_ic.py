@@ -17,7 +17,7 @@ import numpy as np
 
 SUFFIXES = ('components', 'central_components', 'column_density_profile',
             'Mstar_Mgas_relation', 'kinematics')
-CODE_VERSION = 'ic-figures-v4-munoz-published-profile'
+CODE_VERSION = 'ic-figures-v5-cartesian-dispersions'
 
 
 def default_directory(build):
@@ -179,6 +179,11 @@ def surface_image(x, y, mass, extent, bins=400):
 
 
 def curve(x, v, mass, edges):
+    """Annular R, mean v_phi, cylindrical sigmas, prograde fraction, XYZ sigmas.
+
+    Each dispersion subtracts its own mass-weighted annular component mean.
+    Cartesian scatter over a whole annulus includes azimuthally varying rotation.
+    """
     R = np.hypot(x[:, 0], x[:, 1])
     vR = np.sum(x[:, :2]*v[:, :2], axis=1)/np.maximum(R, 1e-15)
     vp = (x[:, 0]*v[:, 1]-x[:, 1]*v[:, 0])/np.maximum(R, 1e-15)
@@ -191,9 +196,11 @@ def curve(x, v, mass, edges):
         values = np.column_stack((vR[use], vp[use], v[use, 2]))
         mean = np.average(values, weights=w, axis=0)
         sigma = np.sqrt(np.average((values-mean)**2, weights=w, axis=0))
+        xyz_mean = np.average(v[use], weights=w, axis=0)
+        xyz_sigma = np.sqrt(np.average((v[use]-xyz_mean)**2, weights=w, axis=0))
         result.append([np.sqrt(lo*hi), mean[1], *sigma,
-                       w[vp[use] > 0].sum()/w.sum()])
-    return np.asarray(result).reshape(-1, 6)
+                       w[vp[use] > 0].sum()/w.sum(), *xyz_sigma])
+    return np.asarray(result).reshape(-1, 9)
 
 
 def cumulative(radius, mass, radii):
@@ -284,6 +291,15 @@ def generate(data, model, directory, build=None, prefix=None,
                 'spatial_views': {'components': 'overview, half-width 5 kpc',
                                   'central_components': 'same IC, central zoom, half-width 1.5 kpc',
                                   'panels': 'rows: gas/stars; columns: XY/XZ; equal spatial scales'},
+                'kinematic_profiles': {
+                    'radius': 'native cylindrical R [kpc]', 'weighting': 'particle mass',
+                    'minimum_particles_per_annulus': 20,
+                    'dispersion': 'sqrt(<(v_i - <v_i>_mass)^2>_mass) in each annulus',
+                    'cylindrical_components': ['sigma_R', 'sigma_phi', 'sigma_z'],
+                    'cartesian_components': ['sigma_x', 'sigma_y', 'sigma_z'],
+                    'cartesian_rotation_treatment':
+                        'Whole-annulus scatter includes azimuthally varying ordered rotation; '
+                        'not a local random-velocity or LOS dispersion.'},
                 'note': 'Initial IC diagnostics. Muñoz line is a published fit, not newly measured bins. No WLM.'}
 
     with plt.rc_context({'font.size': 10, 'axes.grid': False}):
@@ -408,7 +424,7 @@ def generate(data, model, directory, build=None, prefix=None,
         fig.suptitle(model+' initial mass budget (total gas, not HI)')
         save(fig, paths[3])
 
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8), constrained_layout=True)
+        fig, axes = plt.subplots(3, 2, figsize=(11, 12), constrained_layout=True)
         curves = {}
         for col, name in enumerate(('Stars', 'Gas')):
             x, v, mass = populations[name]
@@ -427,8 +443,19 @@ def generate(data, model, directory, build=None, prefix=None,
                 vc = np.sqrt(np.maximum(-R*potential.force(xyz)[:, 0], 0))
                 ax.plot(R, vc, '--', color='#9e78b5', label=r'$V_c$ (smooth IC model)')
             ax.set(xlim=(0, 3 if name == 'Stars' else 5), xlabel='R [kpc]',
-                   ylabel='Velocity [km/s]', title=name+' — annular mean and dispersions')
+                   ylabel='Velocity [km/s]', title=name+' — cylindrical mean and dispersions')
             ax.legend(fontsize=8); ax.grid(alpha=.2)
+            ax = axes[1, col]
+            if len(values):
+                for k, label, color in [(6, r'$\sigma_x$', '#c34a36'),
+                                        (7, r'$\sigma_y$', '#336da4'),
+                                        (8, r'$\sigma_z$', '#4e9563')]:
+                    ax.plot(values[:, 0], values[:, k], '.-', label=label, color=color)
+                ax.legend(fontsize=8)
+            ax.set(xlim=(0, 3 if name == 'Stars' else 5), ylim=(0, None),
+                   xlabel='R [kpc]', ylabel='Dispersion [km/s]',
+                   title=name+' — Cartesian annular dispersions')
+            ax.grid(alpha=.2)
         values = curves['Stars']
         if len(values):
             for sigma, label, color in [
@@ -437,21 +464,24 @@ def generate(data, model, directory, build=None, prefix=None,
                 (np.sqrt(np.mean(values[:, 2:5]**2, axis=1)), r'$|V|/\sigma_{\rm 1d,cyl}$', '#202020')]:
                 ratio = np.divide(abs(values[:, 1]), sigma,
                                   out=np.full_like(sigma, np.nan), where=sigma > 1e-9)
-                axes[1, 0].plot(values[:, 0], ratio, '.-', color=color, label=label)
-        axes[1, 0].axhline(1., ls=':', color='gray')
-        axes[1, 0].axhline(2., ls='--', color='gray', alpha=.5)
-        axes[1, 0].set(xlim=(0, 3), xlabel='R [kpc]',
+                axes[2, 0].plot(values[:, 0], ratio, '.-', color=color, label=label)
+        axes[2, 0].axhline(1., ls=':', color='gray')
+        axes[2, 0].axhline(2., ls='--', color='gray', alpha=.5)
+        axes[2, 0].set(xlim=(0, 3), xlabel='R [kpc]',
                        ylabel='Intrinsic rotation / dispersion', title='Stellar rotation dominance')
-        axes[1, 0].set_ylim(bottom=0)
-        axes[1, 0].legend(fontsize=8)
+        axes[2, 0].set_ylim(bottom=0)
+        axes[2, 0].legend(fontsize=8)
         for name, values in curves.items():
             if len(values):
-                axes[1, 1].plot(values[:, 0], values[:, 5], '.-', color=colors[name], label=name)
-        axes[1, 1].axhline(.5, ls=':', color='gray')
-        axes[1, 1].set(xlim=(0, 5), ylim=(0, 1.02), xlabel='R [kpc]',
+                axes[2, 1].plot(values[:, 0], values[:, 5], '.-', color=colors[name], label=name)
+        axes[2, 1].axhline(.5, ls=':', color='gray')
+        axes[2, 1].set(xlim=(0, 5), ylim=(0, 1.02), xlabel='R [kpc]',
                        ylabel='Prograde mass fraction', title='Direction occupancy is not disk coldness')
-        axes[1, 1].legend()
+        axes[2, 1].legend()
         fig.suptitle(model+' initial kinematics — intrinsic, not LOS; plotted bins have N>=20')
+        fig.supxlabel('Mass-weighted dispersions subtract each annular component mean.\n'
+                      'Cartesian x/y scatter over a full annulus includes ordered rotation across azimuth.',
+                      fontsize=9)
         save(fig, paths[4])
     cache.cleanup()
     return result()

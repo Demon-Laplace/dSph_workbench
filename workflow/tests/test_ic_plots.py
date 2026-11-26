@@ -13,6 +13,31 @@ SPEC.loader.exec_module(PLOT)
 
 
 class ICPlotInputs(unittest.TestCase):
+    def test_cold_rotating_ring_distinguishes_cylindrical_and_xyz_scatter(self):
+        phi = np.linspace(0., 2*np.pi, 40, endpoint=False)
+        x = np.column_stack((np.cos(phi), np.sin(phi), np.zeros_like(phi)))
+        v = np.column_stack((-10*np.sin(phi), 10*np.cos(phi), np.zeros_like(phi)))
+        values = PLOT.curve(x, v, np.ones(len(phi)), np.array([.5, 1.5]))
+        self.assertEqual(values.shape, (1, 9))
+        self.assertAlmostEqual(values[0, 1], 10.)
+        np.testing.assert_allclose(values[0, 2:5], 0., atol=1e-13)
+        np.testing.assert_allclose(values[0, 6:9], [10/np.sqrt(2), 10/np.sqrt(2), 0.])
+
+    def test_xyz_sigmas_are_mass_weighted_and_bulk_velocity_invariant(self):
+        x = np.tile([1., 0., 0.], (20, 1))
+        v = np.tile([[2., 5., 1.], [6., 9., 3.]], (10, 1))
+        mass = np.tile([1., 3.], 10)
+        values = PLOT.curve(x, v, mass, np.array([.5, 1.5]))
+        shifted = PLOT.curve(x, v+[100., -200., 50.], mass, np.array([.5, 1.5]))
+        np.testing.assert_allclose(values[0, 6:9], [np.sqrt(3), np.sqrt(3), np.sqrt(.75)])
+        np.testing.assert_allclose(shifted[0, 6:9], values[0, 6:9])
+        self.assertAlmostEqual(values[0, 4], values[0, 8])
+
+    def test_dispersion_bins_below_particle_threshold_are_omitted(self):
+        x = np.tile([1., 0., 0.], (19, 1))
+        values = PLOT.curve(x, np.zeros_like(x), np.ones(len(x)), np.array([.5, 1.5]))
+        self.assertEqual(values.shape, (0, 9))
+
     def test_standard_build_uses_shallow_model_isolation_directory(self):
         self.assertEqual(PLOT.default_directory(Path('/data/Fornax8002/ic/cold-v1')),
                          Path('/data/Fornax8002/isolation'))
