@@ -18,6 +18,31 @@ SPEC.loader.exec_module(PLOT)
 
 
 class ICPlotInputs(unittest.TestCase):
+    def test_velocity_panels_plot_every_particle_without_bin_averaging(self):
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        populations, summaries = {}, {}
+        for name, count in (('Stars', 53), ('Gas', 7)):
+            x = np.column_stack((np.arange(count, dtype=float), np.zeros(count), np.ones(count)))
+            v = np.tile([3., 4., 0.], (count, 1))
+            mass = np.ones(count)
+            populations[name] = [x, v, mass]
+            summaries[name] = {'All': PLOT.kinematic_summary(x, v, mass)}
+        fig = PLOT._kinematics_page(populations, 'Fornax9001', summaries, plt)
+        try:
+            speed_ax, rotation_ax = fig.axes[1:3]
+            self.assertEqual(len(speed_ax.lines), 0)
+            self.assertEqual([len(points.get_offsets()) for points in speed_ax.collections], [53, 7])
+            self.assertEqual([len(points.get_offsets()) for points in rotation_ax.collections], [52, 6])
+            for points, name in zip(speed_ax.collections, ('Stars', 'Gas')):
+                np.testing.assert_allclose(points.get_offsets()[:, 0], np.linalg.norm(populations[name][0], axis=1))
+                np.testing.assert_allclose(points.get_offsets()[:, 1], 5.)
+                self.assertTrue(points.get_rasterized())
+            self.assertGreater(speed_ax.get_xlim()[1], 52.)
+        finally:
+            plt.close(fig)
+
     def test_rotation_summary_separates_speed_from_net_rotation_and_uses_mass_weights(self):
         x = np.array([[1., 0., 0.], [1., 0., 0.]])
         v = np.array([[0., 10., 0.], [0., -10., 0.]])

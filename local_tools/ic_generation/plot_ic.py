@@ -18,7 +18,7 @@ import numpy as np
 
 LEGACY_PNG_SUFFIXES = ('components', 'central_components', 'column_density_profile',
             'Mstar_Mgas_relation', 'kinematics', 'gas_density_profile')
-CODE_VERSION = 'ic-report-v7-merged-pdf'
+CODE_VERSION = 'ic-report-v8-particle-scatter'
 
 
 def default_directory(build):
@@ -407,28 +407,41 @@ def _kinematics_page(populations, model, summaries, plt):
     table.scale(1, 1.25)
     colors = {'Gas': '#008fbd', 'Stars': '#b23b38'}
     axes = np.array([[fig.add_subplot(grid[row, col]) for col in range(2)] for row in (1, 2)])
+    maximum_radius = max((float(np.linalg.norm(values[0], axis=1).max())
+                          for values in populations.values() if len(values[0])), default=0.)
     for col, name in enumerate(('Stars', 'Gas')):
         x, v, mass = populations[name]
+        radius = np.linalg.norm(x, axis=1)
+        speed = np.linalg.norm(v, axis=1)
+        R = np.hypot(x[:, 0], x[:, 1])
+        defined = R > 0
+        vp = (x[defined, 0]*v[defined, 1]-x[defined, 1]*v[defined, 0])/R[defined]
+        style = {'s': .5, 'alpha': .12 if name == 'Stars' else .3,
+                 'color': colors[name], 'edgecolors': 'none', 'rasterized': True, 'label': name}
+        axes[0, 0].scatter(radius, speed, **style)
+        axes[0, 1].scatter(radius[defined], vp, **style)
         values = radial_kinematics(x, v, mass, np.geomspace(.025, 5., 28))
         if len(values):
-            axes[0, 0].plot(values[:, 0], values[:, 1], '.-', color=colors[name], ms=3, label=name)
-            axes[0, 1].plot(values[:, 0], values[:, 2], '.-', color=colors[name], ms=3, label=name)
             for index, label, color in ((3, r'$\sigma_x$', '#c34a36'),
                                         (4, r'$\sigma_y$', '#336da4'), (5, r'$\sigma_z$', '#4e9563')):
                 axes[1, col].plot(values[:, 0], values[:, index], '.-', ms=3, color=color, label=label)
         axes[1, col].set(title=name+' — three-axis velocity dispersion', ylabel=r'$\sigma\ [\mathrm{km/s}]$', ylim=(0, None))
-    axes[0, 0].set(title='3D speed vs radius', ylabel=r'$\langle |\mathbf{v}-\mathbf{v}_{\rm bulk}|\rangle\ [\mathrm{km/s}]$', ylim=(0, None))
-    axes[0, 1].set(title='Mean system rotation vs radius', ylabel=r'$V_{\rm rot}=\langle v_\phi\rangle\ [\mathrm{km/s}]$')
+    axes[0, 0].set(title='Particle 3D speed vs radius', ylabel=r'$|\mathbf{v}-\mathbf{v}_{\rm bulk}|\ [\mathrm{km/s}]$', ylim=(0, None))
+    axes[0, 1].set(title='Particle rotation velocity vs radius', ylabel=r'$v_\phi\ [\mathrm{km/s}]$')
     axes[0, 1].axhline(0, color='gray', lw=.7, alpha=.5)
     for ax in axes.flat:
-        ax.set(xlim=(0, 5), xlabel='3D radius r [kpc]')
+        ax.set(xlabel='3D radius r [kpc]')
         ax.grid(alpha=.18)
         handles, labels = ax.get_legend_handles_labels()
         if handles:
-            ax.legend(fontsize=8)
+            ax.legend(fontsize=8, markerscale=5 if ax in axes[0] else 1)
+    for ax in axes[0]:
+        ax.set_xlim(0, max(.1, maximum_radius*1.03))
+    for ax in axes[1]:
+        ax.set_xlim(0, 5)
     fig.suptitle(model+' initial conditions — speed, rotation and dispersion', fontsize=15)
-    fig.supxlabel('Mass weighted; prograde means Lz > 0 about native +Z (axis not fitted/flipped). Speed is not net rotation.\n'
-                  'XYZ dispersions subtract each shell mean and include rotation varying across azimuth. Profile bins require N >= 20.\n'
+    fig.supxlabel('Top panels: one point per particle, no subsampling; v_phi excludes R=0. Table statistics are mass weighted.\n'
+                  'Prograde: Lz > 0 about native +Z. XYZ dispersions use N>=20 shells and include rotation varying across azimuth.\n'
                   'Velocities are relative to the stellar-core bulk frame (gas frame if no stars); no LOS projection.', fontsize=8)
     return fig
 
@@ -528,8 +541,12 @@ def generate(data, model, directory, build=None, prefix=None,
                           'rotation_axis': 'native +Z; not fitted or flipped'},
                 'kinematic_definitions': {
                     'weighting': 'particle mass', 'radial_bins': '3D spherical shells, N >= 20',
-                    'speed_3d': 'mass mean of |v - v_bulk|; not |mean(v)| or net rotation',
+                    'speed_3d': 'individual |v - v_bulk| vs 3D radius; table reports mass mean, not net rotation',
                     'system_rotation': 'mass mean v_phi about native +Z; R=0 particles excluded from v_phi mean',
+                    'particle_scatter': 'all particles, no subsampling or bin averaging; rasterized points, full radial extent',
+                    'scatter_particle_counts': {name: {'speed_3d': int(len(values[2])),
+                        'v_phi': int(np.count_nonzero(np.hypot(values[0][:, 0], values[0][:, 1]) > 0))}
+                        for name, values in populations.items()},
                     'prograde': 'mass with Lz > 0 / total mass in the stated 3D aperture',
                     'dispersion_xyz': 'sqrt(<(v_i-<v_i>_shell)^2>_mass); includes azimuthally varying ordered rotation'},
                 'aperture_statistics': summaries,
