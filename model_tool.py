@@ -58,7 +58,6 @@ import uuid
 PROJECT_ROOT = Path(__file__).resolve().parent
 INI_DIR = PROJECT_ROOT / "IniFile"
 PROJECT_NAME = "Fornax"
-DEFAULT_THREADS = 6
 COMMANDS = {"create", "set", "check", "sync", "build"}
 SYNC_MIN_MODEL = 2047
 
@@ -459,7 +458,9 @@ def build_one(task):
     command = [sys.executable, str(workflow),
                '--root', str(root), '--repo', str(PROJECT_ROOT),
                'build-ic', '--ini', str(ini_path), '--name', name,
-               '--threads', str(threads), '--seed', str(seed)]
+               '--seed', str(seed)]
+    if threads is not None:
+        command += ['--threads', str(threads)]
     result = subprocess.run(command)
     return model_name, result.returncode == 0, f'Run {name}; exit status {result.returncode}'
 
@@ -490,8 +491,10 @@ def command_build(args):
         return 0
 
     available = available_cpu_count()
-    requested_processes = args.processes or min(
-        len(models), max(1, available // DEFAULT_THREADS)
+    # An unrestricted AGAMA model may use every available CPU. Run such models
+    # sequentially unless the user explicitly requests concurrent processes.
+    requested_processes = args.processes or (
+        1 if args.threads is None else min(len(models), max(1, available // args.threads))
     )
     # Processes parallelize models, so more workers than models only add overhead.
     processes = min(requested_processes, len(models))
@@ -502,10 +505,11 @@ def command_build(args):
             )
         )
 
-    threads = args.threads or min(
-        DEFAULT_THREADS, max(1, available // processes)
-    )
-    if processes * threads > available:
+    threads = args.threads
+    if threads is None and processes > 1:
+        print("WARNING: concurrent models inherit AGAMA/OpenMP thread settings; "
+              "use --threads to limit each model if needed")
+    if threads is not None and processes * threads > available:
         print(
             "WARNING: {} processes x {} threads exceeds {} available CPUs".format(
                 processes, threads, available
@@ -515,10 +519,9 @@ def command_build(args):
     # Preserve the established parameter synchronization policy before builds.
     sync_generated_models(paths)
     tasks = [(name, path, threads, args.seed, root, workflow) for name, path in models]
-    print(
-        "building {} model(s) with {} process(es) and {} AGAMA thread(s) per model"
-        .format(len(tasks), processes, threads)
-    )
+    thread_description = 'inherited AGAMA/OpenMP settings' if threads is None else '{} AGAMA thread(s) per model'.format(threads)
+    print("building {} model(s) with {} process(es) and {}".format(
+        len(tasks), processes, thread_description))
 
     results = []
     if processes == 1:
@@ -571,11 +574,11 @@ def make_parser():
     build.add_argument("models", nargs="+", help="model selection or INI paths")
     build.add_argument(
         "--processes", type=int,
-        help="parallel model count (does not accelerate one model)"
+        help="parallel model count (default: 1 with inherited threads; does not accelerate one model)"
     )
     build.add_argument(
         "--threads", type=int,
-        help="OpenMP threads per AGAMA model (default: 6, capped by available CPUs)"
+        help="optional OpenMP threads per AGAMA model (default: inherit AGAMA/OpenMP environment)"
     )
     build.add_argument(
         "--overwrite", action="store_true",

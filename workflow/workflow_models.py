@@ -34,10 +34,13 @@ def build_ic(args):
     if not builder.is_file():
         raise ValueError(f'Missing versioned IC builder: {builder}')
     python = args.python or runtime.config(args.root).get('ic_python') or sys.executable
-    return subprocess.run([python, str(builder), '--ini', str(source), '--output', str(destination),
-                            '--model', model, '--threads', str(args.threads), '--seed', str(args.seed),
-                            '--flat-output', str(runtime.model_directory(args.root, model) / 'isolation'),
-                            '--catalog-repo', str(repo)]).returncode
+    command = [python, str(builder), '--ini', str(source), '--output', str(destination),
+               '--model', model, '--seed', str(args.seed),
+               '--flat-output', str(runtime.model_directory(args.root, model) / 'isolation'),
+               '--catalog-repo', str(repo)]
+    if args.threads is not None:
+        command += ['--threads', str(args.threads)]
+    return subprocess.run(command).returncode
 
 
 def initial_directory(args, model, name):

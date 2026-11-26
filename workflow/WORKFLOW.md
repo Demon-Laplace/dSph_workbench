@@ -306,7 +306,7 @@ Fornax/
 在分析工作区运行：
 
 ```bash
-python3 workflow.py build-ic --model Fornax7003 --name Fornax7003-v1 --threads 2 --seed 42
+python3 workflow.py build-ic --model Fornax7003 --name Fornax7003-v1 --seed 42
 python3 workflow.py new-ini 7004 --base 7003 --set Density_stellar.axisRatioZ=0.6
 python3 workflow.py build-ic --ini tools/dSph_workbench/drafts/IC_Fornax7004.ini --name Fornax7004-v1
 ```
@@ -321,6 +321,20 @@ python3 model_tool.py build "7002-7003" --processes 2 --threads 2 --seed 42
 `--overwrite` 已停用。旧流程的关联扁率修正和 Fornax2047+ 参数同步保留，在批量生成前执行。
 新 `build-ic` 使用指定参数的原样快照，不自动修正科学参数。`--ini` 路径相对于工作区；
 `--model` 从 IC 工作区的 `IniFile/` 读取。草稿没有自动成为正式参数文件。
+
+IC 线程策略（2026-11-26）：`build-ic`、`isolation` 的新 IC 构建、
+`model_tool.py build` 和 `makeini.py` 默认不注入线程数，继承当前 AGAMA/OpenMP
+与 BLAS 环境；已有 `OMP_NUM_THREADS` 等环境设置仍有效。只有显式指定
+`--threads N` 才覆盖 OpenMP 线程数，并保留该模式原有的单线程 OpenBLAS 设置。
+`N` 是线程数量，不是 CPU 编号；不绑核，也不承诺只使用性能核或固定加速比。
+未指定线程数时，批量模型默认顺序生成，避免每个模型都使用系统默认线程而并发争抢。
+可显式选择 `--processes`，并建议同时给出每模型的 `--threads`。
+构建回执中 `threads: null`、`thread_policy: inherited` 表示继承环境；
+显式模式记录整数线程数及 `thread_policy: explicit`。只影响新启动的构建。
+
+独立本机实验可直接使用共享构建器的 `--no-catalog`，保留自动诊断图，
+跳过总表登记及 GitHub 同步；`X001` 等 X 编号只在此模式下允许使用。
+常规工作流的总表同步规则继续适用，实验配方及结果不因代码发布而上传。
 
 每次成功生成并检查粒子数量、有限值和正质量后，会追加 `IC_MODELS.csv`，自动提交并推送
 GitHub `main`。重复登记同一运行不会增加重复行，不同运行保留各自记录。锁串行化同一

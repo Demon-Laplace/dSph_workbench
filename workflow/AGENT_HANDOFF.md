@@ -1,5 +1,11 @@
 # dSph 工作流：智能体交接与操作说明
 
+2026-11-26 IC 线程默认值：正式本机 `build-ic`、`isolation` 新建 IC、
+`model_tool.py build` / `makeini.py` 继承 AGAMA/OpenMP 与 BLAS 环境，
+仅显式 `--threads N` 才注入线程限制。不指定线程数时批量模型默认顺序执行；
+不绑核，不改变已运行的任务。共享 IC 构建器支持 `--no-catalog` 本机实验，
+X 编号仅在关闭登记时可用；诊断图仍自动生成。见 WORKFLOW.md 的 IC 线程策略。
+
 2026-11-21 Supabase工作日志：实质任务开始前，在已配置的本机使用
 `x10-worklog recent --project Fornax`查看近期交接。只追加决定/订正、
 阶段完成、实际提交、持续阻塞或未完成交接，通常一任务一条里程碑；

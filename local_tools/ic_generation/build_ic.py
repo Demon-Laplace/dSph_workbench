@@ -47,21 +47,26 @@ def main():
     parser.add_argument('--ini', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--model', help='model ID used for the exported particle filename')
-    parser.add_argument('--threads', type=int, default=2)
+    parser.add_argument('--threads', type=int,
+                        help='optional OpenMP thread limit; default: inherit the AGAMA/OpenMP environment')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--plots-dir', type=Path, help='default: model/isolation for a standard ic/ build')
     parser.add_argument('--flat-output', type=Path,
                         help='publish directly in the model isolation folder; workspace retains only tool links')
     parser.add_argument('--no-plots', action='store_true', help='explicitly skip default IC figures')
+    parser.add_argument('--no-catalog', action='store_true',
+                        help='local build only: skip catalogue registration and GitHub synchronization')
     parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     source, output = args.ini.resolve(), args.output.absolute()
     model = args.model or source.stem.removeprefix('IC_')
-    if not re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model):
-        parser.error('Use --model with a full model ID')
+    standard_model = re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model)
+    local_model = args.no_catalog and re.fullmatch(r'X\d+[A-Za-z0-9_.-]*', model)
+    if not (standard_model or local_model):
+        parser.error('Use a full model ID; experimental X IDs require --no-catalog')
     if not source.is_file() or output.exists() or output.is_symlink():
         parser.error('INI must exist and output must be a new directory; overwriting is forbidden')
-    if args.threads < 1 or not 0 <= args.seed < 2**31:
+    if (args.threads is not None and args.threads < 1) or not 0 <= args.seed < 2**31:
         parser.error('threads must be positive and seed must be in [0, 2**31)')
     if importlib.util.find_spec('agama') is None:
         parser.error('This Python has no AGAMA; select an AGAMA environment with --python in workflow.py')
@@ -86,6 +91,7 @@ def main():
     shutil.copy2(source, params)
     manifest = {'state': 'building', 'build_id': str(uuid.uuid4()),
                 'seed': args.seed, 'threads': args.threads,
+                'thread_policy': 'inherited' if args.threads is None else 'explicit',
                 'python': sys.executable, 'source_ini': str(source),
                 'solver_file': str(solver), 'parameter_snapshot': 'parameters.ini',
                 'ini_sha256': None, 'solver_sha256': None,
@@ -112,7 +118,9 @@ def main():
         manifest['base_solver_sha256'] = None
     receipt = output / 'build.json'
     receipt.write_text(json.dumps(manifest, indent=2) + '\n')
-    env = dict(os.environ, OMP_NUM_THREADS=str(args.threads), OPENBLAS_NUM_THREADS='1')
+    env = dict(os.environ)
+    if args.threads is not None:
+        env.update(OMP_NUM_THREADS=str(args.threads), OPENBLAS_NUM_THREADS='1')
     worker = ('import sys,runpy,agama,numpy; '
               'numpy.random.seed(int(sys.argv[3])); agama.setRandomSeed(int(sys.argv[3])); '
               'sys.argv=sys.argv[1:3]; ')
@@ -172,6 +180,9 @@ def main():
         print(f'IC parameter snapshot: {directory / (prefix + params.name)}')
     else:
         print(f'Built {sum(counts)} particles: {destination}')
+    if args.no_catalog:
+        print('Local IC build; catalogue registration and GitHub synchronization disabled.')
+        return 0
     try:
         catalog.register(output, args.catalog_repo)
     except Exception as error:
