@@ -13,11 +13,8 @@ Fornax8003/
     model_component_gas.nbody
     model_potential_stellar
     model_potential_gas
-    Fornax8003_components.png
-    Fornax8003_central_components.png
-    Fornax8003_column_density_profile.png
-    Fornax8003_Mstar_Mgas_relation.png
-    Fornax8003_kinematics.png
+    Fornax8003_initial_diagnostics.pdf
+    initial_figures.json        仅 plot-only 原地更新时记录新版定义和统计
     ...
 ```
 
@@ -29,6 +26,8 @@ Fornax8003/
 - 工具需要固定文件名和独立工作目录，内部链接视图放在
   `workspace/ic-builds/<model>/<build>/`；实际数据只在isolation存一份。
 - `--ic-run BUILD` 仍用原构建名，build_id、随机种子和科学参数不变。
+- 初态诊断默认合为三页 PDF（空间/轮廓/运动学）。原地更新只替换派生报告，
+  不重建粒子；成功后清理该前缀的旧诊断 PNG。旧 IC 版本和冻结构建记录保留。
 - 旧服务器运行、快照、restart、启动脚本及正式轨道模拟目录不搬动。
 
 ## 旧本地工作区合并试点（2026-11-21）

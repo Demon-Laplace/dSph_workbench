@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Default initial-model figures, shared by model_tool/workflow builds and backfill.
+"""One initial-model PDF report, shared by model_tool/workflow builds and refresh.
 
 Uses the in-memory exported particles during a build. Standalone --build only
 reads that explicitly selected IC's component files, never simulation snapshots.
@@ -8,6 +8,7 @@ import argparse
 import ast
 import configparser
 import csv
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,9 +16,9 @@ import tempfile
 
 import numpy as np
 
-SUFFIXES = ('components', 'central_components', 'column_density_profile',
-            'Mstar_Mgas_relation', 'kinematics')
-CODE_VERSION = 'ic-figures-v5-cartesian-dispersions'
+LEGACY_PNG_SUFFIXES = ('components', 'central_components', 'column_density_profile',
+            'Mstar_Mgas_relation', 'kinematics', 'gas_density_profile')
+CODE_VERSION = 'ic-report-v7-merged-pdf'
 
 
 def default_directory(build):
@@ -209,282 +210,333 @@ def cumulative(radius, mass, radii):
     return accumulated[np.searchsorted(radius[order], radii)]
 
 
-def generate(data, model, directory, build=None, prefix=None,
-             observation_profile=None, mass_to_light=None, distance_kpc=None, profile_only=False):
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    # Temporary display-only files stay with the explicitly selected output,
-    # including on servers where all writes must remain in the data workspace.
-    cache = tempfile.TemporaryDirectory(prefix='.ic-matplotlib-', dir=directory)
-    os.environ.setdefault('MPLCONFIGDIR', cache.name)
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+def spherical_density_profile(x, mass, edges):
+    """Mass density in spherical shells, in Msun/pc^3; empty shells are undefined.
+
+    Input masses use the IC unit of 1e10 Msun and positions/edges use kpc.
+    The error is a particle shot-noise estimate sqrt(sum(m_i^2))/shell_volume.
+    """
+    edges = np.asarray(edges, dtype=float)
+    radius = np.linalg.norm(x, axis=1)
+    mass_msun = np.asarray(mass) * 1e10
+    counts = np.histogram(radius, bins=edges)[0]
+    shell_mass = np.histogram(radius, bins=edges, weights=mass_msun)[0]
+    shell_mass2 = np.histogram(radius, bins=edges, weights=mass_msun**2)[0]
+    volume_pc3 = 4*np.pi/3*np.diff(np.asarray(edges)**3)*1e9
+    rho = np.divide(shell_mass, volume_pc3,
+                    out=np.full_like(shell_mass, np.nan), where=counts > 0)
+    error = np.divide(np.sqrt(shell_mass2), volume_pc3,
+                      out=np.full_like(shell_mass2, np.nan), where=counts > 0)
+    return .5*(edges[:-1]+edges[1:]), rho, error, counts
+
+
+def kinematic_summary(x, v, mass):
+    """Mass-weighted intrinsic moments about native +Z in an already centered frame."""
+    if not len(mass):
+        return {'N': 0, 'mass_Msun': 0., 'mean_speed_3d_kms': None,
+                'mean_vphi_kms': None, 'sigma_xyz_kms': None,
+                'prograde_mass_fraction': None, 'retrograde_mass_fraction': None,
+                'zero_Lz_mass_fraction': None}
+    R = np.hypot(x[:, 0], x[:, 1])
+    Lz = x[:, 0]*v[:, 1]-x[:, 1]*v[:, 0]
+    vp = np.divide(Lz, R, out=np.zeros_like(R), where=R > 0)
+    mean = np.average(v, weights=mass, axis=0)
+    rotating = R > 0
+    total = mass.sum()
+    return {'N': int(len(mass)), 'mass_Msun': float(total*1e10),
+            'mean_speed_3d_kms': float(np.average(np.linalg.norm(v, axis=1), weights=mass)),
+            'mean_vphi_kms': float(np.average(vp[rotating], weights=mass[rotating]))
+                if rotating.any() else None,
+            'sigma_xyz_kms': np.sqrt(np.average((v-mean)**2, weights=mass, axis=0)).tolist(),
+            'prograde_mass_fraction': float(mass[Lz > 0].sum()/total),
+            'retrograde_mass_fraction': float(mass[Lz < 0].sum()/total),
+            'zero_Lz_mass_fraction': float(mass[Lz == 0].sum()/total)}
+
+
+def radial_kinematics(x, v, mass, edges):
+    """Spherical-shell r, mean speed, mean v_phi, sigma_xyz, prograde fraction."""
+    radius = np.linalg.norm(x, axis=1)
+    rows = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        use = (radius >= lo) & (radius < hi)
+        if use.sum() < 20:
+            continue
+        values = kinematic_summary(x[use], v[use], mass[use])
+        rows.append([np.sqrt(lo*hi), values['mean_speed_3d_kms'],
+                     np.nan if values['mean_vphi_kms'] is None else values['mean_vphi_kms'],
+                     *values['sigma_xyz_kms'], values['prograde_mass_fraction']])
+    return np.asarray(rows).reshape(-1, 7)
+
+
+def _structure_page(populations, model, plt):
     from matplotlib.colors import LogNorm
     from scipy.ndimage import gaussian_filter
+    fig, axes = plt.subplots(2, 2, figsize=(11.69, 8.27), constrained_layout=True)
+    extent = 3.
+    for row, name in enumerate(('Stars', 'Gas')):
+        x, _, mass = populations[name]
+        for col, (a, b, plane) in enumerate(((0, 1, 'XY'), (0, 2, 'XZ'))):
+            ax = axes[row, col]
+            values = gaussian_filter(surface_image(x[:, a], x[:, b], mass, extent), .7)
+            positive = values[values > 0]
+            if len(positive):
+                low = max(float(np.percentile(positive, 2)), 1e-5)
+                high = max(float(np.percentile(positive, 99.9)), low*1.01)
+                artist = ax.imshow(np.ma.masked_less_equal(values, 0), origin='lower',
+                                   extent=(-extent, extent, -extent, extent),
+                                   norm=LogNorm(low, high), aspect='equal',
+                                   cmap='cividis' if name == 'Stars' else 'magma')
+                fig.colorbar(artist, ax=ax, shrink=.8, label=r'$\Sigma\ [M_\odot\,{\rm pc}^{-2}]$')
+            ax.set(xlim=(-extent, extent), ylim=(-extent, extent),
+                   xlabel='XYZ'[a]+' [kpc]', ylabel='XYZ'[b]+' [kpc]', title=name+' — '+plane)
+            ax.set_facecolor('#080c16')
+    fig.suptitle(model+' initial conditions — spatial structure', fontsize=15)
+    fig.supxlabel('One common +/-3 kpc window; native coordinates. Statistics use the stated apertures, not this display crop.', fontsize=9)
+    return fig
+
+
+def _profiles_page(populations, model, densities, observation, photometry, plt):
     import munoz2018
-    observation, reference = load_surface_brightness_observation(build, observation_profile)
-    photometry = photometric_settings(build, mass_to_light, distance_kpc)
-    distance = photometry['reference_display_distance_kpc']
+    colors = {'Gas': '#008fbd', 'Stars': '#b23b38'}
+    fig, axes = plt.subplots(2, 2, figsize=(11.69, 8.27), constrained_layout=True)
+    edges = np.geomspace(.025, 10., 48)
+    radii = np.sqrt(edges[:-1]*edges[1:])
+    ax, light_ax = axes[0]
+    surfaces = []
+    for name, (x, _, mass) in populations.items():
+        R = np.hypot(x[:, 0], x[:, 1])
+        surface = np.histogram(R, bins=edges, weights=mass*1e10)[0]/(np.pi*np.diff(edges**2)*1e6)
+        surface[surface <= 0] = np.nan
+        surfaces.extend(surface[np.isfinite(surface)])
+        ax.plot(radii, surface, '.-', color=colors[name], ms=3, label=name)
+        if name in densities:
+            z = np.r_[0., np.geomspace(1e-5, 10., 400)]
+            rr, zz = np.meshgrid(radii, z, indexing='ij')
+            points = np.column_stack((rr.ravel(), np.zeros(rr.size), zz.ravel()))
+            target = 2*np.trapz(densities[name].density(points).reshape(rr.shape), z, axis=1)*1e4
+            ax.plot(radii, target, '--', color=colors[name], alpha=.65)
+    ax.set(xscale='log', yscale='log', xlim=(.025, 10), xlabel='Cylindrical R [kpc]',
+           ylabel=r'$\Sigma\ [M_\odot\,{\rm pc}^{-2}]$', title='Mass surface density')
+    if surfaces:
+        ax.set_ylim(max(1e-4, max(surfaces)*1e-5), max(surfaces)*2)
+    ax.legend(fontsize=8)
+    if densities:
+        ax.text(.03, .04, 'Dashed: analytic recipe', transform=ax.transAxes, fontsize=8)
+
+    intervals = np.geomspace(.025, 5.1, 45)
+    inner, outer = intervals[:-1], intervals[1:]
     if observation is not None:
-        observation = observation_at_distance(observation, distance)
-        reference['display_radius_convention'] = (
-            'Use supplied angular radii at common D='+str(distance)+' kpc when available; '
-            'mu_V/errors and source CSV unchanged.')
-    munoz = munoz2018.metadata(distance)
-    if reference['state'] != 'loaded':
-        print('IC figures: Fornax stellar-light reference unavailable; configure --observation-profile.')
+        good = (np.isfinite(observation['inner_kpc']) & np.isfinite(observation['outer_kpc']) &
+                (observation['inner_kpc'] >= 0) & (observation['outer_kpc'] > observation['inner_kpc']))
+        if good.any():
+            inner, outer = observation['inner_kpc'][good], observation['outer_kpc'][good]
+        good = (np.isfinite(observation['radius_kpc']) & np.isfinite(observation['mu_v']) &
+                np.isfinite(observation['mu_v_error']) & (observation['mu_v_error'] >= 0))
+        light_ax.errorbar(observation['radius_kpc'][good], observation['mu_v'][good],
+                          yerr=observation['mu_v_error'][good], fmt='o', ms=2, lw=.6,
+                          color='darkorchid', ecolor='gray', alpha=.45, label='Yang: project calibration')
+    else:
+        light_ax.text(.03, .05, 'Observed profile unavailable', transform=light_ax.transAxes, fontsize=8)
+    x, _, mass = populations['Stars']
+    light_radius, mu = stellar_brightness_profile(x, mass, inner, outer, photometry['mass_to_light_V'])
+    light_ax.plot(light_radius, mu, '.-', ms=3, color='black', label='IC stars, face-on')
+    distance = photometry['reference_display_distance_kpc']
+    published_r = np.linspace(0., 5.1, 400)
+    published_mu = munoz2018.sersic_mu_v(published_r, distance)
+    light_ax.fill_between(published_r, published_mu-.16, published_mu+.16, color='#df8a00', alpha=.14)
+    light_ax.plot(published_r, published_mu, '--', color='#d78300', label='Muñoz 2018 Sérsic fit')
+    light_ax.set(xlim=(0, 5.1), ylim=(36, 22), xlabel='Radius [kpc]',
+                 ylabel=r'$\mu_V\ [{\rm mag\ arcsec}^{-2}]$', title='Stellar V-band surface brightness')
+    angular = light_ax.secondary_xaxis('top', functions=(
+        lambda r: r/distance*180/np.pi*60, lambda theta: np.deg2rad(theta/60)*distance))
+    angular.set_xlabel('Angular radius [arcmin]', fontsize=8)
+    light_ax.legend(fontsize=7, loc='lower left')
 
-    prefix = prefix or model
-    selected_suffixes = ('column_density_profile',) if profile_only else SUFFIXES
-    if any((directory/(prefix+'_'+suffix+'.png')).exists() for suffix in selected_suffixes):
-        if build is None:
-            raise FileExistsError('Existing IC figures are preserved; choose another output prefix.')
-        prefix = model+'_'+Path(build).name
-    paths = [directory/(prefix+'_'+suffix+'.png') for suffix in SUFFIXES]
-    selected_paths = [paths[2]] if profile_only else paths
-    if any(path.exists() for path in selected_paths):
-        raise FileExistsError('Figures for this build already exist; use --prefix for a new rendering.')
+    ax = axes[1, 0]
+    x, _, mass = populations['Gas']
+    radius, rho, error, count = spherical_density_profile(x, mass, np.geomspace(.025, 10., 40))
+    ax.plot(radius, rho, '-', color=colors['Gas'], lw=1)
+    for use, filled in ((count >= 20, True), ((count > 0) & (count < 20), False)):
+        if use.any():
+            ax.errorbar(radius[use], rho[use], yerr=error[use], fmt='o', ms=3, lw=.6,
+                        color=colors['Gas'], mfc=colors['Gas'] if filled else 'white')
+    ax.set(xscale='log', yscale='log', xlim=(.025, 10), xlabel='3D radius r [kpc]',
+           ylabel=r'$\rho_{\rm gas}\ [M_\odot\,{\rm pc}^{-3}]$', title='Gas volume density: spherical-shell mean')
+    positive = np.isfinite(rho) & (rho > 0)
+    if positive.any():
+        ax.set_ylim(float(rho[positive].min())*.3, float((rho+error)[positive].max())*2)
+    ax.text(.03, .04, 'Open: N < 20; bars: particle shot noise', transform=ax.transAxes, fontsize=8)
 
-    populations = {}
-    for name, kind in [('Gas', 0), ('Stars', 2)]:
-        rows = data[data[:, 8] == kind]
-        populations[name] = [rows[:, :3], rows[:, 3:6], rows[:, 6]]
-    base = populations['Stars'] if len(populations['Stars'][2]) else [
-        data[:, :3], data[:, 3:6], data[:, 6]]
-    x, v, mass = base
-    center = np.average(x, weights=mass, axis=0)
-    for radius in (5., 3., 2., 1.5):
-        use = np.sum((x-center)**2, axis=1) < radius**2
-        if use.sum() >= 30:
-            center = np.average(x[use], weights=mass[use], axis=0)
-    use = np.sum((x-center)**2, axis=1) < 25.
-    bulk = np.average(v[use], weights=mass[use], axis=0)
-    for values in populations.values():
-        values[0] = values[0]-center
-        values[1] = values[1]-bulk
+    ax = axes[1, 1]
+    radii = np.geomspace(.03, 15., 160)
+    for name, (x, _, mass) in populations.items():
+        values = cumulative(np.linalg.norm(x, axis=1), mass, radii)
+        values[values <= 0] = np.nan
+        ax.plot(radii, values, color=colors[name], label=name)
+    ax.set(xscale='log', yscale='log', xlabel='3D aperture radius r [kpc]',
+           ylabel=r'$M(<r)\ [M_\odot]$', title='Enclosed mass — total gas / stars')
+    ax.legend(fontsize=8)
+    for ax in axes.flat:
+        ax.grid(alpha=.18)
+    fig.suptitle(model+' initial conditions — density, light and mass', fontsize=15)
+    fig.supxlabel(f'Light: native face-on IC, fixed M/L={photometry["mass_to_light_V"]:g}, D={distance:g} kpc; not an evolved sky-view fit.\n'
+                  'Muñoz fit is extrapolated outside its footprint; band is ±0.16 mag normalization only. Yang already uses Muñoz calibration.\n'
+                  'Gas density is a spherical-shell average, not the disk mid-plane density; total gas is not HI.', fontsize=8)
+    return fig
 
-    potential, densities = None, {}
-    if build is not None and (Path(build)/'model_potential_gas').is_file():
-        try:
-            import agama
-            agama.setUnits(length=1, velocity=1, mass=1e10)
-            potential = agama.Potential(*[
-                agama.Potential(file=str(Path(build)/('model_potential_'+name)))
-                for name in ('gas', 'stellar')])
-            config = configparser.RawConfigParser()
-            config.read(Path(build)/'parameters.ini')
-            for label, section in [('Gas', 'Density_gas'), ('Stars', 'Density_stellar')]:
-                densities[label] = agama.Density(**dict(config.items(section)))
-        except (ImportError, ValueError, RuntimeError) as error:
-            print('IC figures: analytic overlays unavailable:', error)
 
-    def save(fig, path):
-        fig.savefig(path, dpi=170, bbox_inches='tight')
-        plt.close(fig)
-
-    def result():
-        return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
-                'files': [path.name for path in selected_paths], 'render_recipe': CODE_VERSION,
-                'observational_reference': reference, 'published_munoz_reference': munoz,
-                'photometric_convention': photometry,
-                'spatial_views': {'components': 'overview, half-width 5 kpc',
-                                  'central_components': 'same IC, central zoom, half-width 1.5 kpc',
-                                  'panels': 'rows: gas/stars; columns: XY/XZ; equal spatial scales'},
-                'kinematic_profiles': {
-                    'radius': 'native cylindrical R [kpc]', 'weighting': 'particle mass',
-                    'minimum_particles_per_annulus': 20,
-                    'dispersion': 'sqrt(<(v_i - <v_i>_mass)^2>_mass) in each annulus',
-                    'cylindrical_components': ['sigma_R', 'sigma_phi', 'sigma_z'],
-                    'cartesian_components': ['sigma_x', 'sigma_y', 'sigma_z'],
-                    'cartesian_rotation_treatment':
-                        'Whole-annulus scatter includes azimuthally varying ordered rotation; '
-                        'not a local random-velocity or LOS dispersion.'},
-                'note': 'Initial IC diagnostics. Muñoz line is a published fit, not newly measured bins. No WLM.'}
-
-    with plt.rc_context({'font.size': 10, 'axes.grid': False}):
-        for path, extent in (() if profile_only else zip(paths[:2], (5., 1.5))):
-            fig, axes = plt.subplots(2, 2, figsize=(10, 9), constrained_layout=True)
-            for row, (name, (x, _, mass)) in enumerate(populations.items()):
-                for col, (a, b, plane) in enumerate([(0, 1, 'XY / face-on'), (0, 2, 'XZ / edge-on')]):
-                    ax = axes[row, col]
-                    image = gaussian_filter(surface_image(x[:, a], x[:, b], mass, extent), .7)
-                    positive = image[image > 0]
-                    if len(positive):
-                        vmin = max(float(np.percentile(positive, 2)), 1e-5)
-                        vmax = max(float(np.percentile(positive, 99.9)), vmin*1.01)
-                        artist = ax.imshow(np.ma.masked_less_equal(image, 0), origin='lower',
-                            extent=(-extent, extent, -extent, extent),
-                            norm=LogNorm(vmin, vmax), cmap='magma' if name == 'Gas' else 'cividis',
-                            interpolation='nearest', aspect='equal')
-                        fig.colorbar(artist, ax=ax, shrink=.8, label=r'$\Sigma\ [M_\odot\,{\rm pc}^{-2}]$')
-                    ax.set(xlim=(-extent, extent), ylim=(-extent, extent),
-                           xlabel='XYZ'[a]+' [kpc]', ylabel='XYZ'[b]+' [kpc]',
-                           title=name+' — '+plane)
-                    ax.set_facecolor('#080c16')
-            view = 'overview: +/-5 kpc' if extent == 5. else 'central zoom: +/-1.5 kpc'
-            fig.suptitle(model+' initial IC — '+view+'\n'
-                         'Rows: gas / stars; columns: XY / XZ; equal spatial scales')
-            save(fig, path)
-
-        colors = {'Gas': '#008fbd', 'Stars': '#b23b38'}
-        edges = np.geomspace(.025, 10., 48)
-        radii = np.sqrt(edges[:-1]*edges[1:])
-        fig, (ax, light_ax) = plt.subplots(1, 2, figsize=(13, 5.5), constrained_layout=True)
-        sampled_surface_values = []
-        for name, (x, _, mass) in populations.items():
-            R = np.hypot(x[:, 0], x[:, 1])
-            binned = np.histogram(R, bins=edges, weights=mass*1e10)[0]
-            surface = binned/(np.pi*np.diff(edges**2)*1e6)
-            use = surface > 0
-            sampled_surface_values.extend(surface[use].tolist())
-            ax.plot(radii[use], surface[use], '.-', color=colors[name], label=name+' particles')
-            if name in densities:
-                z = np.r_[0., np.geomspace(1e-5, 10., 400)]
-                rr, zz = np.meshgrid(radii, z, indexing='ij')
-                points = np.column_stack((rr.ravel(), np.zeros(rr.size), zz.ravel()))
-                rho = densities[name].density(points).reshape(rr.shape)
-                target = 2*np.trapz(rho, z, axis=1)*1e4
-                ax.plot(radii, target, '--', color=colors[name], alpha=.7, label=name+' analytic target')
-        ax.set(xscale='log', yscale='log', xlim=(.025, 10),
-               xlabel='Cylindrical R [kpc]', ylabel=r'$\Sigma\ [M_\odot\,{\rm pc}^{-2}]$',
-               title='Mass surface density (total gas / stars)')
-        if sampled_surface_values:
-            # Do not let an analytic Sersic tail at 1e-30 hide every resolved
-            # particle bin. These are display limits, not a data selection.
-            maximum = max(sampled_surface_values)
-            ax.set_ylim(max(1e-4, maximum*1e-5), maximum*2)
-        ax.grid(alpha=.2); ax.legend(loc='lower left', fontsize=8)
-
-        intervals = np.geomspace(.025, 5.1, 45)
-        inner, outer = intervals[:-1], intervals[1:]
-        if observation is not None:
-            good_intervals = (np.isfinite(observation['inner_kpc']) &
-                              np.isfinite(observation['outer_kpc']) &
-                              (observation['inner_kpc'] >= 0) &
-                              (observation['outer_kpc'] > observation['inner_kpc']))
-            if good_intervals.any():
-                inner = observation['inner_kpc'][good_intervals]
-                outer = observation['outer_kpc'][good_intervals]
-            good = (np.isfinite(observation['radius_kpc']) & np.isfinite(observation['mu_v']) &
-                    np.isfinite(observation['mu_v_error']) & (observation['mu_v_error'] >= 0))
-            light_ax.errorbar(observation['radius_kpc'][good], observation['mu_v'][good],
-                yerr=observation['mu_v_error'][good], fmt='o', ms=3, capsize=2,
-                lw=.7, color='darkorchid', ecolor='gray', alpha=.5,
-                label='Yang 2022 (project Muñoz calibration)', zorder=2)
-        else:
-            light_ax.text(.03, .05, 'Fornax observation profile unavailable',
-                          transform=light_ax.transAxes, fontsize=8, color='#a86600')
-        x, _, mass = populations['Stars']
-        light_radius, light_mu = stellar_brightness_profile(
-            x, mass, inner, outer, photometry['mass_to_light_V'])
-        light_ax.plot(light_radius, light_mu, '.-', color='black', ms=3, lw=1.2,
-                      label=f"IC stars, face-on; M/L={photometry['mass_to_light_V']:g}", zorder=3)
-        published_R = np.linspace(0., 5.1, 400)
-        published_mu = munoz2018.sersic_mu_v(published_R, distance)
-        light_ax.fill_between(published_R, published_mu-.16, published_mu+.16,
-                              color='#df8a00', alpha=.14, linewidth=0)
-        light_ax.plot(published_R, published_mu, '--', color='#d78300', lw=1.8,
-                      label="Muñoz 2018 Sérsic fit (n=0.71, Re=18.4')", zorder=4)
-        angular = light_ax.secondary_xaxis('top', functions=(
-            lambda r: r/distance*180/np.pi*60, lambda theta: np.deg2rad(theta/60)*distance))
-        angular.set_xlabel('Angular semi-major radius [arcmin]')
-        light_ax.set(xlim=(0, 5.1), ylim=(36, 22),
-                     xlabel='Radius [kpc]', ylabel=r'$\mu_V\ [{\rm mag\ arcsec}^{-2}]$',
-                     title='Stellar V-band surface brightness (Vega)')
-        light_ax.grid(alpha=.2); light_ax.legend(loc='lower left', fontsize=8)
-        fig.suptitle(model+' initial IC — mass profiles and Fornax stellar-light reference')
-        fig.supxlabel(f'Common reference distance {distance:g} kpc; IC is face-on, fixed M/L (not a sky-view fit).\n'
-                      'Muñoz: published fit, not new bins; outer continuation is extrapolation. Band: ±0.16 mag normalization only.\n'
-                      'Yang already uses Muñoz calibration; no independent joint-photometry fit, no WLM.', fontsize=8)
-        save(fig, paths[2])
-        if profile_only:
-            cache.cleanup()
-            return result()
-
-        radii = np.geomspace(.03, 15., 160)
-        enclosed = {}
-        fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), constrained_layout=True)
-        for name, (x, _, mass) in populations.items():
-            enclosed[name] = cumulative(np.linalg.norm(x, axis=1), mass, radii)
-            axes[0].plot(radii, enclosed[name], color=colors[name], label=name)
-        denominator = enclosed['Gas']+enclosed['Stars']
-        fraction = np.divide(enclosed['Gas'], denominator,
-                             out=np.full_like(denominator, np.nan), where=denominator > 0)
-        axes[1].plot(radii, fraction, color=colors['Gas'])
-        axes[0].set(xscale='log', yscale='log', xlabel='3D radius [kpc]',
-                    ylabel=r'$M(<r)\ [M_\odot]$', title='Enclosed component masses')
-        axes[0].legend()
-        axes[1].set(xscale='log', xlabel='3D aperture radius [kpc]', ylim=(0, 1),
-                    ylabel=r'$M_{\rm gas}/(M_{\rm gas}+M_*)$', title='Total gas fraction — same aperture')
-        for ax in axes:
-            for radius in (1., 5., 15.):
-                ax.axvline(radius, color='gray', alpha=.25, lw=.8)
-            ax.grid(alpha=.2)
-        fig.suptitle(model+' initial mass budget (total gas, not HI)')
-        save(fig, paths[3])
-
-        fig, axes = plt.subplots(3, 2, figsize=(11, 12), constrained_layout=True)
-        curves = {}
-        for col, name in enumerate(('Stars', 'Gas')):
-            x, v, mass = populations[name]
-            values = curve(x, v, mass, np.geomspace(.035, 5., 28))
-            curves[name] = values
-            ax = axes[0, col]
-            if len(values):
-                for k, label, color in [(1, r'$\overline{v_\phi}$', '#202020'),
-                                        (2, r'$\sigma_R$', '#c34a36'),
-                                        (3, r'$\sigma_\phi$', '#336da4'),
-                                        (4, r'$\sigma_z$', '#4e9563')]:
-                    ax.plot(values[:, 0], values[:, k], '.-', label=label, color=color)
-            if potential is not None:
-                R = np.geomspace(.035, 5., 100)
-                xyz = np.column_stack((R, np.zeros_like(R), np.zeros_like(R)))
-                vc = np.sqrt(np.maximum(-R*potential.force(xyz)[:, 0], 0))
-                ax.plot(R, vc, '--', color='#9e78b5', label=r'$V_c$ (smooth IC model)')
-            ax.set(xlim=(0, 3 if name == 'Stars' else 5), xlabel='R [kpc]',
-                   ylabel='Velocity [km/s]', title=name+' — cylindrical mean and dispersions')
-            ax.legend(fontsize=8); ax.grid(alpha=.2)
-            ax = axes[1, col]
-            if len(values):
-                for k, label, color in [(6, r'$\sigma_x$', '#c34a36'),
-                                        (7, r'$\sigma_y$', '#336da4'),
-                                        (8, r'$\sigma_z$', '#4e9563')]:
-                    ax.plot(values[:, 0], values[:, k], '.-', label=label, color=color)
-                ax.legend(fontsize=8)
-            ax.set(xlim=(0, 3 if name == 'Stars' else 5), ylim=(0, None),
-                   xlabel='R [kpc]', ylabel='Dispersion [km/s]',
-                   title=name+' — Cartesian annular dispersions')
-            ax.grid(alpha=.2)
-        values = curves['Stars']
+def _kinematics_page(populations, model, summaries, plt):
+    fig = plt.figure(figsize=(11.69, 8.27), constrained_layout=True)
+    grid = fig.add_gridspec(3, 2, height_ratios=(.75, 1., 1.))
+    table_ax = fig.add_subplot(grid[0, :])
+    table_ax.axis('off')
+    rows = []
+    for name in ('Stars', 'Gas'):
+        for label, values in summaries[name].items():
+            def number(value, pattern='.2f'):
+                return '—' if value is None else format(value, pattern)
+            rows.append([name, label, str(values['N']), number(values['mass_Msun'], '.3g'),
+                         number(values['mean_speed_3d_kms']), number(values['mean_vphi_kms']),
+                         number(None if values['prograde_mass_fraction'] is None else 100*values['prograde_mass_fraction'])])
+    table = table_ax.table(cellText=rows,
+                          colLabels=['Component', '3D aperture', 'N', 'Mass [Msun]',
+                                     '<v3D> [km/s]', 'Vrot [km/s]', 'Prograde [% mass]'],
+                          cellLoc='center', loc='center')
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1, 1.25)
+    colors = {'Gas': '#008fbd', 'Stars': '#b23b38'}
+    axes = np.array([[fig.add_subplot(grid[row, col]) for col in range(2)] for row in (1, 2)])
+    for col, name in enumerate(('Stars', 'Gas')):
+        x, v, mass = populations[name]
+        values = radial_kinematics(x, v, mass, np.geomspace(.025, 5., 28))
         if len(values):
-            for sigma, label, color in [
-                (values[:, 2], r'$|V|/\sigma_R$', '#c34a36'),
-                (values[:, 3], r'$|V|/\sigma_\phi$', '#336da4'),
-                (np.sqrt(np.mean(values[:, 2:5]**2, axis=1)), r'$|V|/\sigma_{\rm 1d,cyl}$', '#202020')]:
-                ratio = np.divide(abs(values[:, 1]), sigma,
-                                  out=np.full_like(sigma, np.nan), where=sigma > 1e-9)
-                axes[2, 0].plot(values[:, 0], ratio, '.-', color=color, label=label)
-        axes[2, 0].axhline(1., ls=':', color='gray')
-        axes[2, 0].axhline(2., ls='--', color='gray', alpha=.5)
-        axes[2, 0].set(xlim=(0, 3), xlabel='R [kpc]',
-                       ylabel='Intrinsic rotation / dispersion', title='Stellar rotation dominance')
-        axes[2, 0].set_ylim(bottom=0)
-        axes[2, 0].legend(fontsize=8)
-        for name, values in curves.items():
-            if len(values):
-                axes[2, 1].plot(values[:, 0], values[:, 5], '.-', color=colors[name], label=name)
-        axes[2, 1].axhline(.5, ls=':', color='gray')
-        axes[2, 1].set(xlim=(0, 5), ylim=(0, 1.02), xlabel='R [kpc]',
-                       ylabel='Prograde mass fraction', title='Direction occupancy is not disk coldness')
-        axes[2, 1].legend()
-        fig.suptitle(model+' initial kinematics — intrinsic, not LOS; plotted bins have N>=20')
-        fig.supxlabel('Mass-weighted dispersions subtract each annular component mean.\n'
-                      'Cartesian x/y scatter over a full annulus includes ordered rotation across azimuth.',
-                      fontsize=9)
-        save(fig, paths[4])
-    cache.cleanup()
-    return result()
+            axes[0, 0].plot(values[:, 0], values[:, 1], '.-', color=colors[name], ms=3, label=name)
+            axes[0, 1].plot(values[:, 0], values[:, 2], '.-', color=colors[name], ms=3, label=name)
+            for index, label, color in ((3, r'$\sigma_x$', '#c34a36'),
+                                        (4, r'$\sigma_y$', '#336da4'), (5, r'$\sigma_z$', '#4e9563')):
+                axes[1, col].plot(values[:, 0], values[:, index], '.-', ms=3, color=color, label=label)
+        axes[1, col].set(title=name+' — three-axis velocity dispersion', ylabel=r'$\sigma\ [\mathrm{km/s}]$', ylim=(0, None))
+    axes[0, 0].set(title='3D speed vs radius', ylabel=r'$\langle |\mathbf{v}-\mathbf{v}_{\rm bulk}|\rangle\ [\mathrm{km/s}]$', ylim=(0, None))
+    axes[0, 1].set(title='Mean system rotation vs radius', ylabel=r'$V_{\rm rot}=\langle v_\phi\rangle\ [\mathrm{km/s}]$')
+    axes[0, 1].axhline(0, color='gray', lw=.7, alpha=.5)
+    for ax in axes.flat:
+        ax.set(xlim=(0, 5), xlabel='3D radius r [kpc]')
+        ax.grid(alpha=.18)
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(fontsize=8)
+    fig.suptitle(model+' initial conditions — speed, rotation and dispersion', fontsize=15)
+    fig.supxlabel('Mass weighted; prograde means Lz > 0 about native +Z (axis not fitted/flipped). Speed is not net rotation.\n'
+                  'XYZ dispersions subtract each shell mean and include rotation varying across azimuth. Profile bins require N >= 20.\n'
+                  'Velocities are relative to the stellar-core bulk frame (gas frame if no stars); no LOS projection.', fontsize=8)
+    return fig
+
+
+def generate(data, model, directory, build=None, prefix=None,
+             observation_profile=None, mass_to_light=None, distance_kpc=None, profile_only=False,
+             overwrite=False):
+    """Write one atomic PDF report. Derived figures never modify particles."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    prefix = prefix or model
+    suffix = 'initial_profiles' if profile_only else 'initial_diagnostics'
+    destination = directory/(prefix+'_'+suffix+'.pdf')
+    if destination.exists() and not overwrite:
+        if build is None:
+            raise FileExistsError('Existing IC report is preserved; use --overwrite or another prefix.')
+        prefix = model+'_'+Path(build).name
+        destination = directory/(prefix+'_'+suffix+'.pdf')
+        if destination.exists():
+            raise FileExistsError('Report for this build exists; use --overwrite or another prefix.')
+    with tempfile.TemporaryDirectory(prefix='.ic-matplotlib-', dir=directory) as cache:
+        os.environ.setdefault('MPLCONFIGDIR', cache)
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_pdf import PdfPages
+        import munoz2018
+        observation, reference = load_surface_brightness_observation(build, observation_profile)
+        photometry = photometric_settings(build, mass_to_light, distance_kpc)
+        distance = photometry['reference_display_distance_kpc']
+        if observation is not None:
+            observation = observation_at_distance(observation, distance)
+            reference['display_radius_convention'] = 'Supplied angular radii at common D='+str(distance)+' kpc; mu_V/errors unchanged.'
+        populations = {}
+        for name, kind in (('Gas', 0), ('Stars', 2)):
+            rows = data[data[:, 8] == kind]
+            populations[name] = [rows[:, :3].copy(), rows[:, 3:6].copy(), rows[:, 6]]
+        base = populations['Stars'] if len(populations['Stars'][2]) else populations['Gas']
+        if not len(base[2]):
+            base = [data[:, :3], data[:, 3:6], data[:, 6]]
+        x, v, mass = base
+        center = np.average(x, weights=mass, axis=0)
+        for radius in (5., 3., 2., 1.5):
+            use = np.sum((x-center)**2, axis=1) < radius**2
+            if use.sum() >= 30:
+                center = np.average(x[use], weights=mass[use], axis=0)
+        use = np.sum((x-center)**2, axis=1) < 25.
+        if not use.any():
+            use = np.ones(len(x), dtype=bool)
+        bulk = np.average(v[use], weights=mass[use], axis=0)
+        summaries = {}
+        for name, values in populations.items():
+            values[0] -= center
+            values[1] -= bulk
+            x, v, mass = values
+            r = np.linalg.norm(x, axis=1)
+            summaries[name] = {label: kinematic_summary(x[use], v[use], mass[use]) for label, use in (
+                ('All', np.ones(len(mass), dtype=bool)), ('r < 1 kpc', r < 1.), ('r < 5 kpc', r < 5.))}
+        densities = {}
+        if build is not None and (Path(build)/'parameters.ini').is_file():
+            try:
+                import agama
+                agama.setUnits(length=1, velocity=1, mass=1e10)
+                config = configparser.RawConfigParser()
+                config.read(Path(build)/'parameters.ini')
+                for label, section in (('Gas', 'Density_gas'), ('Stars', 'Density_stellar')):
+                    if config.has_section(section):
+                        densities[label] = agama.Density(**dict(config.items(section)))
+            except (ImportError, ValueError, RuntimeError) as error:
+                print('IC report: analytic surface-density overlays unavailable:', error)
+        pages = ['Density, light and mass'] if profile_only else ['Spatial structure', 'Density, light and mass', 'Kinematics and aperture statistics']
+        descriptor, temporary = tempfile.mkstemp(prefix='.'+destination.stem+'-', suffix='.pdf', dir=directory)
+        os.close(descriptor)
+        try:
+            with PdfPages(temporary, metadata={'Title': model+' initial-condition diagnostics',
+                                              'Subject': 'Intrinsic IC structure, density and kinematics'}) as pdf, \
+                 plt.rc_context({'font.size': 9, 'axes.titlesize': 11}):
+                renderers = [] if profile_only else [lambda: _structure_page(populations, model, plt)]
+                renderers.append(lambda: _profiles_page(populations, model, densities, observation, photometry, plt))
+                if not profile_only:
+                    renderers.append(lambda: _kinematics_page(populations, model, summaries, plt))
+                for renderer in renderers:
+                    fig = renderer()
+                    try:
+                        pdf.savefig(fig, dpi=170)
+                    finally:
+                        plt.close(fig)
+            os.replace(temporary, destination)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+        return {'state': 'complete', 'directory': str(directory), 'prefix': prefix,
+                'files': [destination.name], 'render_recipe': CODE_VERSION,
+                'format': 'PDF', 'page_count': len(pages), 'page_titles': pages,
+                'observational_reference': reference, 'published_munoz_reference': munoz2018.metadata(distance),
+                'photometric_convention': photometry,
+                'frame': {'center_kpc': center.tolist(), 'bulk_velocity_kms': bulk.tolist(),
+                          'rotation_axis': 'native +Z; not fitted or flipped'},
+                'kinematic_definitions': {
+                    'weighting': 'particle mass', 'radial_bins': '3D spherical shells, N >= 20',
+                    'speed_3d': 'mass mean of |v - v_bulk|; not |mean(v)| or net rotation',
+                    'system_rotation': 'mass mean v_phi about native +Z; R=0 particles excluded from v_phi mean',
+                    'prograde': 'mass with Lz > 0 / total mass in the stated 3D aperture',
+                    'dispersion_xyz': 'sqrt(<(v_i-<v_i>_shell)^2>_mass); includes azimuthally varying ordered rotation'},
+                'aperture_statistics': summaries,
+                'gas_density_profile': {'geometry': '3D spherical-shell average; not disk mid-plane density',
+                                        'density_unit': 'Msun/pc^3', 'component': 'total gas, not HI',
+                                        'error': 'particle shot noise only; open markers indicate N < 20'},
+                'note': 'Initial IC diagnostics; no evolution, sky-view fitting or stability claim.'}
 
 
 def main():
@@ -499,7 +551,9 @@ def main():
     parser.add_argument('--distance-kpc', type=float,
                         help='common reference-radius distance; default: existing analysis d_today')
     parser.add_argument('--profile-only', action='store_true',
-                        help='refresh only the mass/surface-brightness profile, not the other IC figures')
+                        help='write a separate one-page density/light/mass PDF instead of the full report')
+    parser.add_argument('--overwrite', action='store_true',
+                        help='replace PDF in place, remove superseded PNGs and update initial_figures.json; never rebuild particles')
     args = parser.parse_args()
     receipt = json.loads((args.build/'build.json').read_text())
     arrays = []
@@ -507,10 +561,26 @@ def main():
         data = np.loadtxt(args.build/('model_component_'+name+'.nbody'), ndmin=2)
         arrays.append(np.column_stack((data, np.zeros(len(data)), np.full(len(data), kind))))
     model = Path(receipt['source_ini']).stem.removeprefix('IC_')
+    prefix = args.prefix
+    if args.overwrite and prefix is None:
+        prefix = receipt.get('plots', {}).get('prefix')
     result = generate(np.vstack(arrays), model, args.output or default_directory(args.build),
-                       build=args.build, prefix=args.prefix,
+                       build=args.build, prefix=prefix,
                       observation_profile=args.observation_profile, mass_to_light=args.mass_to_light,
-                      distance_kpc=args.distance_kpc, profile_only=args.profile_only)
+                      distance_kpc=args.distance_kpc, profile_only=args.profile_only,
+                      overwrite=args.overwrite)
+    if args.overwrite:
+        removed = []
+        suffixes = ('column_density_profile',) if args.profile_only else LEGACY_PNG_SUFFIXES
+        for suffix in suffixes:
+            legacy = Path(result['directory'])/(result['prefix']+'_'+suffix+'.png')
+            if legacy.is_file():
+                legacy.unlink()
+                removed.append(legacy.name)
+        refresh = {**result, 'source_build_id': receipt['build_id'],
+                   'refreshed_utc': datetime.now(timezone.utc).isoformat(),
+                   'particles_regenerated': False, 'superseded_pngs_removed': removed}
+        (Path(result['directory'])/'initial_figures.json').write_text(json.dumps(refresh, indent=2)+'\n')
     print(json.dumps(result, indent=2))
 
 

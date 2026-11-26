@@ -1,8 +1,13 @@
 import importlib.util
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
+import re
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -13,6 +18,119 @@ SPEC.loader.exec_module(PLOT)
 
 
 class ICPlotInputs(unittest.TestCase):
+    def test_rotation_summary_separates_speed_from_net_rotation_and_uses_mass_weights(self):
+        x = np.array([[1., 0., 0.], [1., 0., 0.]])
+        v = np.array([[0., 10., 0.], [0., -10., 0.]])
+        equal = PLOT.kinematic_summary(x, v, np.ones(2))
+        self.assertEqual(equal['mean_speed_3d_kms'], 10.)
+        self.assertEqual(equal['mean_vphi_kms'], 0.)
+        self.assertEqual(equal['prograde_mass_fraction'], .5)
+        weighted = PLOT.kinematic_summary(x, v, np.array([1., 3.]))
+        self.assertEqual(weighted['mean_vphi_kms'], -5.)
+        self.assertEqual(weighted['prograde_mass_fraction'], .25)
+        self.assertEqual(weighted['retrograde_mass_fraction'], .75)
+
+    def test_rotation_summary_keeps_native_axis_and_handles_axis_particles(self):
+        x = np.array([[1., 0., 0.], [0., 0., 1.]])
+        v = np.array([[0., -10., 0.], [0., 3., 0.]])
+        summary = PLOT.kinematic_summary(x, v, np.ones(2))
+        self.assertEqual(summary['mean_vphi_kms'], -10.)
+        self.assertEqual(summary['prograde_mass_fraction'], 0.)
+        self.assertEqual(summary['retrograde_mass_fraction'], .5)
+        self.assertEqual(summary['zero_Lz_mass_fraction'], .5)
+        empty = PLOT.kinematic_summary(np.empty((0, 3)), np.empty((0, 3)), np.empty(0))
+        self.assertEqual(empty['N'], 0)
+        self.assertIsNone(empty['mean_vphi_kms'])
+
+    def test_radial_speed_profile_uses_3d_shells(self):
+        x = np.tile([0., 0., 1.5], (20, 1))
+        v = np.tile([3., 4., 0.], (20, 1))
+        values = PLOT.radial_kinematics(x, v, np.ones(20), np.array([.5, 1., 2.]))
+        self.assertEqual(values.shape, (1, 7))
+        self.assertAlmostEqual(values[0, 0], np.sqrt(2.))
+        self.assertEqual(values[0, 1], 5.)
+        self.assertTrue(np.isnan(values[0, 2]))
+
+    def test_report_writes_one_three_page_pdf_and_failed_refresh_preserves_it(self):
+        munoz_spec = importlib.util.spec_from_file_location('pdf_test_munoz', PATH.with_name('munoz2018.py'))
+        munoz = importlib.util.module_from_spec(munoz_spec)
+        munoz_spec.loader.exec_module(munoz)
+        rng = np.random.default_rng(17)
+        n = 256
+        data = np.column_stack((rng.normal(size=(n, 3))*.3, rng.normal(size=(n, 3))*5,
+                                np.full(n, 1e-6), np.zeros(n), np.r_[np.zeros(n//2), np.full(n//2, 2)]))
+        original = data.copy()
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(sys.modules, munoz2018=munoz):
+            directory = Path(temporary)
+            result = PLOT.generate(data, 'Fornax9001', directory)
+            self.assertEqual(result['files'], ['Fornax9001_initial_diagnostics.pdf'])
+            self.assertEqual(result['page_count'], 3)
+            report = directory / result['files'][0]
+            content = report.read_bytes()
+            self.assertTrue(content.startswith(b'%PDF-'))
+            self.assertEqual(len(re.findall(rb'/Type /Page\b', content)), 3)
+            self.assertEqual(list(directory.glob('*.png')), [])
+            np.testing.assert_array_equal(data, original)
+            profiles = PLOT.generate(data, 'Fornax9001', directory, profile_only=True)
+            self.assertEqual(profiles['files'], ['Fornax9001_initial_profiles.pdf'])
+            self.assertEqual(profiles['page_count'], 1)
+            self.assertEqual(len(re.findall(rb'/Type /Page\b', (directory/profiles['files'][0]).read_bytes())), 1)
+            self.assertEqual(report.read_bytes(), content)
+            with self.assertRaises(FileExistsError):
+                PLOT.generate(data, 'Fornax9001', directory)
+            with patch.object(PLOT, '_profiles_page', side_effect=RuntimeError('render failed')):
+                with self.assertRaisesRegex(RuntimeError, 'render failed'):
+                    PLOT.generate(data, 'Fornax9001', directory, overwrite=True)
+            self.assertEqual(report.read_bytes(), content)
+            self.assertEqual(list(directory.glob('.*.pdf')), [])
+
+    def test_in_place_refresh_reuses_selected_build_plot_prefix_and_preserves_build_record(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            build = Path(temporary)
+            receipt = {'build_id': 'second-build', 'source_ini': 'IC_X001.ini',
+                       'plots': {'prefix': 'X001_second-build'}}
+            record = build / 'build.json'
+            record.write_text(json.dumps(receipt))
+            original = record.read_bytes()
+            result = {'state': 'complete', 'directory': str(build),
+                      'prefix': 'X001_second-build', 'files': ['X001_second-build_initial_diagnostics.pdf']}
+            legacy = build / 'X001_second-build_kinematics.png'
+            legacy.write_bytes(b'old derived figure')
+            unrelated = build / 'X001_kinematics.png'
+            unrelated.write_bytes(b'another build figure')
+            with patch.object(sys, 'argv', ['plot_ic.py', '--build', str(build), '--overwrite']), \
+                 patch.object(PLOT.np, 'loadtxt', return_value=np.ones((2, 7))), \
+                 patch.object(PLOT, 'generate', return_value=result) as generate, \
+                 redirect_stdout(io.StringIO()):
+                PLOT.main()
+            self.assertTrue(generate.call_args.kwargs['overwrite'])
+            self.assertEqual(generate.call_args.kwargs['prefix'], 'X001_second-build')
+            self.assertEqual(record.read_bytes(), original)
+            self.assertFalse(legacy.exists())
+            self.assertTrue(unrelated.exists())
+            refresh = json.loads((build / 'initial_figures.json').read_text())
+            self.assertEqual(refresh['source_build_id'], 'second-build')
+            self.assertFalse(refresh['particles_regenerated'])
+
+    def test_volume_density_uses_shell_volume_and_mass_units(self):
+        x = np.array([[.5, 0., 0.], [.75, 0., 0.], [1.5, 0., 0.]])
+        mass = np.array([1., 3., 2.])*1e-10
+        edges = np.array([0., 1., 2., 3.])
+        radius, rho, error, counts = PLOT.spherical_density_profile(x, mass, edges)
+        volumes = 4*np.pi/3*np.diff(edges**3)*1e9
+        np.testing.assert_allclose(rho[:2]*volumes[:2], [4., 2.])
+        np.testing.assert_allclose(error[:2]*volumes[:2], [np.sqrt(10.), 2.])
+        np.testing.assert_array_equal(counts, [2, 1, 0])
+        self.assertTrue(np.isnan(rho[2]))
+        self.assertTrue(np.isnan(error[2]))
+
+    def test_volume_density_uses_3d_radius_not_cylindrical_radius(self):
+        x = np.array([[0., 0., 1.5]])
+        _, rho, _, counts = PLOT.spherical_density_profile(x, np.array([1e-10]), np.array([0., 1., 2.]))
+        np.testing.assert_array_equal(counts, [0, 1])
+        self.assertTrue(np.isnan(rho[0]))
+        self.assertGreater(rho[1], 0.)
+
     def test_cold_rotating_ring_distinguishes_cylindrical_and_xyz_scatter(self):
         phi = np.linspace(0., 2*np.pi, 40, endpoint=False)
         x = np.column_stack((np.cos(phi), np.sin(phi), np.zeros_like(phi)))

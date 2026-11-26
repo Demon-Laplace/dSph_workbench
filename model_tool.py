@@ -33,13 +33,15 @@ changed ``Fornax2047+`` parameter files are synchronized to ``origin/main``.
 Successful builds automatically update and push ``IC_MODELS.csv``. Configure
 ``ic.root``, ``ic_python`` and ``models_root`` in workflow.json. Builds publish
 automatically to ``<model>/isolation/`` and print the final particle INI path.
-The shared builder also generates initial spatial, surface-density, mass-budget
-and kinematic figures by default, directly in the local model's isolation/ folder.
-The profile figure keeps mass density separate from the stellar V-band
+The shared builder also generates one three-page initial-diagnostics PDF by
+default, directly in the local model's isolation/ folder: structure, profiles,
+and speed/rotation/dispersion with aperture statistics.
+The profiles page keeps mass density separate from the stellar V-band
 surface-brightness comparison with the configured Fornax observation table.
 The Muñoz 2018 reference is drawn as its published Sersic fit, not as additional
 radial measurements; angular profiles share the configured analysis distance.
-New build versions preserve existing figures instead of overwriting them.
+New build versions preserve existing reports. Plot-only --overwrite refreshes
+the selected report in place without rebuilding the IC.
 """
 
 import argparse
