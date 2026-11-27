@@ -1,3 +1,15 @@
+## IC GitHub synchronization (owner correction, 2026-11-27)
+
+Ordinary model builds retain automatic GitHub catalogue, recipe, model-note and
+SIMULATION_HISTORY.md synchronization. Default local-only publication is limited
+to inputs/outputs under `analysis/X_series_IC_experiments/` or tasks explicitly
+marked not to publish (`--skip-catalog`, alias `--no-catalog`). Do not extend the
+experiment exception to ordinary Fornax models. `--register-catalog` explicitly
+requests publication. Local result publication is not GitHub synchronization.
+Preserve upstream edits; never upload particle ICs, snapshots, machine settings,
+credentials or the excluded X-series experiments. This authorizes metadata
+synchronization, not simulation submission or evolution.
+
 ## Isolation 自动版本绑定（2026-11-20）
 
 `isolation` 现在按声明的 IC 构建版本和小型 profile/参数配置自动分配运行。

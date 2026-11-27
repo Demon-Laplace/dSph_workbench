@@ -40,6 +40,10 @@ def build_ic(args):
                '--catalog-repo', str(repo)]
     if args.threads is not None:
         command += ['--threads', str(args.threads)]
+    if getattr(args, 'skip_catalog', None) is True:
+        command += ['--skip-catalog']
+    elif getattr(args, 'skip_catalog', None) is False:
+        command += ['--register-catalog']
     return subprocess.run(command).returncode
 
 

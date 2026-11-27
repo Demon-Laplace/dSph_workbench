@@ -93,3 +93,18 @@ IC 来源、轨道参考和运行重试分别注明，不能仅凭模型编号�
 ## 2026-11-26 · 清理摘要
 
 删除 6,862 个原生续跑文件、21 份失败日志/提交记录，约 245.9 GiB，快照保留。 [摘要](model_changes/server_checkpoint_cleanup.txt)。
+
+## 2026-11-27 · Ordinary model GitHub metadata backfill
+
+This backfill preserves the original generation/run dates and all existing history. Large particle/trajectory/snapshot files and the excluded X-series experiments remain local. Recorded run states are historical observations, not a fresh queue query.
+
+| Date | Model / record | Source and change | Recorded result / complete note |
+|---|---|---|---|
+| 2026-11-23 | Fornax9001 / `F9001-ISO-G500-S100-20261123` | Parent8001 build4258fa52; retained stellar phase space, gas290000 x500 Msun, stars600000 x100 Msun; build e54dee73-ffb7-4e45-8f1e-d32ba54a8844 | Original isolation Job314167, target-mass-100, astro_thin24 MPI, target3 Gyr; initial startup was recorded separately from completion. [Note](model_changes/isolation/Fornax9001.txt) |
+| 2026-11-26 | Fornax8100 / `F8100-THIN-GAS-IC-20261126`, `F8100-STANDARD-IC-DELIVERY-20261126` | Parent8002 build27ace52b; gas h=-.09 kpc, kappa1; gas14500 + stars600000; build d09f01aa-df28-429c-bbbf-2813c6a98f89 | Complete native IC/components/orbits/potential and five-page PDF saved locally; no fluid-equilibrium/stability claim. Isolation preparation paused; no8100 job. [Note](model_changes/isolation/Fornax8100.txt) |
+| 2026-11-27 | Fornax8101 / `F8101-MSTAR45-THIN-IC-20261127` | Parent8100; stars4.5e7 Msun/450000, gas unchanged; both components solved in new joint potential, build 5b626003-b725-4330-bf50-9028190a0bb7 | Complete464500-particle native IC and five-page PDF saved locally; IC delivery preceded the separately authorized simulation. [Note](model_changes/isolation/Fornax8101.txt) |
+| 2026-11-27 | Fornax8101 / `F8101-ISO4GYR-CORE24-20261127` | iso4gyr-core24-v1, IC001/P004; Job314329, astro_thin/node0166,24 MPI on24 physical cores, native MFM/WJL16.6, TimeMax4.090848105343461 | Startup150s and nonzero integration passed; existing17:39 CET record reports2.700 Gyr/67.49%, RUNNING. Earlier314326/314327/314328 stopped normally and retained; no completion/stability claim. [Note](model_changes/isolation/Fornax8101.txt) |
+| 2026-11-27 | Fornax8005 / `F8005-ISOLATION-RESULTS-BACKFILL-20261127` | Existing cold-disk-test completion record: Job236903 replaces236894, IC001/P001;302 snapshots000-301 | Saved range0-2.933 Gyr; existing bar/density results indexed locally. The earlier startup record remains historical. [Note](model_changes/isolation/Fornax8005.txt) |
+| 2026-11-27 | Fornax9001 / `F9001-ISOLATION-RESULTS-BACKFILL-20261127` | Existing target-mass-100 completion record: Job314167;308 snapshots000-307 | Saved range0-3.000 Gyr; existing bar/density results indexed locally; no new analysis or convergence claim. [Note](model_changes/isolation/Fornax9001.txt) |
+| 2026-11-26 | Fornax8005/9001 / `SERVER-CHECKPOINT-CLEANUP-20261126` | Backfilled the complete pre-existing server notes:32/48 checkpoint/backup files removed, .426/.807 GiB; no scientific files or snapshots removed | Native checkpoint continuation unavailable after that historical cleanup; this task deletes no server data. [8005](model_changes/isolation/Fornax8005.txt), [9001](model_changes/isolation/Fornax9001.txt) |
+| 2026-11-27 | IC catalogue workflow / `IC-GITHUB-SYNC-SCOPE-20261127` | Owner correction: ordinary builds automatically publish; default exclusion only analysis/X_series_IC_experiments or explicitly suppressed tasks. Added shared path policy and --skip-catalog/--no-catalog/--register-catalog forwarding; updated instructions | Backfilled9001/8100/8101 IC rows and recipes, complete8005/9001/8100/8101 notes. No particle/X-series/machine files uploaded; no simulation lifecycle changes. |

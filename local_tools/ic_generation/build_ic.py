@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import uuid
 
 import catalog
+from catalog_policy import skip_catalog_for_paths
 
 
 def component_type(name):
@@ -54,16 +55,21 @@ def main():
     parser.add_argument('--flat-output', type=Path,
                         help='publish directly in the model isolation folder; workspace retains only tool links')
     parser.add_argument('--no-plots', action='store_true', help='explicitly skip default IC figures')
-    parser.add_argument('--no-catalog', action='store_true',
-                        help='local build only: skip catalogue registration and GitHub synchronization')
+    sync = parser.add_mutually_exclusive_group()
+    sync.add_argument('--no-catalog', '--skip-catalog', action='store_true', dest='skip_catalog',
+                      help='explicitly skip catalogue registration and GitHub synchronization')
+    sync.add_argument('--register-catalog', action='store_false', dest='skip_catalog',
+                      help='explicitly register and push the GitHub catalogue')
+    parser.set_defaults(skip_catalog=None)
     parser.add_argument('--catalog-repo', type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     source, output = args.ini.resolve(), args.output.absolute()
+    args.skip_catalog = skip_catalog_for_paths((args.ini, source, output, args.flat_output) if args.flat_output else (args.ini, source, output), args.skip_catalog)
     model = args.model or source.stem.removeprefix('IC_')
     standard_model = re.fullmatch(r'(?:Fornax|MW|Sculptor)\d+[A-Za-z0-9_.-]*', model)
-    local_model = args.no_catalog and re.fullmatch(r'X\d+[A-Za-z0-9_.-]*', model)
+    local_model = args.skip_catalog and re.fullmatch(r'X\d+[A-Za-z0-9_.-]*', model)
     if not (standard_model or local_model):
-        parser.error('Use a full model ID; experimental X IDs require --no-catalog')
+        parser.error('Use a full model ID; experimental X IDs require --no-catalog or the X-series experiment directory')
     if not source.is_file() or output.exists() or output.is_symlink():
         parser.error('INI must exist and output must be a new directory; overwriting is forbidden')
     if (args.threads is not None and args.threads < 1) or not 0 <= args.seed < 2**31:
@@ -180,7 +186,9 @@ def main():
         print(f'IC parameter snapshot: {directory / (prefix + params.name)}')
     else:
         print(f'Built {sum(counts)} particles: {destination}')
-    if args.no_catalog:
+    if args.skip_catalog:
+        manifest['catalog_sync'] = {'state': 'not_requested'}
+        receipt.write_text(json.dumps(manifest, indent=2) + '\n')
         print('Local IC build; catalogue registration and GitHub synchronization disabled.')
         return 0
     try:

@@ -1,0 +1,10 @@
+[F8100-THIN-GAS-IC-20261126] 2026-11-26 (backfilled 2026-11-27)
+Parent: unevolved Fornax8002 analytic recipe / build 27ace52b-fd7d-401b-b008-a9764d988c5e. Retained nominal gas 1.45e8 Msun / 14500 particles and stars 6e7 Msun / 600000 particles. Gas scaleHeight -0.45 -> -0.09 kpc, sampling kappa .85 -> 1; refined vertical grid and solved both components in the new joint potential. Seed 42, six threads, gas 10000 / stellar 30000 orbits, intTime 100.
+Build d09f01aa-df28-429c-bbbf-2813c6a98f89 / thin-gas-h090-v1 completed 614500 particles. Gas mass-weighted Vphi16.84 km/s, sigma_R5.26 km/s, Vphi/sigma_1D3.10, prograde97.92%, z_rms163 pc. Initial stellar attempt was OOM-killed; standard solver was corrected to honor trajsize, resuming stars with 400 stored points while retaining completed gas. No change to orbit counts or integration duration.
+
+[F8100-STANDARD-IC-DELIVERY-20261126] 2026-11-26 (backfilled 2026-11-27)
+The first particle-only delivery lacked the component entries and standard figures. Existing particles/orbit models were used to complete the native component/orbit/potential package and automatic five-page PDF, without reintegration. X10 Pro project-relative source: SimulationData/Fornax8100/ic/thin-gas-h090-v1/; model index, PDF and profile tables remain under SimulationData/Fornax8100/. No gas fluid-equilibrium, Q or long-term-stability conclusion.
+2026-11-27: preparation of the proposed 4 Gyr isolation was paused by the owner in favor of creating 8101. Only server read-only queries had occurred; no 8100 server model or job was created. Remains paused; no new evolution is authorized by this note.
+
+[IC-GITHUB-SYNC-SCOPE-20261127] 2026-11-27
+Owner correction: default local-only publication applies only to analysis/X_series_IC_experiments or explicitly excluded tasks. This ordinary model is included in the authorized GitHub metadata backfill (IC_MODELS.csv, IniFile recipe, complete model note and SIMULATION_HISTORY.md). Particle data, snapshots and machine configuration are excluded. Historical run statements above retain their original dates; this synchronization does not submit, stop, resume or modify a simulation.

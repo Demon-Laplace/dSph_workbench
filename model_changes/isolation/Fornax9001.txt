@@ -1,0 +1,15 @@
+2026-11-23 | F9001-ISO-G500-S100-20261123 | Fornax9001 / isolation / target-mass-100 / IC001-P001
+Parent: Fornax8001 rotation-test original unevolved IC (build 4258fa52-a693-4112-99f7-08ca903f94ac). Reused stellar phase space; set initial stellar particle mass to 100 Msun. Resampled gas in the same joint potential and distribution prescription using AGAMA, seed 42. New build e54dee73-ffb7-4e45-8f1e-d32ba54a8844: 290000 gas x 500 Msun, 600000 initial stars x 100 Msun.
+Native isolation from time zero. TargetStarParticleMassMsun=100, feedback timescale_fd=16.6 Myr; adopted 3.0 Gyr endpoint and 0.01 code-time snapshot spacing from the 8001 continuation. Dynamic whole stellar packets, separate IDs and conserved sub-target gas. No MW tide or CGM wind in this run.
+Isolation Job 314167, astro_thin, 1 node x 24 MPI. Startup at 21:20 Paris; integrator reached time 0.00355802 and the first nonzero births were 4 particles totalling 400 Msun and 1 totalling 100 Msun. Full evolution and long-term convergence remain outstanding. Run: /travail/xhuang/isoFornax/Fornax9001/runs/target-mass-100; GZMB.PARAM, output/info.txt, output/sfr.txt and solver.log. The owner requested the run be left unattended and further GIZMO development paused.
+
+[SERVER-CHECKPOINT-CLEANUP-20261126] 2026-11-26
+Owner-authorized server cleanup: removed 48 native checkpoint/backup files and 0 confirmed failed-job log/submission files (0.807 GiB logical).
+Snapshots, particle initial conditions, scientific configurations, code and scientific results were excluded. Native binary-checkpoint continuation is unavailable after this cleanup. No simulation was submitted or stopped.
+Scope and counts: workspace/receipts/server-cleanup-20261126/deletion_summary.json (relative to /travail/xhuang).
+
+[F9001-ISOLATION-RESULTS-BACKFILL-20261127] 2026-11-27
+Backfill from the existing portable model index and saved result tables: target-mass-100, astro_thin Job314167, 308 saved snapshots000-307 covering0-3.000 Gyr; run recorded as completed. Within3D5 kpc, the maximum coherent bar amplitude is .134 at s043(.420 Gyr), below the adopted strong-bar threshold .15; final amplitude .056. Definitions/selected frames: SimulationData/Fornax9001/_support/Fornax9001_isolation_stellar_bar_evolution_selection.json. Saved atlas/video remain on X10 Pro. These are previously computed results, not a new analysis or a long-term-convergence claim.
+
+[IC-GITHUB-SYNC-SCOPE-20261127] 2026-11-27
+Owner correction: default local-only publication applies only to analysis/X_series_IC_experiments or explicitly excluded tasks. This ordinary model is included in the authorized GitHub metadata backfill (IC_MODELS.csv, IniFile recipe, complete model note and SIMULATION_HISTORY.md). Particle data, snapshots and machine configuration are excluded. Historical run statements above retain their original dates; this synchronization does not submit, stop, resume or modify a simulation.

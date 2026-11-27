@@ -31,3 +31,14 @@ mesopsl1当时有空闲节点，Job236894获node0095，IC001/P001；单节点16 
 TimeMax=3.0、反馈16.6、快照间隔0.01；PAF4.5按服务器分配器对齐布局设置。
 依据：本机原运行status/progress与workspace/receipts/isolation/Fornax8005/cold-disk-test/server.json；
 Slurm已显示RUNNING，非零积分、终点和科学稳定性未验收。
+
+[SERVER-CHECKPOINT-CLEANUP-20261126] 2026-11-26
+Owner-authorized server cleanup: removed 32 native checkpoint/backup files and 0 confirmed failed-job log/submission files (0.426 GiB logical).
+Snapshots, particle initial conditions, scientific configurations, code and scientific results were excluded. Native binary-checkpoint continuation is unavailable after this cleanup. No simulation was submitted or stopped.
+Scope and counts: workspace/receipts/server-cleanup-20261126/deletion_summary.json (relative to /travail/xhuang).
+
+[F8005-ISOLATION-RESULTS-BACKFILL-20261127] 2026-11-27
+Backfill from the existing portable model index and saved result tables: cold-disk-test, Job236903 / IC001-P001, 302 saved snapshots000-301 covering0-2.933 Gyr; run recorded as completed. Within3D5 kpc, first sustained strong-bar interval begins s027(.264 Gyr), coherent amplitude peaks at .640 in s042(.411 Gyr); s226-275 is a sustained weak-bar interval and final amplitude .063. Definitions/selected frames: SimulationData/Fornax8005/_support/Fornax8005_isolation_stellar_bar_evolution_selection.json. Saved atlas/video remain on X10 Pro. These are previously computed results, not a new analysis or a claim of equilibrium.
+
+[IC-GITHUB-SYNC-SCOPE-20261127] 2026-11-27
+Owner correction: default local-only publication applies only to analysis/X_series_IC_experiments or explicitly excluded tasks. This ordinary model is included in the authorized GitHub metadata backfill (IC_MODELS.csv, IniFile recipe, complete model note and SIMULATION_HISTORY.md). Particle data, snapshots and machine configuration are excluded. Historical run statements above retain their original dates; this synchronization does not submit, stop, resume or modify a simulation.

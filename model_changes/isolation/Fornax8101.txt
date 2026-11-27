@@ -1,0 +1,21 @@
+
+记录: F8101-ISO4GYR-CORE24-20261127
+日期: 2026-11-27
+对象: Fornax8101 / isolation / iso4gyr-core24-v1 / Job314329 / IC001-P004
+来源: AGAMA build 5b626003-b725-4330-bf50-9028190a0bb7; thin-gas-h090-mstar4p5e7-v1; 14500 gas + 450000 pre-existing stars.
+变更: 从原IC开始4 Gyr隔离；原生MFM/WJL反馈16.6，精度与软化保留。astro_thin单节点24 MPI/单线程/shm，显式node0166与nomultithread，CPU列表0-23；PAF6.0，MaxMem2500 MiB/rank，Buffer120 MiB，单文件输出，99h，TimeLimitCPU410400。
+前序: 314326/314327/314328在node0160发现SMT拓扑/实际亲和性问题，均原生stop后COMPLETED/0:0，短轮资料保留；当前从原IC重新开始，不拼接短轮。
+验证: 150秒且时间推进的自动启动检查通过；实际/proc与sysfs确认24 MPI各占独立物理核。当前约2.584716 Gyr；未达4 Gyr，不代表平衡或稳定性。
+依据: runs/iso4gyr-core24-v1/simulation-details.json；isolation_startup.json；冻结profile/PARAM。
+交接: 模拟继续，启动检查结束；本机D盘当前不可用，最终状态尚未回写本机索引。未推送GitHub。
+接收更新（同记录F8101-ISO4GYR-CORE24-20261127，2026-11-27）: X10 Pro恢复后，运行详情、最终profile、实际PARAM、生成提交脚本、启动记录及模型备注已取回Fornax/SimulationData/Fornax8101/_support/；本机索引与模拟变更记录已同步当前Job314329身份。
+
+[F8101-MSTAR45-THIN-IC-20261127] 2026-11-27 (IC creation backfill)
+Parent: unevolved Fornax8100 analytic recipe / build d09f01aa-df28-429c-bbbf-2813c6a98f89; not an evolved snapshot. Changed nominal stellar mass6e7 ->4.5e7 Msun and count600000 ->450000 (about100 Msun/particle); retained gas1.45e8 Msun /14500 particles, Rd0.9 kpc, scaleHeight-.09 kpc, kappa1 and remaining geometry/sampling. Both components solved in the new joint potential; no velocity rescaling or reuse. Seed42, six threads, gas10000 / stellar30000 orbits, intTime100.
+Build5b626003-b725-4330-bf50-9028190a0bb7 / thin-gas-h090-mstar4p5e7-v1 completed464500 particles, full component/orbit/potential package and automatic five-page PDF. X10 Pro project-relative source: SimulationData/Fornax8101/ic/thin-gas-h090-mstar4p5e7-v1/; PDF/profile tables and model index remain under SimulationData/Fornax8101/. No fluid-equilibrium or long-term-stability conclusion. At IC delivery no simulation had been submitted; the separately authorized isolation is recorded above.
+
+[F8101-ISO4GYR-CORE24-20261127] 2026-11-27 (recorded-state clarification)
+The portable record at2026-11-27 17:39 CET reports Job314329 / iso4gyr-core24-v1 / IC001-P004 RUNNING at about2.700 Gyr (67.49%). This is the existing dated observation, not a fresh queue query or a completion claim. Initial input is build5b626003; three early jobs314326/314327/314328 were stopped normally and retained; no trajectories are spliced. Source: SimulationData/Fornax8101/_support/isolation_4gyr_astrothin_run.json and isolation_4gyr_simulation_details.json.
+
+[IC-GITHUB-SYNC-SCOPE-20261127] 2026-11-27
+Owner correction: default local-only publication applies only to analysis/X_series_IC_experiments or explicitly excluded tasks. This ordinary model is included in the authorized GitHub metadata backfill (IC_MODELS.csv, IniFile recipe, complete model note and SIMULATION_HISTORY.md). Particle data, snapshots and machine configuration are excluded. Historical run statements above retain their original dates; this synchronization does not submit, stop, resume or modify a simulation.
